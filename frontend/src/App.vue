@@ -22,6 +22,7 @@
 
     <section class="map-shell">
       <div ref="mapContainer" class="map-container"></div>
+      <LayerControlPanel :layers="layerControls" @update-layer="handleLayerControlUpdate" @focus-result="handleFocusResult" />
       <ResultPanel :task="task" @restore-request="restoreRequest" />
     </section>
   </main>
@@ -46,8 +47,29 @@ import {
   type DemMetadata
 } from "./api/client";
 import ControlPanel from "./components/ControlPanel.vue";
+import LayerControlPanel from "./components/LayerControlPanel.vue";
 import ResultPanel from "./components/ResultPanel.vue";
-import { addOrUpdateGeoJsonLayer, addRadarMarker, removeResultLayers } from "./map/mapLayers";
+import {
+  addOrUpdateGeoJsonLayer,
+  addRadarMarker,
+  getGeoJsonBounds,
+  moveRadarMarkerToTop,
+  removeResultLayers,
+  setResultLayerOpacity,
+  setResultLayerVisibility,
+  type ResultLayerKey
+} from "./map/mapLayers";
+
+interface ResultLayerControl {
+  key: ResultLayerKey;
+  label: string;
+  description: string;
+  color: string;
+  visible: boolean;
+  opacity: number;
+  defaultOpacity: number;
+  available: boolean;
+}
 
 const mapContainer = ref<HTMLDivElement | null>(null);
 const map = shallowRef<maplibregl.Map | null>(null);
@@ -64,6 +86,39 @@ let pollToken = 0;
 let viewToken = 0;
 let taskListRequestToken = 0;
 const busy = ref(false);
+let focusToken = 0;
+const layerControls = reactive<ResultLayerControl[]>([
+  {
+    key: "visible",
+    label: "可探测区",
+    description: "地形视线可达区域",
+    color: "#16a34a",
+    visible: true,
+    opacity: 0.38,
+    defaultOpacity: 0.38,
+    available: false
+  },
+  {
+    key: "blocked",
+    label: "遮挡区",
+    description: "地形遮挡区域",
+    color: "#dc2626",
+    visible: true,
+    opacity: 0.28,
+    defaultOpacity: 0.28,
+    available: false
+  },
+  {
+    key: "range",
+    label: "理论范围",
+    description: "最大探测半径",
+    color: "#2563eb",
+    visible: true,
+    opacity: 0.08,
+    defaultOpacity: 0.08,
+    available: false
+  }
+]);
 
 const coverageRequest = reactive<CoverageRequest>({
   dem_id: "",
@@ -194,6 +249,7 @@ async function handleRun() {
       throw new Error("地图尚未初始化完成");
     }
     removeResultLayers(map.value);
+    clearLayerAvailability();
     addRadarMarker(map.value, coverageRequest.radar.lon, coverageRequest.radar.lat);
     task.value = await createCoverageTask(coverageRequest);
     selectedTaskId.value = task.value.task_id;
@@ -227,6 +283,7 @@ async function pollTask(taskId: string, token: number) {
       if (map.value) {
         removeResultLayers(map.value);
       }
+      clearLayerAvailability();
       throw new Error(latest.message || "计算失败");
     }
   }
@@ -251,6 +308,7 @@ async function handleSelectTask(taskId: string) {
     if (map.value) {
       removeResultLayers(map.value);
     }
+    clearLayerAvailability();
     ElMessage.info(`任务状态：${selected.status}`);
   } catch (error) {
     if (token === viewToken) {
@@ -302,6 +360,7 @@ async function handleDeleteTask(taskId: string) {
       if (map.value) {
         removeResultLayers(map.value);
       }
+      clearLayerAvailability();
     }
     await refreshTaskList();
     ElMessage.success("历史任务已删除");
@@ -331,6 +390,7 @@ function restoreRequest(request: CoverageRequest) {
   dem.value = demList.value.find((item) => item.dem_id === request.dem_id) ?? dem.value;
   if (map.value) {
     removeResultLayers(map.value);
+    clearLayerAvailability();
     addRadarMarker(map.value, request.radar.lon, request.radar.lat);
     map.value.flyTo({ center: [request.radar.lon, request.radar.lat], zoom: 9 });
   }
@@ -342,13 +402,14 @@ function loadOutputs(result: CoverageTaskStatus) {
     return;
   }
   removeResultLayers(map.value);
-  if (!result.outputs) {
+
+  const visible = resolveOutputUrl(result, "visible_geojson", result.outputs?.visible_geojson);
+  const blocked = resolveOutputUrl(result, "blocked_geojson", result.outputs?.blocked_geojson);
+  const range = resolveOutputUrl(result, "range_geojson", result.outputs?.range_geojson);
+  if (!range && !blocked && !visible) {
+    clearLayerAvailability();
     return;
   }
-
-  const visible = resolveOutputUrl(result, "visible_geojson", result.outputs.visible_geojson);
-  const blocked = resolveOutputUrl(result, "blocked_geojson", result.outputs.blocked_geojson);
-  const range = resolveOutputUrl(result, "range_geojson", result.outputs.range_geojson);
 
   if (range) {
     addOrUpdateGeoJsonLayer(
@@ -359,26 +420,145 @@ function loadOutputs(result: CoverageTaskStatus) {
       { "line-color": "#2563eb", "line-width": 2 }
     );
   }
-  if (blocked) {
-    addOrUpdateGeoJsonLayer(map.value, "blocked-layer", blocked, {
-      "fill-color": "#dc2626",
-      "fill-opacity": 0.28
-    });
-  }
   if (visible) {
-    addOrUpdateGeoJsonLayer(map.value, "visible-layer", visible, {
-      "fill-color": "#16a34a",
-      "fill-opacity": 0.38
-    });
+    addOrUpdateGeoJsonLayer(
+      map.value,
+      "visible-layer",
+      visible,
+      {
+        "fill-color": "#16a34a",
+        "fill-opacity": 0.38
+      },
+      { "line-color": "#16a34a", "line-opacity": 0.38, "line-width": 1 }
+    );
   }
+  if (blocked) {
+    addOrUpdateGeoJsonLayer(
+      map.value,
+      "blocked-layer",
+      blocked,
+      {
+        "fill-color": "#dc2626",
+        "fill-opacity": 0.28
+      },
+      { "line-color": "#dc2626", "line-opacity": 0.38, "line-width": 1 }
+    );
+  }
+  moveRadarMarkerToTop(map.value);
+  updateLayerAvailability({ range: !!range, blocked: !!blocked, visible: !!visible });
+  applyAllLayerControls();
 }
 
 function resolveOutputUrl(result: CoverageTaskStatus, kind: string, fallback?: string | null) {
   const files = Array.isArray(result.output_files) ? result.output_files : [];
-  if (files.length) {
-    const file = files.find((item) => item.kind === kind && item.exists);
-    return resolveAssetUrl(file?.url);
+  const file = files.find((item) => item.kind === kind && item.exists && item.url);
+  if (file) {
+    return resolveAssetUrl(file.url);
   }
   return resolveAssetUrl(fallback);
+}
+
+function handleLayerControlUpdate(key: ResultLayerKey, patch: Partial<Pick<ResultLayerControl, "visible" | "opacity">>) {
+  const control = layerControls.find((item) => item.key === key);
+  if (!control) {
+    return;
+  }
+  if (patch.visible != null) {
+    control.visible = patch.visible;
+  }
+  if (patch.opacity != null) {
+    control.opacity = Math.min(0.8, Math.max(0, patch.opacity));
+  }
+  applyLayerControl(control);
+}
+
+async function handleFocusResult() {
+  if (!map.value || !task.value || task.value.status !== "finished") {
+    ElMessage.info("暂无可定位的结果");
+    return;
+  }
+  const token = ++focusToken;
+  const taskId = task.value.task_id;
+  const currentViewToken = viewToken;
+
+  const urls = layerControls
+    .filter((control) => control.available)
+    .map((control) => resolveLayerOutputUrl(task.value as CoverageTaskStatus, control.key))
+    .filter((url): url is string => !!url);
+
+  const bounds = new maplibregl.LngLatBounds();
+  let hasBounds = false;
+  try {
+    for (const url of urls) {
+      const geojson = await fetch(url).then((response) => {
+        if (!response.ok) {
+          throw new Error(`结果文件读取失败：${response.status}`);
+        }
+        return response.json() as Promise<GeoJSON.GeoJSON>;
+      });
+      if (token !== focusToken || currentViewToken !== viewToken || task.value?.task_id !== taskId) {
+        return;
+      }
+      const layerBounds = getGeoJsonBounds(geojson);
+      if (layerBounds) {
+        bounds.extend(layerBounds.getSouthWest());
+        bounds.extend(layerBounds.getNorthEast());
+        hasBounds = true;
+      }
+    }
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : "结果定位失败");
+    return;
+  }
+
+  if (token !== focusToken || currentViewToken !== viewToken || task.value?.task_id !== taskId) {
+    return;
+  }
+  if (!hasBounds) {
+    ElMessage.warning("结果范围为空，无法定位");
+    return;
+  }
+  map.value.fitBounds(bounds, { padding: 80, maxZoom: 13, duration: 600 });
+}
+
+function applyAllLayerControls() {
+  for (const control of layerControls) {
+    applyLayerControl(control);
+  }
+}
+
+function applyLayerControl(control: ResultLayerControl) {
+  if (!map.value || !control.available) {
+    return;
+  }
+  setResultLayerVisibility(map.value, control.key, control.visible);
+  setResultLayerOpacity(map.value, control.key, control.opacity);
+}
+
+function clearLayerAvailability() {
+  focusToken++;
+  for (const control of layerControls) {
+    control.available = false;
+    control.visible = true;
+    control.opacity = control.defaultOpacity;
+  }
+}
+
+function updateLayerAvailability(available: Record<ResultLayerKey, boolean>) {
+  for (const control of layerControls) {
+    control.available = available[control.key];
+    control.visible = true;
+    control.opacity = control.defaultOpacity;
+  }
+}
+
+function resolveLayerOutputUrl(result: CoverageTaskStatus, key: ResultLayerKey) {
+  const outputKind: Record<ResultLayerKey, keyof NonNullable<CoverageTaskStatus["outputs"]>> = {
+    range: "range_geojson",
+    blocked: "blocked_geojson",
+    visible: "visible_geojson"
+  };
+  const kind = outputKind[key];
+  return resolveOutputUrl(result, kind, result.outputs?.[kind]);
 }
 </script>

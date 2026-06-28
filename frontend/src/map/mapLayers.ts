@@ -1,5 +1,22 @@
 import maplibregl from "maplibre-gl";
 
+export type ResultLayerKey = "range" | "blocked" | "visible";
+
+const RESULT_LAYER_IDS: Record<ResultLayerKey, { fill: string; outline: string }> = {
+  range: {
+    fill: "range-layer",
+    outline: "range-layer-outline"
+  },
+  blocked: {
+    fill: "blocked-layer",
+    outline: "blocked-layer-outline"
+  },
+  visible: {
+    fill: "visible-layer",
+    outline: "visible-layer-outline"
+  }
+};
+
 export function addOrUpdateGeoJsonLayer(
   map: maplibregl.Map,
   id: string,
@@ -114,5 +131,82 @@ export function removeResultLayers(map: maplibregl.Map) {
     if (map.getSource(sourceId)) {
       map.removeSource(sourceId);
     }
+  }
+}
+
+export function setResultLayerVisibility(map: maplibregl.Map, key: ResultLayerKey, visible: boolean) {
+  const visibility = visible ? "visible" : "none";
+  const ids = RESULT_LAYER_IDS[key];
+  for (const layerId of [ids.fill, ids.outline]) {
+    if (map.getLayer(layerId)) {
+      map.setLayoutProperty(layerId, "visibility", visibility);
+    }
+  }
+}
+
+export function setResultLayerOpacity(map: maplibregl.Map, key: ResultLayerKey, opacity: number) {
+  const ids = RESULT_LAYER_IDS[key];
+  if (map.getLayer(ids.fill)) {
+    map.setPaintProperty(ids.fill, "fill-opacity", opacity);
+  }
+  if (map.getLayer(ids.outline)) {
+    map.setPaintProperty(ids.outline, "line-opacity", opacity > 0 ? Math.max(opacity, 0.28) : 0);
+  }
+}
+
+export function moveRadarMarkerToTop(map: maplibregl.Map) {
+  for (const layerId of ["radar-point-halo", "radar-point"]) {
+    if (map.getLayer(layerId)) {
+      map.moveLayer(layerId);
+    }
+  }
+}
+
+export function getGeoJsonBounds(data: GeoJSON.GeoJSON): maplibregl.LngLatBounds | null {
+  const bounds = new maplibregl.LngLatBounds();
+  let hasCoordinate = false;
+
+  visitCoordinates(data, (coordinate) => {
+    if (Number.isFinite(coordinate[0]) && Number.isFinite(coordinate[1])) {
+      bounds.extend(coordinate as [number, number]);
+      hasCoordinate = true;
+    }
+  });
+
+  return hasCoordinate ? bounds : null;
+}
+
+function visitCoordinates(data: GeoJSON.GeoJSON, visitor: (coordinate: GeoJSON.Position) => void) {
+  if (data.type === "FeatureCollection") {
+    for (const feature of data.features) {
+      visitCoordinates(feature, visitor);
+    }
+    return;
+  }
+  if (data.type === "Feature") {
+    if (data.geometry) {
+      visitCoordinates(data.geometry, visitor);
+    }
+    return;
+  }
+  if (data.type === "GeometryCollection") {
+    for (const geometry of data.geometries) {
+      visitCoordinates(geometry, visitor);
+    }
+    return;
+  }
+  visitGeometryCoordinates(data.coordinates, visitor);
+}
+
+function visitGeometryCoordinates(coordinates: GeoJSON.Position | GeoJSON.Position[] | GeoJSON.Position[][] | GeoJSON.Position[][][], visitor: (coordinate: GeoJSON.Position) => void) {
+  if (!Array.isArray(coordinates) || coordinates.length === 0) {
+    return;
+  }
+  if (typeof coordinates[0] === "number") {
+    visitor(coordinates as GeoJSON.Position);
+    return;
+  }
+  for (const child of coordinates as GeoJSON.Position[] | GeoJSON.Position[][] | GeoJSON.Position[][][]) {
+    visitGeometryCoordinates(child, visitor);
   }
 }

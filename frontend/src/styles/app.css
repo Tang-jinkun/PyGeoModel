@@ -246,6 +246,84 @@ body {
   height: 100%;
 }
 
+.layer-panel {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  display: grid;
+  gap: 10px;
+  width: min(280px, calc(100% - 96px));
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.94);
+  border: 1px solid rgba(215, 222, 232, 0.9);
+  border-radius: 6px;
+  box-shadow: 0 14px 30px rgba(21, 34, 51, 0.14);
+  backdrop-filter: blur(10px);
+}
+
+.layer-panel-header,
+.layer-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.layer-panel-header {
+  justify-content: space-between;
+}
+
+.layer-panel-header strong {
+  color: #172033;
+  font-size: 13px;
+  font-weight: 760;
+}
+
+.layer-list {
+  display: grid;
+  gap: 10px;
+}
+
+.layer-item {
+  display: grid;
+  gap: 4px;
+}
+
+.layer-main {
+  min-width: 0;
+}
+
+.layer-main div {
+  display: grid;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.layer-main strong,
+.layer-main span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.layer-main strong {
+  color: #172033;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.layer-main span {
+  color: #627188;
+  font-size: 11px;
+}
+
+.layer-swatch {
+  flex: 0 0 auto;
+  width: 12px;
+  height: 12px;
+  border: 1px solid rgba(15, 23, 42, 0.2);
+  border-radius: 50%;
+}
+
 .result-panel {
   position: absolute;
   right: 16px;
@@ -511,8 +589,17 @@ body {
     right: 12px;
     bottom: 12px;
     width: calc(100% - 24px);
-    max-height: 46vh;
+    max-height: 42vh;
     padding: 12px;
+  }
+
+  .layer-panel {
+    top: 12px;
+    left: 12px;
+    width: min(300px, calc(100% - 76px));
+    max-height: 34vh;
+    overflow-y: auto;
+    padding: 10px;
   }
 
   .result-summary,
