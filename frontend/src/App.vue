@@ -6,14 +6,15 @@
       :dem-list="demList"
       :task-list="taskList"
       :selected-task-id="selectedTaskId"
-      :selected-task-request="task?.request ?? null"
       :task-list-loading="taskListLoading"
+      :loading-task-id="loadingTaskId"
+      :restoring-task-id="restoringTaskId"
       :deleting-task-id="deletingTaskId"
       :busy="busy"
       @upload="handleUpload"
       @select-dem="handleSelectDem"
       @select-task="handleSelectTask"
-      @restore-request="restoreRequest"
+      @restore-task="handleRestoreTask"
       @delete-task="handleDeleteTask"
       @refresh-tasks="refreshTaskList"
       @run="handleRun"
@@ -56,8 +57,12 @@ const task = ref<CoverageTaskStatus | null>(null);
 const taskList = ref<CoverageTaskSummary[]>([]);
 const selectedTaskId = ref<string | null>(null);
 const taskListLoading = ref(false);
+const loadingTaskId = ref<string | null>(null);
+const restoringTaskId = ref<string | null>(null);
 const deletingTaskId = ref<string | null>(null);
 let pollToken = 0;
+let viewToken = 0;
+let taskListRequestToken = 0;
 const busy = ref(false);
 
 const coverageRequest = reactive<CoverageRequest>({
@@ -142,13 +147,21 @@ async function refreshDemList() {
 }
 
 async function refreshTaskList() {
+  const token = ++taskListRequestToken;
   taskListLoading.value = true;
   try {
-    taskList.value = await listCoverageTasks();
+    const tasks = await listCoverageTasks();
+    if (token === taskListRequestToken) {
+      taskList.value = tasks;
+    }
   } catch {
-    taskList.value = [];
+    if (token === taskListRequestToken) {
+      taskList.value = [];
+    }
   } finally {
-    taskListLoading.value = false;
+    if (token === taskListRequestToken) {
+      taskListLoading.value = false;
+    }
   }
 }
 
@@ -175,6 +188,7 @@ async function handleRun() {
 
   busy.value = true;
   const token = ++pollToken;
+  viewToken++;
   try {
     if (!map.value) {
       throw new Error("地图尚未初始化完成");
@@ -216,18 +230,59 @@ async function pollTask(taskId: string, token: number) {
 
 async function handleSelectTask(taskId: string) {
   pollToken++;
+  const token = ++viewToken;
   selectedTaskId.value = taskId;
+  loadingTaskId.value = taskId;
   try {
     const selected = await getCoverageTask(taskId);
+    if (token !== viewToken || selectedTaskId.value !== taskId) {
+      return;
+    }
     task.value = selected;
     if (selected.status === "finished") {
       loadOutputs(selected);
       ElMessage.success("历史任务已加载");
       return;
     }
+    if (map.value) {
+      removeResultLayers(map.value);
+    }
     ElMessage.info(`任务状态：${selected.status}`);
   } catch (error) {
-    ElMessage.error(error instanceof Error ? error.message : "加载历史任务失败");
+    if (token === viewToken) {
+      ElMessage.error(error instanceof Error ? error.message : "加载历史任务失败");
+    }
+  } finally {
+    if (loadingTaskId.value === taskId) {
+      loadingTaskId.value = null;
+    }
+  }
+}
+
+async function handleRestoreTask(taskId: string) {
+  pollToken++;
+  const token = ++viewToken;
+  selectedTaskId.value = taskId;
+  restoringTaskId.value = taskId;
+  try {
+    const selected = await getCoverageTask(taskId);
+    if (token !== viewToken || selectedTaskId.value !== taskId) {
+      return;
+    }
+    task.value = selected;
+    if (!selected.request) {
+      ElMessage.warning("该历史任务没有可恢复的参数");
+      return;
+    }
+    restoreRequest(selected.request);
+  } catch (error) {
+    if (token === viewToken) {
+      ElMessage.error(error instanceof Error ? error.message : "恢复历史参数失败");
+    }
+  } finally {
+    if (restoringTaskId.value === taskId) {
+      restoringTaskId.value = null;
+    }
   }
 }
 
@@ -237,6 +292,7 @@ async function handleDeleteTask(taskId: string) {
     await deleteCoverageTask(taskId);
     if (selectedTaskId.value === taskId) {
       pollToken++;
+      viewToken++;
       selectedTaskId.value = null;
       task.value = null;
       if (map.value) {
@@ -254,6 +310,7 @@ async function handleDeleteTask(taskId: string) {
 
 function restoreRequest(request: CoverageRequest) {
   pollToken++;
+  viewToken++;
   coverageRequest.dem_id = request.dem_id;
   coverageRequest.radar.lon = request.radar.lon;
   coverageRequest.radar.lat = request.radar.lat;

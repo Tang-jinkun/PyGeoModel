@@ -103,38 +103,74 @@
         开始计算
       </el-button>
 
-      <el-form-item v-if="taskList.length" label="历史任务">
-        <div class="history-row">
-          <el-select :model-value="selectedTaskId" filterable placeholder="选择历史任务" @change="selectTask">
-            <el-option
-              v-for="item in taskList"
-              :key="item.task_id"
-              :label="taskLabel(item)"
-              :value="item.task_id"
-            />
-          </el-select>
-          <el-button :loading="taskListLoading" @click="$emit('refreshTasks')">刷新</el-button>
-          <el-popconfirm
-            title="删除任务记录和输出文件？"
-            confirm-button-text="删除"
-            cancel-button-text="取消"
-            @confirm="deleteSelectedTask"
-          >
-            <template #reference>
-              <el-button type="danger" :loading="deletingTaskId === selectedTaskId" :disabled="!canDeleteSelectedTask">
-                删除
-              </el-button>
-            </template>
-          </el-popconfirm>
+      <section class="task-history">
+        <div class="task-history-header">
+          <h2>历史任务</h2>
+          <el-button size="small" :loading="taskListLoading" @click="$emit('refreshTasks')">刷新</el-button>
         </div>
-        <el-button
-          class="restore-button"
-          :disabled="!selectedTaskRequest"
-          @click="restoreSelectedRequest"
-        >
-          恢复历史参数
-        </el-button>
-      </el-form-item>
+        <div v-if="taskList.length" class="task-list">
+          <article
+            v-for="item in taskList"
+            :key="item.task_id"
+            class="task-item"
+            :class="{ active: item.task_id === selectedTaskId }"
+          >
+            <div class="task-main">
+              <span class="task-status" :data-status="item.status">{{ statusLabel(item.status) }}</span>
+              <strong>{{ shortTaskId(item.task_id) }}</strong>
+              <span>{{ formatTaskTime(item.created_at) }}</span>
+            </div>
+            <div class="task-meta">
+              <span>{{ item.dem_id ?? "无 DEM" }}</span>
+              <span>{{ taskCoverageLabel(item) }}</span>
+              <span>{{ taskMetricLabel(item) }}</span>
+            </div>
+            <el-progress
+              v-if="item.status === 'pending' || item.status === 'running'"
+              :percentage="item.progress"
+              :show-text="false"
+              :stroke-width="5"
+            />
+            <p v-if="item.status === 'failed'" class="task-message">{{ item.message || "计算失败" }}</p>
+            <div class="task-actions">
+              <el-button
+                size="small"
+                :disabled="busy || !!deletingTaskId || item.status !== 'finished'"
+                :loading="loadingTaskId === item.task_id"
+                @click="selectTask(item.task_id)"
+              >
+                加载结果
+              </el-button>
+              <el-button
+                size="small"
+                :disabled="busy || !!deletingTaskId"
+                :loading="restoringTaskId === item.task_id"
+                @click="$emit('restoreTask', item.task_id)"
+              >
+                恢复参数
+              </el-button>
+              <el-popconfirm
+                title="删除任务记录和输出文件？"
+                confirm-button-text="删除"
+                cancel-button-text="取消"
+                @confirm="$emit('deleteTask', item.task_id)"
+              >
+                <template #reference>
+                  <el-button
+                    size="small"
+                    type="danger"
+                    :loading="deletingTaskId === item.task_id"
+                    :disabled="!canDeleteTask(item)"
+                  >
+                    删除
+                  </el-button>
+                </template>
+              </el-popconfirm>
+            </div>
+          </article>
+        </div>
+        <div v-else class="empty-history">暂无历史任务</div>
+      </section>
     </el-form>
   </aside>
 </template>
@@ -151,8 +187,9 @@ const props = defineProps<{
   demList: DemMetadata[];
   taskList: CoverageTaskSummary[];
   selectedTaskId: string | null;
-  selectedTaskRequest: CoverageRequest | null;
   taskListLoading: boolean;
+  loadingTaskId: string | null;
+  restoringTaskId: string | null;
   deletingTaskId: string | null;
   busy: boolean;
 }>();
@@ -161,7 +198,7 @@ const emit = defineEmits<{
   upload: [file: File];
   selectDem: [demId: string];
   selectTask: [taskId: string];
-  restoreRequest: [request: CoverageRequest];
+  restoreTask: [taskId: string];
   deleteTask: [taskId: string];
   refreshTasks: [];
   run: [];
@@ -173,13 +210,6 @@ const scanOptions = [
 ];
 
 const demLabel = computed(() => props.dem?.filename ?? "点击或拖拽上传 GeoTIFF DEM");
-const selectedTask = computed(() => props.taskList.find((item) => item.task_id === props.selectedTaskId) ?? null);
-const canDeleteSelectedTask = computed(() => {
-  if (!props.selectedTaskId || props.busy || props.deletingTaskId) {
-    return false;
-  }
-  return selectedTask.value?.status === "finished" || selectedTask.value?.status === "failed";
-});
 
 function onFileChange(uploadFile: UploadFile) {
   const raw = uploadFile.raw;
@@ -196,25 +226,6 @@ function selectTask(taskId: string) {
   emit("selectTask", taskId);
 }
 
-function restoreSelectedRequest() {
-  if (props.selectedTaskRequest) {
-    emit("restoreRequest", props.selectedTaskRequest);
-  }
-}
-
-function deleteSelectedTask() {
-  if (props.selectedTaskId) {
-    emit("deleteTask", props.selectedTaskId);
-  }
-}
-
-function taskLabel(task: CoverageTaskSummary) {
-  const time = task.created_at ? new Date(task.created_at).toLocaleString() : task.task_id;
-  const taskShortId = task.task_id.replace(/^task_/, "").slice(-8);
-  const fileCount = task.output_files?.filter((item) => item.exists).length ?? 0;
-  return `${task.status} · ${taskShortId} · ${time} · ${fileCount} 文件`;
-}
-
 function formatFileSize(value?: number | null) {
   if (value == null) {
     return "-";
@@ -223,5 +234,56 @@ function formatFileSize(value?: number | null) {
     return `${(value / 1024 / 1024).toFixed(1)} MB`;
   }
   return `${(value / 1024).toFixed(1)} KB`;
+}
+
+function shortTaskId(taskId: string) {
+  return taskId.replace(/^task_/, "").slice(-8);
+}
+
+function formatTaskTime(value?: string | null) {
+  return value ? new Date(value).toLocaleString() : "-";
+}
+
+function outputCount(task: CoverageTaskSummary) {
+  return task.output_files?.filter((item) => item.exists).length ?? 0;
+}
+
+function taskCoverageLabel(task: CoverageTaskSummary) {
+  const files = outputCount(task);
+  if (task.status === "finished") {
+    return `${files} 个文件`;
+  }
+  return `${task.progress}%`;
+}
+
+function taskMetricLabel(task: CoverageTaskSummary) {
+  if (task.metrics) {
+    return `遮挡 ${formatRatio(task.metrics.blocked_ratio)}`;
+  }
+  return task.updated_at ? `更新 ${formatTaskTime(task.updated_at)}` : task.message || "-";
+}
+
+function statusLabel(status: CoverageTaskSummary["status"]) {
+  const labels = {
+    pending: "排队",
+    running: "运行",
+    finished: "完成",
+    failed: "失败"
+  };
+  return labels[status] ?? status;
+}
+
+function canDeleteTask(task: CoverageTaskSummary) {
+  if (props.busy || props.deletingTaskId) {
+    return false;
+  }
+  return task.status === "finished" || task.status === "failed";
+}
+
+function formatRatio(value?: number | null) {
+  if (value == null) {
+    return "-";
+  }
+  return `${(value * 100).toFixed(1)}%`;
 }
 </script>

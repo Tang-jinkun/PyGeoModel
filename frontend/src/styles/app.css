@@ -108,21 +108,131 @@ body {
   width: 100%;
 }
 
-.history-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
-  gap: 8px;
-  width: 100%;
-}
-
-.restore-button {
-  width: 100%;
-  margin-top: 8px;
-}
-
 .run-button {
   width: 100%;
   margin-top: 6px;
+}
+
+.task-history {
+  display: grid;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.task-history-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.task-history-header h2 {
+  margin: 0;
+  color: #2b384c;
+  font-size: 14px;
+  font-weight: 750;
+  letter-spacing: 0;
+}
+
+.task-list {
+  display: grid;
+  gap: 8px;
+}
+
+.task-item {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  background: #f7f9fc;
+  border: 1px solid #dfe7f1;
+  border-radius: 6px;
+}
+
+.task-item.active {
+  background: #eef6ff;
+  border-color: #93c5fd;
+}
+
+.task-main,
+.task-meta,
+.task-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.task-main strong,
+.task-meta span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-main strong {
+  color: #172033;
+  font-size: 13px;
+}
+
+.task-meta {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  color: #627188;
+  font-size: 12px;
+}
+
+.task-actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.task-actions .el-button {
+  width: 100%;
+  margin-left: 0;
+}
+
+.task-message {
+  margin: 0;
+  color: #9f1239;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.task-status {
+  flex: 0 0 auto;
+  padding: 2px 6px;
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 700;
+  background: #64748b;
+  border-radius: 4px;
+}
+
+.task-status[data-status="finished"] {
+  background: #16a34a;
+}
+
+.task-status[data-status="running"] {
+  background: #2563eb;
+}
+
+.task-status[data-status="pending"] {
+  background: #f59e0b;
+}
+
+.task-status[data-status="failed"] {
+  background: #dc2626;
+}
+
+.empty-history {
+  padding: 10px;
+  color: #627188;
+  background: #f7f9fc;
+  border: 1px dashed #cbd5e1;
+  border-radius: 6px;
+  font-size: 12px;
+  text-align: center;
 }
 
 .map-shell {
@@ -253,5 +363,9 @@ body {
 
   .result-panel .download-list {
     grid-template-columns: repeat(2, minmax(120px, 1fr));
+  }
+
+  .task-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
