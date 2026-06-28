@@ -36,9 +36,11 @@ import { onMounted, reactive, ref, shallowRef } from "vue";
 import {
   createCoverageTask,
   deleteCoverageTask,
+  defaultCoverageRequest,
   getCoverageTask,
   listCoverageTasks,
   listDems,
+  normalizeCoverageRequest,
   resolveAssetUrl,
   uploadDem,
   type CoverageRequest,
@@ -120,28 +122,7 @@ const layerControls = reactive<ResultLayerControl[]>([
   }
 ]);
 
-const coverageRequest = reactive<CoverageRequest>({
-  dem_id: "",
-  radar: {
-    lon: 105.123456,
-    lat: 35.123456,
-    height_m: 10
-  },
-  target: {
-    height_m: 0
-  },
-  coverage: {
-    max_range_m: 50000,
-    scan_mode: "omni",
-    azimuth_deg: 90,
-    beam_width_deg: 120
-  },
-  advanced: {
-    use_curvature: true,
-    curvature_coeff: 0.75,
-    output_simplify_tolerance_m: 30
-  }
-});
+const coverageRequest = reactive<CoverageRequest>(defaultCoverageRequest());
 
 onMounted(() => {
   void refreshDemList();
@@ -251,10 +232,14 @@ async function handleRun() {
     removeResultLayers(map.value);
     clearLayerAvailability();
     addRadarMarker(map.value, coverageRequest.radar.lon, coverageRequest.radar.lat);
-    task.value = await createCoverageTask(coverageRequest);
-    selectedTaskId.value = task.value.task_id;
+    const created = await createCoverageTask(coverageRequest);
+    if (token !== pollToken) {
+      return;
+    }
+    task.value = created;
+    selectedTaskId.value = created.task_id;
     await refreshTaskList();
-    await pollTask(task.value.task_id, token);
+    await pollTask(created.task_id, token);
   } catch (error) {
     ElMessage.error(error instanceof Error ? error.message : "计算失败");
   } finally {
@@ -331,11 +316,11 @@ async function handleRestoreTask(taskId: string) {
     if (token !== viewToken || selectedTaskId.value !== taskId) {
       return;
     }
-    task.value = selected;
     if (!selected.request) {
       ElMessage.warning("该历史任务没有可恢复的参数");
       return;
     }
+    task.value = selected;
     restoreRequest(selected.request);
   } catch (error) {
     if (token === viewToken) {
@@ -372,8 +357,28 @@ async function handleDeleteTask(taskId: string) {
 }
 
 function restoreRequest(request: CoverageRequest) {
+  const normalized = normalizeCoverageRequest(request, defaultCoverageRequest());
+  if (!normalized || !normalized.dem_id) {
+    ElMessage.warning("历史参数不完整，无法恢复");
+    return;
+  }
   pollToken++;
   viewToken++;
+  applyCoverageRequest(normalized);
+  selectedTaskId.value = null;
+  task.value = null;
+  clearLayerAvailability();
+
+  dem.value = demList.value.find((item) => item.dem_id === normalized.dem_id) ?? dem.value;
+  if (map.value) {
+    removeResultLayers(map.value);
+    addRadarMarker(map.value, normalized.radar.lon, normalized.radar.lat);
+    map.value.flyTo({ center: [normalized.radar.lon, normalized.radar.lat], zoom: 9 });
+  }
+  ElMessage.success("历史参数已恢复到表单");
+}
+
+function applyCoverageRequest(request: CoverageRequest) {
   coverageRequest.dem_id = request.dem_id;
   coverageRequest.radar.lon = request.radar.lon;
   coverageRequest.radar.lat = request.radar.lat;
@@ -386,15 +391,7 @@ function restoreRequest(request: CoverageRequest) {
   coverageRequest.advanced.use_curvature = request.advanced.use_curvature;
   coverageRequest.advanced.curvature_coeff = request.advanced.curvature_coeff;
   coverageRequest.advanced.output_simplify_tolerance_m = request.advanced.output_simplify_tolerance_m;
-
-  dem.value = demList.value.find((item) => item.dem_id === request.dem_id) ?? dem.value;
-  if (map.value) {
-    removeResultLayers(map.value);
-    clearLayerAvailability();
-    addRadarMarker(map.value, request.radar.lon, request.radar.lat);
-    map.value.flyTo({ center: [request.radar.lon, request.radar.lat], zoom: 9 });
-  }
-  ElMessage.success("历史参数已恢复到表单");
+  coverageRequest.reserved_radar_params = { ...(request.reserved_radar_params ?? {}) };
 }
 
 function loadOutputs(result: CoverageTaskStatus) {
