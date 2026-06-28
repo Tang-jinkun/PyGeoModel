@@ -3,17 +3,20 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from pyproj import CRS, Transformer
-from rasterio.warp import Resampling, calculate_default_transform, reproject
-from shapely.geometry import GeometryCollection, mapping, shape
-from shapely.ops import unary_union
+from pyproj import Transformer
+from shapely.geometry import mapping
 
 from app.core.config import settings
 from app.core.errors import AppError
 from app.schemas.radar import CoverageMetrics, CoverageOutputs, CoverageRequest
 from app.services.dem_store import find_dem_file
+from app.services.coverage_model import (
+    PreparedCoverageDem,
+    default_simplify_tolerance,
+    prepare_coverage_dem,
+    vectorize_visible_viewshed,
+)
 from app.services.geometry import make_range_geometry, project_geometry
-from app.services.projection import utm_epsg_from_lonlat
 from app.services.task_store import mark_failed, mark_finished, mark_running
 
 
@@ -24,57 +27,19 @@ def run_coverage_task(task_id: str, payload: CoverageRequest) -> None:
         output_dir.mkdir(parents=True, exist_ok=True)
 
         dem_path = find_dem_file(payload.dem_id)
-        epsg = utm_epsg_from_lonlat(payload.radar.lon, payload.radar.lat)
         projected_dem = output_dir / "dem_projected.tif"
         viewshed = output_dir / "viewshed.tif"
 
-        _reproject_dem(dem_path, projected_dem, epsg)
-        radar_x, radar_y = _project_radar_point(payload.radar.lon, payload.radar.lat, epsg)
+        prepared = prepare_coverage_dem(dem_path, projected_dem, payload)
 
         mark_running(task_id, "Running gdal_viewshed.", 45)
-        _run_gdal_viewshed(projected_dem, viewshed, radar_x, radar_y, payload)
+        _run_gdal_viewshed(projected_dem, viewshed, prepared.radar_x, prepared.radar_y, payload)
 
         mark_running(task_id, "Vectorizing viewshed outputs.", 80)
-        outputs, metrics = _write_vector_outputs(task_id, output_dir, radar_x, radar_y, epsg, payload, viewshed)
+        outputs, metrics = _write_vector_outputs(task_id, output_dir, prepared, payload, viewshed)
         mark_finished(task_id, metrics=metrics, outputs=outputs)
     except Exception as exc:
         mark_failed(task_id, str(exc))
-
-
-def _reproject_dem(source: Path, destination: Path, epsg: int) -> None:
-    try:
-        import rasterio
-    except ImportError as exc:
-        raise AppError("RASTERIO_NOT_INSTALLED", "Rasterio is required for DEM reprojection.", status_code=500) from exc
-
-    with rasterio.open(source) as src:
-        dst_crs = CRS.from_epsg(epsg)
-        transform, width, height = calculate_default_transform(
-            src.crs,
-            dst_crs,
-            src.width,
-            src.height,
-            *src.bounds,
-        )
-        kwargs = src.meta.copy()
-        kwargs.update({"crs": dst_crs, "transform": transform, "width": width, "height": height})
-
-        with rasterio.open(destination, "w", **kwargs) as dst:
-            for band_index in range(1, src.count + 1):
-                reproject(
-                    source=rasterio.band(src, band_index),
-                    destination=rasterio.band(dst, band_index),
-                    src_transform=src.transform,
-                    src_crs=src.crs,
-                    dst_transform=transform,
-                    dst_crs=dst_crs,
-                    resampling=Resampling.bilinear,
-                )
-
-
-def _project_radar_point(lon: float, lat: float, epsg: int) -> tuple[float, float]:
-    transformer = Transformer.from_crs("EPSG:4326", f"EPSG:{epsg}", always_xy=True)
-    return transformer.transform(lon, lat)
 
 
 def _run_gdal_viewshed(dem: Path, viewshed: Path, radar_x: float, radar_y: float, payload: CoverageRequest) -> None:
@@ -109,29 +74,25 @@ def _run_gdal_viewshed(dem: Path, viewshed: Path, radar_x: float, radar_y: float
 def _write_vector_outputs(
     task_id: str,
     output_dir: Path,
-    radar_x: float,
-    radar_y: float,
-    epsg: int,
+    prepared: PreparedCoverageDem,
     payload: CoverageRequest,
     viewshed: Path,
 ) -> tuple[CoverageOutputs, CoverageMetrics]:
     range_geom = make_range_geometry(
-        radar_x,
-        radar_y,
+        prepared.radar_x,
+        prepared.radar_y,
         payload.coverage.max_range_m,
         payload.coverage.scan_mode,
         payload.coverage.azimuth_deg,
         payload.coverage.beam_width_deg,
     )
-    transformer = Transformer.from_crs(f"EPSG:{epsg}", "EPSG:4326", always_xy=True)
+    transformer = Transformer.from_crs(f"EPSG:{prepared.target_epsg}", "EPSG:4326", always_xy=True)
     range_wgs84 = project_geometry(range_geom, transformer)
-    visible_geom = _vectorize_visible_viewshed(viewshed)
+    visible_geom = vectorize_visible_viewshed(viewshed)
     visible_clipped = visible_geom.intersection(range_geom)
     blocked_geom = range_geom.difference(visible_clipped)
 
-    tolerance = payload.advanced.output_simplify_tolerance_m
-    if tolerance is None:
-        tolerance = 0
+    tolerance = default_simplify_tolerance(prepared.resolution_m, payload.advanced.output_simplify_tolerance_m)
     if tolerance > 0:
         visible_clipped = visible_clipped.simplify(tolerance, preserve_topology=True)
         blocked_geom = blocked_geom.simplify(tolerance, preserve_topology=True)
@@ -168,27 +129,6 @@ def _write_vector_outputs(
         range_geojson=f"/outputs/{task_id}/{range_geojson.name}",
     )
     return outputs, metrics
-
-
-def _vectorize_visible_viewshed(viewshed: Path):
-    try:
-        import rasterio
-        from rasterio import features
-    except ImportError as exc:
-        raise AppError("RASTERIO_NOT_INSTALLED", "Rasterio is required for viewshed vectorization.", status_code=500) from exc
-
-    with rasterio.open(viewshed) as dataset:
-        data = dataset.read(1)
-        mask = data > 0
-        geometries = [
-            shape(geom)
-            for geom, value in features.shapes(data, mask=mask, transform=dataset.transform)
-            if value > 0
-        ]
-
-    if not geometries:
-        return GeometryCollection()
-    return unary_union(geometries)
 
 
 def _write_feature_collection(path: Path, geometry, properties: dict[str, str]) -> None:

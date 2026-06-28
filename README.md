@@ -68,6 +68,25 @@ Services:
 4. Backend reprojects the DEM, runs `gdal_viewshed`, vectorizes visible and blocked regions, and writes outputs.
 5. Frontend loads `visible.geojson`, `blocked.geojson`, and `radar_range.geojson` in MapLibre.
 
+## Model Layer Progress
+
+The backend model layer now includes:
+
+- UTM zone selection from radar longitude/latitude.
+- Radar point validation against the source DEM bounds.
+- DEM crop around the requested max range before reprojection.
+- Reprojection to a meter-based CRS for viewshed calculation.
+- Scan range geometry for omni and sector modes.
+- Viewshed raster vectorization into visible geometry.
+- Visible/blocked/theoretical area metrics in square meters.
+
+Model tests:
+
+```bash
+cd backend
+python -m pytest -q
+```
+
 ## Important Limits
 
 - Use projected meter-based coordinates for calculation; the backend selects UTM from radar longitude/latitude.

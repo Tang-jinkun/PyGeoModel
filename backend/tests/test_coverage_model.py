@@ -1,0 +1,135 @@
+from pathlib import Path
+
+import numpy
+import pytest
+import rasterio
+from rasterio.transform import from_origin
+
+from app.core.errors import AppError
+from app.schemas.radar import CoverageRequest
+from app.services.coverage_model import (
+    default_simplify_tolerance,
+    prepare_coverage_dem,
+    vectorize_visible_viewshed,
+)
+from app.services.geometry import make_range_geometry
+from app.services.projection import utm_epsg_from_lonlat
+
+
+def test_utm_epsg_from_lonlat_northern_and_southern() -> None:
+    assert utm_epsg_from_lonlat(105.0, 35.0) == 32648
+    assert utm_epsg_from_lonlat(105.0, -12.0) == 32748
+
+
+def test_sector_geometry_uses_north_clockwise_azimuth() -> None:
+    geom = make_range_geometry(0, 0, 1000, "sector", 0, 60)
+    minx, miny, maxx, maxy = geom.bounds
+
+    assert maxy == pytest.approx(1000, abs=1)
+    assert miny == pytest.approx(0, abs=1)
+    assert minx < 0
+    assert maxx > 0
+
+
+def test_default_simplify_tolerance_uses_resolution_when_missing() -> None:
+    assert default_simplify_tolerance((30, 25), None) == 30
+    assert default_simplify_tolerance((30, 25), 5) == 5
+
+
+def test_prepare_coverage_dem_reprojects_crop(tmp_path: Path) -> None:
+    source = tmp_path / "source.tif"
+    destination = tmp_path / "projected.tif"
+    write_test_dem(source)
+
+    prepared = prepare_coverage_dem(source, destination, make_request(lon=105.0, lat=35.0, max_range_m=2000))
+
+    assert destination.exists()
+    assert prepared.target_epsg == 32648
+    assert prepared.radar_x > 0
+    assert prepared.radar_y > 0
+    assert prepared.resolution_m[0] > 0
+
+    with rasterio.open(destination) as dataset:
+        assert dataset.crs.to_epsg() == 32648
+        assert dataset.width < 100
+        assert dataset.height < 100
+
+
+def test_prepare_coverage_dem_rejects_outside_radar(tmp_path: Path) -> None:
+    source = tmp_path / "source.tif"
+    write_test_dem(source)
+
+    with pytest.raises(AppError) as exc_info:
+        prepare_coverage_dem(source, tmp_path / "projected.tif", make_request(lon=110.0, lat=35.0))
+
+    assert exc_info.value.code == "RADAR_OUTSIDE_DEM"
+
+
+def test_vectorize_visible_viewshed(tmp_path: Path) -> None:
+    viewshed = tmp_path / "viewshed.tif"
+    transform = from_origin(0, 40, 10, 10)
+    data = numpy.array(
+        [
+            [0, 255, 255, 0],
+            [0, 255, 255, 0],
+            [0, 0, 0, 0],
+            [0, 0, 0, 0],
+        ],
+        dtype=numpy.uint8,
+    )
+    with rasterio.open(
+        viewshed,
+        "w",
+        driver="GTiff",
+        width=4,
+        height=4,
+        count=1,
+        dtype=data.dtype,
+        crs="EPSG:32648",
+        transform=transform,
+    ) as dataset:
+        dataset.write(data, 1)
+
+    geom = vectorize_visible_viewshed(viewshed)
+
+    assert geom.area == pytest.approx(400)
+    assert geom.bounds == pytest.approx((10, 20, 30, 40))
+
+
+def write_test_dem(path: Path) -> None:
+    data = numpy.arange(10_000, dtype=numpy.float32).reshape((100, 100))
+    transform = from_origin(104.95, 35.05, 0.001, 0.001)
+    with rasterio.open(
+        path,
+        "w",
+        driver="GTiff",
+        width=100,
+        height=100,
+        count=1,
+        dtype=data.dtype,
+        crs="EPSG:4326",
+        transform=transform,
+        nodata=-9999,
+    ) as dataset:
+        dataset.write(data, 1)
+
+
+def make_request(lon: float, lat: float, max_range_m: float = 1000) -> CoverageRequest:
+    return CoverageRequest.model_validate(
+        {
+            "dem_id": "dem_test",
+            "radar": {"lon": lon, "lat": lat, "height_m": 10},
+            "target": {"height_m": 0},
+            "coverage": {
+                "max_range_m": max_range_m,
+                "scan_mode": "omni",
+                "azimuth_deg": 0,
+                "beam_width_deg": 360,
+            },
+            "advanced": {
+                "use_curvature": True,
+                "curvature_coeff": 0.75,
+                "output_simplify_tolerance_m": None,
+            },
+        }
+    )
