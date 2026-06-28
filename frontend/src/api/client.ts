@@ -15,9 +15,12 @@ export interface DemMetadata {
 
 export interface CoverageTaskStatus {
   task_id: string;
+  dem_id?: string | null;
   status: "pending" | "running" | "finished" | "failed";
   progress: number;
   message: string;
+  created_at?: string | null;
+  updated_at?: string | null;
   metrics?: {
     theoretical_area_m2: number;
     visible_area_m2: number;
@@ -92,6 +95,11 @@ export async function createCoverageTask(payload: CoverageRequest): Promise<Cove
     },
     body: JSON.stringify(payload)
   });
+  return handleResponse(response);
+}
+
+export async function listCoverageTasks(): Promise<CoverageTaskStatus[]> {
+  const response = await fetch(`${API_BASE}/api/radar/coverage`);
   return handleResponse(response);
 }
 

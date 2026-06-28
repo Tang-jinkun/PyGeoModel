@@ -2,10 +2,15 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, status
 
 from app.core.errors import AppError
 from app.schemas.radar import CoverageRequest, CoverageTaskStatus
-from app.services.task_store import create_task, get_task
+from app.services.task_store import create_task, get_task, list_tasks
 from app.workers.coverage_task import run_coverage_task
 
 router = APIRouter()
+
+
+@router.get("/coverage", response_model=list[CoverageTaskStatus])
+def list_coverage_tasks() -> list[CoverageTaskStatus]:
+    return list_tasks()
 
 
 @router.post("/coverage", response_model=CoverageTaskStatus, status_code=status.HTTP_202_ACCEPTED)

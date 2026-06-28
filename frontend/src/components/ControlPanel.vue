@@ -102,6 +102,17 @@
       <el-button type="primary" class="run-button" :loading="busy" :disabled="!dem" @click="$emit('run')">
         开始计算
       </el-button>
+
+      <el-form-item v-if="taskList.length" label="历史任务">
+        <el-select filterable placeholder="选择历史任务" @change="selectTask">
+          <el-option
+            v-for="item in taskList"
+            :key="item.task_id"
+            :label="taskLabel(item)"
+            :value="item.task_id"
+          />
+        </el-select>
+      </el-form-item>
     </el-form>
   </aside>
 </template>
@@ -110,18 +121,20 @@
 import type { UploadFile } from "element-plus";
 import { computed } from "vue";
 
-import type { CoverageRequest, DemMetadata } from "../api/client";
+import type { CoverageRequest, CoverageTaskStatus, DemMetadata } from "../api/client";
 
 const props = defineProps<{
   model: CoverageRequest;
   dem: DemMetadata | null;
   demList: DemMetadata[];
+  taskList: CoverageTaskStatus[];
   busy: boolean;
 }>();
 
 const emit = defineEmits<{
   upload: [file: File];
   selectDem: [demId: string];
+  selectTask: [taskId: string];
   run: [];
 }>();
 
@@ -141,6 +154,15 @@ function onFileChange(uploadFile: UploadFile) {
 
 function selectDem(demId: string) {
   emit("selectDem", demId);
+}
+
+function selectTask(taskId: string) {
+  emit("selectTask", taskId);
+}
+
+function taskLabel(task: CoverageTaskStatus) {
+  const time = task.created_at ? new Date(task.created_at).toLocaleString() : task.task_id;
+  return `${task.status} · ${time}`;
 }
 
 function formatFileSize(value?: number | null) {

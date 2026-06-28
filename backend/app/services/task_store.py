@@ -19,13 +19,25 @@ def _task_path(task_id: str) -> Path:
 
 
 def create_task(payload: CoverageRequest) -> CoverageTaskStatus:
+    now = utc_now()
     task_id = f"task_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_{uuid4().hex[:8]}"
-    task = CoverageTaskStatus(task_id=task_id, status="pending", progress=0, message="queued")
+    task = CoverageTaskStatus(
+        task_id=task_id,
+        dem_id=payload.dem_id,
+        status="pending",
+        progress=0,
+        message="queued",
+        created_at=now,
+        updated_at=now,
+    )
     save_task(task, payload)
     return task
 
 
 def save_task(task: CoverageTaskStatus, payload: CoverageRequest | None = None) -> None:
+    if task.created_at is None:
+        task.created_at = utc_now()
+    task.updated_at = utc_now()
     data = {"task": task.model_dump()}
     if payload is not None:
         data["payload"] = payload.model_dump()
@@ -43,7 +55,23 @@ def get_task(task_id: str) -> CoverageTaskStatus:
     if not path.exists():
         raise AppError("TASK_NOT_FOUND", f"Task '{task_id}' was not found.", status_code=404)
     data = json.loads(path.read_text(encoding="utf-8"))
-    return CoverageTaskStatus.model_validate(data["task"])
+    task = CoverageTaskStatus.model_validate(data["task"])
+    payload = data.get("payload")
+    if task.dem_id is None and payload:
+        task.dem_id = payload.get("dem_id")
+    return task
+
+
+def list_tasks() -> list[CoverageTaskStatus]:
+    tasks: list[CoverageTaskStatus] = []
+    for path in settings.tasks_dir.glob("task_*.json"):
+        data = json.loads(path.read_text(encoding="utf-8"))
+        task = CoverageTaskStatus.model_validate(data["task"])
+        payload = data.get("payload")
+        if task.dem_id is None and payload:
+            task.dem_id = payload.get("dem_id")
+        tasks.append(task)
+    return sorted(tasks, key=lambda item: item.created_at or item.task_id, reverse=True)
 
 
 def mark_running(task_id: str, message: str, progress: int = 10) -> None:
@@ -78,3 +106,7 @@ def mark_failed(task_id: str, message: str) -> None:
     task.progress = 100
     task.message = message
     save_task(task)
+
+
+def utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat()

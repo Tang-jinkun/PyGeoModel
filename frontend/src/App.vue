@@ -4,9 +4,11 @@
       :model="coverageRequest"
       :dem="dem"
       :dem-list="demList"
+      :task-list="taskList"
       :busy="busy"
       @upload="handleUpload"
       @select-dem="handleSelectDem"
+      @select-task="handleSelectTask"
       @run="handleRun"
     />
 
@@ -25,6 +27,7 @@ import { onMounted, reactive, ref, shallowRef } from "vue";
 import {
   createCoverageTask,
   getCoverageTask,
+  listCoverageTasks,
   listDems,
   resolveAssetUrl,
   uploadDem,
@@ -41,6 +44,7 @@ const map = shallowRef<maplibregl.Map | null>(null);
 const dem = ref<DemMetadata | null>(null);
 const demList = ref<DemMetadata[]>([]);
 const task = ref<CoverageTaskStatus | null>(null);
+const taskList = ref<CoverageTaskStatus[]>([]);
 const busy = ref(false);
 
 const coverageRequest = reactive<CoverageRequest>({
@@ -68,6 +72,7 @@ const coverageRequest = reactive<CoverageRequest>({
 
 onMounted(() => {
   void refreshDemList();
+  void refreshTaskList();
 
   if (!mapContainer.value) {
     return;
@@ -123,6 +128,14 @@ async function refreshDemList() {
   }
 }
 
+async function refreshTaskList() {
+  try {
+    taskList.value = await listCoverageTasks();
+  } catch {
+    taskList.value = [];
+  }
+}
+
 function handleSelectDem(demId: string) {
   const selected = demList.value.find((item) => item.dem_id === demId);
   if (!selected) {
@@ -148,6 +161,7 @@ async function handleRun() {
   try {
     addRadarMarker(map.value!, coverageRequest.radar.lon, coverageRequest.radar.lat);
     task.value = await createCoverageTask(coverageRequest);
+    await refreshTaskList();
     await pollTask(task.value.task_id);
   } catch (error) {
     ElMessage.error(error instanceof Error ? error.message : "计算失败");
@@ -160,6 +174,7 @@ async function pollTask(taskId: string) {
   for (;;) {
     await new Promise((resolve) => window.setTimeout(resolve, 1500));
     task.value = await getCoverageTask(taskId);
+    void refreshTaskList();
     if (task.value.status === "finished") {
       loadOutputs(task.value);
       ElMessage.success("计算完成");
@@ -168,6 +183,21 @@ async function pollTask(taskId: string) {
     if (task.value.status === "failed") {
       throw new Error(task.value.message || "计算失败");
     }
+  }
+}
+
+async function handleSelectTask(taskId: string) {
+  try {
+    const selected = await getCoverageTask(taskId);
+    task.value = selected;
+    if (selected.status === "finished") {
+      loadOutputs(selected);
+      ElMessage.success("历史任务已加载");
+      return;
+    }
+    ElMessage.info(`任务状态：${selected.status}`);
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : "加载历史任务失败");
   }
 }
 

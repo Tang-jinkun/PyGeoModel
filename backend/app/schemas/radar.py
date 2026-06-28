@@ -78,9 +78,12 @@ class CoverageModelMetadata(BaseModel):
 
 class CoverageTaskStatus(BaseModel):
     task_id: str
+    dem_id: str | None = None
     status: Literal["pending", "running", "finished", "failed"]
     progress: int = Field(default=0, ge=0, le=100)
     message: str = ""
+    created_at: str | None = None
+    updated_at: str | None = None
     metrics: CoverageMetrics | None = None
     outputs: CoverageOutputs | None = None
     model: CoverageModelMetadata | None = None
