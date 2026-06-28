@@ -1,0 +1,22 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    environment:
+      PYGEOMODEL_DATA_DIR: /workspace/data
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/workspace/data
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    environment:
+      VITE_API_BASE: ""
+    ports:
+      - "5173:5173"
+    depends_on:
+      - backend

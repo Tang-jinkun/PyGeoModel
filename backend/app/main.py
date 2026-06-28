@@ -1,0 +1,36 @@
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+
+from app.api import dem, radar
+from app.core.config import settings
+
+
+def create_app() -> FastAPI:
+    app = FastAPI(
+        title="PyGeoModel API",
+        description="DEM-based radar terrain coverage analysis service.",
+        version="0.1.0",
+    )
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.cors_origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    settings.ensure_directories()
+    app.mount("/outputs", StaticFiles(directory=settings.outputs_dir), name="outputs")
+    app.include_router(dem.router, prefix="/api/dem", tags=["DEM"])
+    app.include_router(radar.router, prefix="/api/radar", tags=["Radar"])
+
+    @app.get("/api/health")
+    def health() -> dict[str, str]:
+        return {"status": "ok"}
+
+    return app
+
+
+app = create_app()

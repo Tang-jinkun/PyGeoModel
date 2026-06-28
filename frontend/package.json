@@ -1,0 +1,22 @@
+{
+  "name": "pygeomodel-frontend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "vue-tsc -b && vite build",
+    "preview": "vite preview --host 0.0.0.0"
+  },
+  "dependencies": {
+    "@vitejs/plugin-vue": "5.2.1",
+    "element-plus": "2.9.3",
+    "maplibre-gl": "4.7.1",
+    "vue": "3.5.13"
+  },
+  "devDependencies": {
+    "typescript": "5.7.3",
+    "vite": "6.0.7",
+    "vue-tsc": "2.2.0"
+  }
+}
