@@ -115,6 +115,11 @@ body {
   width: 100%;
 }
 
+.restore-button {
+  width: 100%;
+  margin-top: 8px;
+}
+
 .run-button {
   width: 100%;
   margin-top: 6px;
@@ -174,6 +179,22 @@ body {
   font-weight: 650;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.link-button {
+  width: fit-content;
+  padding: 0;
+  color: #2563eb;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 650;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.link-button:hover {
+  text-decoration: underline;
 }
 
 .result-panel .warnings {

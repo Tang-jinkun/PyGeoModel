@@ -2,7 +2,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, status
 from fastapi.responses import FileResponse
 
 from app.core.errors import AppError
-from app.schemas.radar import CoverageOutputFile, CoverageOutputKind, CoverageRequest, CoverageTaskStatus
+from app.schemas.radar import CoverageOutputFile, CoverageOutputKind, CoverageRequest, CoverageTaskStatus, CoverageTaskSummary
 from app.services.output_files import list_task_output_files, resolve_task_output_path
 from app.services.task_store import create_task, get_task, list_tasks
 from app.workers.coverage_task import run_coverage_task
@@ -10,8 +10,8 @@ from app.workers.coverage_task import run_coverage_task
 router = APIRouter()
 
 
-@router.get("/coverage", response_model=list[CoverageTaskStatus])
-def list_coverage_tasks() -> list[CoverageTaskStatus]:
+@router.get("/coverage", response_model=list[CoverageTaskSummary])
+def list_coverage_tasks() -> list[CoverageTaskSummary]:
     return list_tasks()
 
 

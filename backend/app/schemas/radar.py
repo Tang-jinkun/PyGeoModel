@@ -98,7 +98,7 @@ class CoverageModelMetadata(BaseModel):
     gdal_viewshed_command: list[str] = Field(default_factory=list)
 
 
-class CoverageTaskStatus(BaseModel):
+class CoverageTaskSummary(BaseModel):
     task_id: str
     dem_id: str | None = None
     status: Literal["pending", "running", "finished", "failed"]
@@ -111,3 +111,7 @@ class CoverageTaskStatus(BaseModel):
     output_files: list[CoverageOutputFile] = Field(default_factory=list)
     model: CoverageModelMetadata | None = None
     warnings: list[str] = Field(default_factory=list)
+
+
+class CoverageTaskStatus(CoverageTaskSummary):
+    request: CoverageRequest | None = None

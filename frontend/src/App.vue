@@ -6,18 +6,20 @@
       :dem-list="demList"
       :task-list="taskList"
       :selected-task-id="selectedTaskId"
+      :selected-task-request="task?.request ?? null"
       :task-list-loading="taskListLoading"
       :busy="busy"
       @upload="handleUpload"
       @select-dem="handleSelectDem"
       @select-task="handleSelectTask"
+      @restore-request="restoreRequest"
       @refresh-tasks="refreshTaskList"
       @run="handleRun"
     />
 
     <section class="map-shell">
       <div ref="mapContainer" class="map-container"></div>
-      <ResultPanel :task="task" />
+      <ResultPanel :task="task" @restore-request="restoreRequest" />
     </section>
   </main>
 </template>
@@ -35,6 +37,7 @@ import {
   resolveAssetUrl,
   uploadDem,
   type CoverageRequest,
+  type CoverageTaskSummary,
   type CoverageTaskStatus,
   type DemMetadata
 } from "./api/client";
@@ -47,7 +50,7 @@ const map = shallowRef<maplibregl.Map | null>(null);
 const dem = ref<DemMetadata | null>(null);
 const demList = ref<DemMetadata[]>([]);
 const task = ref<CoverageTaskStatus | null>(null);
-const taskList = ref<CoverageTaskStatus[]>([]);
+const taskList = ref<CoverageTaskSummary[]>([]);
 const selectedTaskId = ref<string | null>(null);
 const taskListLoading = ref(false);
 let pollToken = 0;
@@ -222,6 +225,30 @@ async function handleSelectTask(taskId: string) {
   } catch (error) {
     ElMessage.error(error instanceof Error ? error.message : "加载历史任务失败");
   }
+}
+
+function restoreRequest(request: CoverageRequest) {
+  pollToken++;
+  coverageRequest.dem_id = request.dem_id;
+  coverageRequest.radar.lon = request.radar.lon;
+  coverageRequest.radar.lat = request.radar.lat;
+  coverageRequest.radar.height_m = request.radar.height_m;
+  coverageRequest.target.height_m = request.target.height_m;
+  coverageRequest.coverage.max_range_m = request.coverage.max_range_m;
+  coverageRequest.coverage.scan_mode = request.coverage.scan_mode;
+  coverageRequest.coverage.azimuth_deg = request.coverage.azimuth_deg;
+  coverageRequest.coverage.beam_width_deg = request.coverage.beam_width_deg;
+  coverageRequest.advanced.use_curvature = request.advanced.use_curvature;
+  coverageRequest.advanced.curvature_coeff = request.advanced.curvature_coeff;
+  coverageRequest.advanced.output_simplify_tolerance_m = request.advanced.output_simplify_tolerance_m;
+
+  dem.value = demList.value.find((item) => item.dem_id === request.dem_id) ?? dem.value;
+  if (map.value) {
+    removeResultLayers(map.value);
+    addRadarMarker(map.value, request.radar.lon, request.radar.lat);
+    map.value.flyTo({ center: [request.radar.lon, request.radar.lat], zoom: 9 });
+  }
+  ElMessage.success("历史参数已恢复到表单");
 }
 
 function loadOutputs(result: CoverageTaskStatus) {

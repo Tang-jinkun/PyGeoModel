@@ -16,6 +16,13 @@ def test_create_task_stores_runtime_fields(tmp_path: Path) -> None:
     assert stored.dem_id == "dem_a"
     assert stored.created_at is not None
     assert stored.updated_at is not None
+    assert stored.request is not None
+    assert stored.request.dem_id == "dem_a"
+
+    task_file = next((tmp_path / "tasks").glob("task_*.json"))
+    payload = json.loads(task_file.read_text(encoding="utf-8"))
+    assert "payload" in payload
+    assert "request" not in payload["task"]
 
 
 def test_list_tasks_sorted_and_infers_legacy_dem_id(tmp_path: Path) -> None:
@@ -29,6 +36,11 @@ def test_list_tasks_sorted_and_infers_legacy_dem_id(tmp_path: Path) -> None:
 
     assert [task.task_id for task in tasks] == ["task_new", "task_old"]
     assert tasks[0].dem_id == "dem_new"
+    assert not hasattr(tasks[0], "request")
+
+    detail = get_task("task_new")
+    assert detail.request is not None
+    assert detail.request.dem_id == "dem_new"
 
 
 def test_mark_running_updates_timestamp(tmp_path: Path) -> None:
@@ -79,6 +91,14 @@ def write_legacy_task(root: Path, task_id: str, dem_id: str, created_at: str) ->
                 },
                 "payload": {
                     "dem_id": dem_id,
+                    "radar": {"lon": 105, "lat": 35, "height_m": 10},
+                    "target": {"height_m": 0},
+                    "coverage": {
+                        "max_range_m": 1000,
+                        "scan_mode": "omni",
+                        "azimuth_deg": 0,
+                        "beam_width_deg": 360,
+                    },
                 },
             }
         ),

@@ -37,6 +37,13 @@
       <a v-if="metadataUrl" :href="metadataUrl" target="_blank" rel="noreferrer">model_metadata.json</a>
       <span v-else>-</span>
     </div>
+    <div>
+      <strong>参数</strong>
+      <button v-if="task?.request" class="link-button" type="button" @click="$emit('restoreRequest', task.request)">
+        恢复到表单
+      </button>
+      <span v-else>-</span>
+    </div>
     <div class="download-list">
       <strong>结果下载</strong>
       <a
@@ -65,6 +72,10 @@ import { resolveAssetUrl, type CoverageTaskStatus } from "../api/client";
 
 const props = defineProps<{
   task: CoverageTaskStatus | null;
+}>();
+
+defineEmits<{
+  restoreRequest: [request: NonNullable<CoverageTaskStatus["request"]>];
 }>();
 
 const metadataUrl = computed(() => resolveAssetUrl(props.task?.outputs?.model_metadata_json));

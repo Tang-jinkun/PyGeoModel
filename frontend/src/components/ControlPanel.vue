@@ -115,6 +115,13 @@
           </el-select>
           <el-button :loading="taskListLoading" @click="$emit('refreshTasks')">刷新</el-button>
         </div>
+        <el-button
+          class="restore-button"
+          :disabled="!selectedTaskRequest"
+          @click="restoreSelectedRequest"
+        >
+          恢复历史参数
+        </el-button>
       </el-form-item>
     </el-form>
   </aside>
@@ -124,14 +131,15 @@
 import type { UploadFile } from "element-plus";
 import { computed } from "vue";
 
-import type { CoverageRequest, CoverageTaskStatus, DemMetadata } from "../api/client";
+import type { CoverageRequest, CoverageTaskSummary, DemMetadata } from "../api/client";
 
 const props = defineProps<{
   model: CoverageRequest;
   dem: DemMetadata | null;
   demList: DemMetadata[];
-  taskList: CoverageTaskStatus[];
+  taskList: CoverageTaskSummary[];
   selectedTaskId: string | null;
+  selectedTaskRequest: CoverageRequest | null;
   taskListLoading: boolean;
   busy: boolean;
 }>();
@@ -140,6 +148,7 @@ const emit = defineEmits<{
   upload: [file: File];
   selectDem: [demId: string];
   selectTask: [taskId: string];
+  restoreRequest: [request: CoverageRequest];
   refreshTasks: [];
   run: [];
 }>();
@@ -166,7 +175,13 @@ function selectTask(taskId: string) {
   emit("selectTask", taskId);
 }
 
-function taskLabel(task: CoverageTaskStatus) {
+function restoreSelectedRequest() {
+  if (props.selectedTaskRequest) {
+    emit("restoreRequest", props.selectedTaskRequest);
+  }
+}
+
+function taskLabel(task: CoverageTaskSummary) {
   const time = task.created_at ? new Date(task.created_at).toLocaleString() : task.task_id;
   const taskShortId = task.task_id.replace(/^task_/, "").slice(-8);
   const fileCount = task.output_files?.filter((item) => item.exists).length ?? 0;

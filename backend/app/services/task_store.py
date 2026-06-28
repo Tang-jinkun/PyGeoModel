@@ -11,6 +11,7 @@ from app.schemas.radar import (
     CoverageOutputFile,
     CoverageOutputs,
     CoverageRequest,
+    CoverageTaskSummary,
     CoverageTaskStatus,
 )
 
@@ -30,6 +31,7 @@ def create_task(payload: CoverageRequest) -> CoverageTaskStatus:
         message="queued",
         created_at=now,
         updated_at=now,
+        request=payload,
     )
     save_task(task, payload)
     return task
@@ -39,7 +41,9 @@ def save_task(task: CoverageTaskStatus, payload: CoverageRequest | None = None) 
     if task.created_at is None:
         task.created_at = utc_now()
     task.updated_at = utc_now()
-    data = {"task": task.model_dump()}
+    if payload is not None:
+        task.request = payload
+    data = {"task": task.model_dump(exclude={"request"})}
     if payload is not None:
         data["payload"] = payload.model_dump()
     existing_payload = None
@@ -48,6 +52,8 @@ def save_task(task: CoverageTaskStatus, payload: CoverageRequest | None = None) 
         existing_payload = json.loads(path.read_text(encoding="utf-8")).get("payload")
     if existing_payload is not None:
         data["payload"] = existing_payload
+    elif task.request is not None:
+        data["payload"] = task.request.model_dump()
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
@@ -56,18 +62,21 @@ def get_task(task_id: str) -> CoverageTaskStatus:
     if not path.exists():
         raise AppError("TASK_NOT_FOUND", f"Task '{task_id}' was not found.", status_code=404)
     data = json.loads(path.read_text(encoding="utf-8"))
-    task = CoverageTaskStatus.model_validate(data["task"])
+    task_data = data["task"]
+    task = CoverageTaskStatus.model_validate(task_data)
     payload = data.get("payload")
     if task.dem_id is None and payload:
         task.dem_id = payload.get("dem_id")
+    request = parse_request(payload) or task.request
+    task.request = request
     return task
 
 
-def list_tasks() -> list[CoverageTaskStatus]:
-    tasks: list[CoverageTaskStatus] = []
+def list_tasks() -> list[CoverageTaskSummary]:
+    tasks: list[CoverageTaskSummary] = []
     for path in settings.tasks_dir.glob("task_*.json"):
         data = json.loads(path.read_text(encoding="utf-8"))
-        task = CoverageTaskStatus.model_validate(data["task"])
+        task = CoverageTaskSummary.model_validate(data["task"])
         payload = data.get("payload")
         if task.dem_id is None and payload:
             task.dem_id = payload.get("dem_id")
@@ -113,3 +122,12 @@ def mark_failed(task_id: str, message: str) -> None:
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def parse_request(payload) -> CoverageRequest | None:
+    if not payload:
+        return None
+    try:
+        return CoverageRequest.model_validate(payload)
+    except Exception:
+        return None

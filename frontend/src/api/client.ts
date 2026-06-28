@@ -13,7 +13,18 @@ export interface DemMetadata {
   uploaded_at?: string | null;
 }
 
-export interface CoverageTaskStatus {
+export interface CoverageOutputFile {
+  kind: string;
+  label: string;
+  url: string;
+  download_url: string;
+  filename: string;
+  media_type: string;
+  size_bytes?: number | null;
+  exists: boolean;
+}
+
+export interface CoverageTaskSummary {
   task_id: string;
   dem_id?: string | null;
   status: "pending" | "running" | "finished" | "failed";
@@ -35,16 +46,7 @@ export interface CoverageTaskStatus {
     model_metadata_json?: string | null;
     output_manifest_json?: string | null;
   } | null;
-  output_files: Array<{
-    kind: string;
-    label: string;
-    url: string;
-    download_url: string;
-    filename: string;
-    media_type: string;
-    size_bytes?: number | null;
-    exists: boolean;
-  }>;
+  output_files: CoverageOutputFile[];
   model?: {
     target_epsg: number;
     radar_projected_xy: number[];
@@ -58,6 +60,10 @@ export interface CoverageTaskStatus {
     gdal_viewshed_command: string[];
   } | null;
   warnings: string[];
+}
+
+export interface CoverageTaskStatus extends CoverageTaskSummary {
+  request?: CoverageRequest | null;
 }
 
 export interface CoverageRequest {
@@ -109,7 +115,7 @@ export async function createCoverageTask(payload: CoverageRequest): Promise<Cove
   return handleResponse(response);
 }
 
-export async function listCoverageTasks(): Promise<CoverageTaskStatus[]> {
+export async function listCoverageTasks(): Promise<CoverageTaskSummary[]> {
   const response = await fetch(`${API_BASE}/api/radar/coverage`);
   return handleResponse(response);
 }
