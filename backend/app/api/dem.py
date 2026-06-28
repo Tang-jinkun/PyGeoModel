@@ -2,7 +2,7 @@ from fastapi import APIRouter, File, HTTPException, UploadFile, status
 
 from app.core.errors import AppError
 from app.schemas.dem import DemMetadata
-from app.services.dem_store import save_dem_upload
+from app.services.dem_store import list_dem_metadata, read_dem_metadata, save_dem_upload
 
 router = APIRouter()
 
@@ -14,5 +14,18 @@ async def upload_dem(file: UploadFile = File(...)) -> DemMetadata:
 
     try:
         return await save_dem_upload(file)
+    except AppError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.as_detail()) from exc
+
+
+@router.get("", response_model=list[DemMetadata])
+def list_dems() -> list[DemMetadata]:
+    return list_dem_metadata()
+
+
+@router.get("/{dem_id}", response_model=DemMetadata)
+def get_dem(dem_id: str) -> DemMetadata:
+    try:
+        return read_dem_metadata(dem_id)
     except AppError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.as_detail()) from exc

@@ -60,6 +60,20 @@ class CoverageOutputs(BaseModel):
     visible_geojson: str | None = None
     blocked_geojson: str | None = None
     range_geojson: str | None = None
+    model_metadata_json: str | None = None
+
+
+class CoverageModelMetadata(BaseModel):
+    target_epsg: int
+    radar_projected_xy: list[float]
+    projected_dem_bounds: list[float]
+    projected_dem_resolution_m: list[float]
+    max_range_m: float
+    scan_mode: str
+    azimuth_deg: float
+    beam_width_deg: float
+    simplify_tolerance_m: float
+    gdal_viewshed_command: list[str] = Field(default_factory=list)
 
 
 class CoverageTaskStatus(BaseModel):
@@ -69,3 +83,5 @@ class CoverageTaskStatus(BaseModel):
     message: str = ""
     metrics: CoverageMetrics | None = None
     outputs: CoverageOutputs | None = None
+    model: CoverageModelMetadata | None = None
+    warnings: list[str] = Field(default_factory=list)

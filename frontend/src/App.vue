@@ -1,6 +1,14 @@
 <template>
   <main class="app-shell">
-    <ControlPanel :model="coverageRequest" :dem="dem" :busy="busy" @upload="handleUpload" @run="handleRun" />
+    <ControlPanel
+      :model="coverageRequest"
+      :dem="dem"
+      :dem-list="demList"
+      :busy="busy"
+      @upload="handleUpload"
+      @select-dem="handleSelectDem"
+      @run="handleRun"
+    />
 
     <section class="map-shell">
       <div ref="mapContainer" class="map-container"></div>
@@ -17,6 +25,7 @@ import { onMounted, reactive, ref, shallowRef } from "vue";
 import {
   createCoverageTask,
   getCoverageTask,
+  listDems,
   resolveAssetUrl,
   uploadDem,
   type CoverageRequest,
@@ -30,6 +39,7 @@ import { addOrUpdateGeoJsonLayer, addRadarMarker } from "./map/mapLayers";
 const mapContainer = ref<HTMLDivElement | null>(null);
 const map = shallowRef<maplibregl.Map | null>(null);
 const dem = ref<DemMetadata | null>(null);
+const demList = ref<DemMetadata[]>([]);
 const task = ref<CoverageTaskStatus | null>(null);
 const busy = ref(false);
 
@@ -57,6 +67,8 @@ const coverageRequest = reactive<CoverageRequest>({
 });
 
 onMounted(() => {
+  void refreshDemList();
+
   if (!mapContainer.value) {
     return;
   }
@@ -88,6 +100,7 @@ async function handleUpload(file: File) {
   try {
     dem.value = await uploadDem(file);
     coverageRequest.dem_id = dem.value.dem_id;
+    await refreshDemList();
     if (dem.value.bounds.length === 4) {
       const [minLon, minLat, maxLon, maxLat] = dem.value.bounds;
       coverageRequest.radar.lon = Number(((minLon + maxLon) / 2).toFixed(6));
@@ -99,6 +112,29 @@ async function handleUpload(file: File) {
     ElMessage.error(error instanceof Error ? error.message : "DEM 上传失败");
   } finally {
     busy.value = false;
+  }
+}
+
+async function refreshDemList() {
+  try {
+    demList.value = await listDems();
+  } catch {
+    demList.value = [];
+  }
+}
+
+function handleSelectDem(demId: string) {
+  const selected = demList.value.find((item) => item.dem_id === demId);
+  if (!selected) {
+    return;
+  }
+  dem.value = selected;
+  coverageRequest.dem_id = selected.dem_id;
+  if (selected.bounds.length === 4) {
+    const [minLon, minLat, maxLon, maxLat] = selected.bounds;
+    coverageRequest.radar.lon = Number(((minLon + maxLon) / 2).toFixed(6));
+    coverageRequest.radar.lat = Number(((minLat + maxLat) / 2).toFixed(6));
+    map.value?.flyTo({ center: [coverageRequest.radar.lon, coverageRequest.radar.lat], zoom: 9 });
   }
 }
 

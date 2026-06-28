@@ -64,6 +64,8 @@ def read_dem_metadata(dem_id: str, path: Path | None = None) -> DemMetadata:
                 width=dataset.width,
                 height=dataset.height,
                 nodata=dataset.nodata,
+                file_size_bytes=path.stat().st_size,
+                uploaded_at=datetime.now(timezone.utc).isoformat(),
             )
     except AppError:
         raise
@@ -86,4 +88,4 @@ def list_dem_metadata() -> list[DemMetadata]:
     for metadata_file in settings.dem_dir.glob("dem_*/metadata.json"):
         data = json.loads(metadata_file.read_text(encoding="utf-8"))
         results.append(DemMetadata.model_validate(data))
-    return results
+    return sorted(results, key=lambda item: item.uploaded_at or "", reverse=True)

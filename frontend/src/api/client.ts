@@ -9,6 +9,8 @@ export interface DemMetadata {
   width: number;
   height: number;
   nodata: number | null;
+  file_size_bytes?: number | null;
+  uploaded_at?: string | null;
 }
 
 export interface CoverageTaskStatus {
@@ -27,7 +29,21 @@ export interface CoverageTaskStatus {
     visible_geojson?: string | null;
     blocked_geojson?: string | null;
     range_geojson?: string | null;
+    model_metadata_json?: string | null;
   } | null;
+  model?: {
+    target_epsg: number;
+    radar_projected_xy: number[];
+    projected_dem_bounds: number[];
+    projected_dem_resolution_m: number[];
+    max_range_m: number;
+    scan_mode: string;
+    azimuth_deg: number;
+    beam_width_deg: number;
+    simplify_tolerance_m: number;
+    gdal_viewshed_command: string[];
+  } | null;
+  warnings: string[];
 }
 
 export interface CoverageRequest {
@@ -60,6 +76,11 @@ export async function uploadDem(file: File): Promise<DemMetadata> {
     method: "POST",
     body: form
   });
+  return handleResponse(response);
+}
+
+export async function listDems(): Promise<DemMetadata[]> {
+  const response = await fetch(`${API_BASE}/api/dem`);
   return handleResponse(response);
 }
 

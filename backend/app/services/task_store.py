@@ -5,7 +5,13 @@ from uuid import uuid4
 
 from app.core.config import settings
 from app.core.errors import AppError
-from app.schemas.radar import CoverageMetrics, CoverageOutputs, CoverageRequest, CoverageTaskStatus
+from app.schemas.radar import (
+    CoverageMetrics,
+    CoverageModelMetadata,
+    CoverageOutputs,
+    CoverageRequest,
+    CoverageTaskStatus,
+)
 
 
 def _task_path(task_id: str) -> Path:
@@ -48,13 +54,21 @@ def mark_running(task_id: str, message: str, progress: int = 10) -> None:
     save_task(task)
 
 
-def mark_finished(task_id: str, metrics: CoverageMetrics, outputs: CoverageOutputs) -> None:
+def mark_finished(
+    task_id: str,
+    metrics: CoverageMetrics,
+    outputs: CoverageOutputs,
+    model: CoverageModelMetadata | None = None,
+    warnings: list[str] | None = None,
+) -> None:
     task = get_task(task_id)
     task.status = "finished"
     task.progress = 100
     task.message = "finished"
     task.metrics = metrics
     task.outputs = outputs
+    task.model = model
+    task.warnings = warnings or []
     save_task(task)
 
 

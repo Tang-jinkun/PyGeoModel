@@ -24,15 +24,35 @@
       <strong>遮挡比例</strong>
       <span>{{ formatRatio(task?.metrics?.blocked_ratio) }}</span>
     </div>
+    <div>
+      <strong>模型 EPSG</strong>
+      <span>{{ task?.model?.target_epsg ?? "-" }}</span>
+    </div>
+    <div>
+      <strong>Warning</strong>
+      <span>{{ task?.warnings?.length ? `${task.warnings.length} 条` : "无" }}</span>
+    </div>
+    <div>
+      <strong>元数据</strong>
+      <a v-if="metadataUrl" :href="metadataUrl" target="_blank" rel="noreferrer">model_metadata.json</a>
+      <span v-else>-</span>
+    </div>
+    <p v-if="task?.warnings?.length" class="warnings">
+      {{ task.warnings.join("；") }}
+    </p>
   </section>
 </template>
 
 <script setup lang="ts">
-import type { CoverageTaskStatus } from "../api/client";
+import { computed } from "vue";
 
-defineProps<{
+import { resolveAssetUrl, type CoverageTaskStatus } from "../api/client";
+
+const props = defineProps<{
   task: CoverageTaskStatus | null;
 }>();
+
+const metadataUrl = computed(() => resolveAssetUrl(props.task?.outputs?.model_metadata_json));
 
 function formatArea(value?: number | null) {
   if (value == null) {

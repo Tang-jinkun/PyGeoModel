@@ -10,3 +10,5 @@ class DemMetadata(BaseModel):
     width: int
     height: int
     nodata: float | None = None
+    file_size_bytes: int | None = None
+    uploaded_at: str | None = None

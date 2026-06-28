@@ -22,7 +22,19 @@
         <div><strong>CRS</strong><span>{{ dem.crs }}</span></div>
         <div><strong>Size</strong><span>{{ dem.width }} × {{ dem.height }}</span></div>
         <div><strong>Resolution</strong><span>{{ dem.resolution.map((v) => v.toFixed(2)).join(" / ") }}</span></div>
+        <div><strong>File</strong><span>{{ formatFileSize(dem.file_size_bytes) }}</span></div>
       </div>
+
+      <el-form-item v-if="demList.length" label="已上传 DEM">
+        <el-select :model-value="dem?.dem_id" filterable placeholder="选择历史 DEM" @change="selectDem">
+          <el-option
+            v-for="item in demList"
+            :key="item.dem_id"
+            :label="item.filename"
+            :value="item.dem_id"
+          />
+        </el-select>
+      </el-form-item>
 
       <div class="form-grid">
         <el-form-item label="经度">
@@ -103,11 +115,13 @@ import type { CoverageRequest, DemMetadata } from "../api/client";
 const props = defineProps<{
   model: CoverageRequest;
   dem: DemMetadata | null;
+  demList: DemMetadata[];
   busy: boolean;
 }>();
 
 const emit = defineEmits<{
   upload: [file: File];
+  selectDem: [demId: string];
   run: [];
 }>();
 
@@ -123,5 +137,19 @@ function onFileChange(uploadFile: UploadFile) {
   if (raw) {
     emit("upload", raw);
   }
+}
+
+function selectDem(demId: string) {
+  emit("selectDem", demId);
+}
+
+function formatFileSize(value?: number | null) {
+  if (value == null) {
+    return "-";
+  }
+  if (value > 1024 * 1024) {
+    return `${(value / 1024 / 1024).toFixed(1)} MB`;
+  }
+  return `${(value / 1024).toFixed(1)} KB`;
 }
 </script>

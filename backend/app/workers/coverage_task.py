@@ -4,11 +4,11 @@ import subprocess
 from pathlib import Path
 
 from pyproj import Transformer
-from shapely.geometry import mapping
+from shapely.geometry import box, mapping
 
 from app.core.config import settings
 from app.core.errors import AppError
-from app.schemas.radar import CoverageMetrics, CoverageOutputs, CoverageRequest
+from app.schemas.radar import CoverageMetrics, CoverageModelMetadata, CoverageOutputs, CoverageRequest
 from app.services.dem_store import find_dem_file
 from app.services.coverage_model import (
     PreparedCoverageDem,
@@ -33,16 +33,23 @@ def run_coverage_task(task_id: str, payload: CoverageRequest) -> None:
         prepared = prepare_coverage_dem(dem_path, projected_dem, payload)
 
         mark_running(task_id, "Running gdal_viewshed.", 45)
-        _run_gdal_viewshed(projected_dem, viewshed, prepared.radar_x, prepared.radar_y, payload)
+        gdal_command = _run_gdal_viewshed(projected_dem, viewshed, prepared.radar_x, prepared.radar_y, payload)
 
         mark_running(task_id, "Vectorizing viewshed outputs.", 80)
-        outputs, metrics = _write_vector_outputs(task_id, output_dir, prepared, payload, viewshed)
-        mark_finished(task_id, metrics=metrics, outputs=outputs)
+        outputs, metrics, model, warnings = _write_vector_outputs(
+            task_id,
+            output_dir,
+            prepared,
+            payload,
+            viewshed,
+            gdal_command,
+        )
+        mark_finished(task_id, metrics=metrics, outputs=outputs, model=model, warnings=warnings)
     except Exception as exc:
         mark_failed(task_id, str(exc))
 
 
-def _run_gdal_viewshed(dem: Path, viewshed: Path, radar_x: float, radar_y: float, payload: CoverageRequest) -> None:
+def _run_gdal_viewshed(dem: Path, viewshed: Path, radar_x: float, radar_y: float, payload: CoverageRequest) -> list[str]:
     if shutil.which("gdal_viewshed") is None:
         raise AppError("GDAL_VIEWSHED_NOT_FOUND", "gdal_viewshed command is not available.", status_code=500)
 
@@ -69,6 +76,7 @@ def _run_gdal_viewshed(dem: Path, viewshed: Path, radar_x: float, radar_y: float
     result = subprocess.run(command, capture_output=True, text=True, check=False)
     if result.returncode != 0:
         raise AppError("GDAL_VIEWSHED_FAILED", result.stderr.strip() or "gdal_viewshed failed.", status_code=500)
+    return command
 
 
 def _write_vector_outputs(
@@ -77,7 +85,8 @@ def _write_vector_outputs(
     prepared: PreparedCoverageDem,
     payload: CoverageRequest,
     viewshed: Path,
-) -> tuple[CoverageOutputs, CoverageMetrics]:
+    gdal_command: list[str],
+) -> tuple[CoverageOutputs, CoverageMetrics, CoverageModelMetadata, list[str]]:
     range_geom = make_range_geometry(
         prepared.radar_x,
         prepared.radar_y,
@@ -100,6 +109,7 @@ def _write_vector_outputs(
     range_geojson = output_dir / "radar_range.geojson"
     visible_geojson = output_dir / "visible.geojson"
     blocked_geojson = output_dir / "blocked.geojson"
+    model_metadata_json = output_dir / "model_metadata.json"
 
     _write_feature_collection(range_geojson, range_wgs84, {"kind": "theoretical_range"})
     _write_feature_collection(
@@ -127,8 +137,52 @@ def _write_vector_outputs(
         visible_geojson=f"/outputs/{task_id}/{visible_geojson.name}",
         blocked_geojson=f"/outputs/{task_id}/{blocked_geojson.name}",
         range_geojson=f"/outputs/{task_id}/{range_geojson.name}",
+        model_metadata_json=f"/outputs/{task_id}/{model_metadata_json.name}",
     )
-    return outputs, metrics
+    warnings = _build_model_warnings(prepared, range_geom)
+    model = CoverageModelMetadata(
+        target_epsg=prepared.target_epsg,
+        radar_projected_xy=[prepared.radar_x, prepared.radar_y],
+        projected_dem_bounds=[
+            prepared.projected_bounds.left,
+            prepared.projected_bounds.bottom,
+            prepared.projected_bounds.right,
+            prepared.projected_bounds.top,
+        ],
+        projected_dem_resolution_m=[prepared.resolution_m[0], prepared.resolution_m[1]],
+        max_range_m=payload.coverage.max_range_m,
+        scan_mode=payload.coverage.scan_mode,
+        azimuth_deg=payload.coverage.azimuth_deg,
+        beam_width_deg=payload.coverage.beam_width_deg,
+        simplify_tolerance_m=tolerance,
+        gdal_viewshed_command=gdal_command,
+    )
+    model_metadata_json.write_text(
+        json.dumps(
+            {
+                "model": model.model_dump(),
+                "metrics": metrics.model_dump(),
+                "warnings": warnings,
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    return outputs, metrics, model, warnings
+
+
+def _build_model_warnings(prepared: PreparedCoverageDem, range_geom) -> list[str]:
+    warnings: list[str] = []
+    dem_bounds_geom = box(
+        prepared.projected_bounds.left,
+        prepared.projected_bounds.bottom,
+        prepared.projected_bounds.right,
+        prepared.projected_bounds.top,
+    )
+    if not dem_bounds_geom.contains(range_geom):
+        warnings.append("Requested radar range is not fully covered by the available DEM extent.")
+    return warnings
 
 
 def _write_feature_collection(path: Path, geometry, properties: dict[str, str]) -> None:

@@ -104,6 +104,10 @@ body {
   width: 100%;
 }
 
+.control-panel .el-select {
+  width: 100%;
+}
+
 .run-button {
   width: 100%;
   margin-top: 6px;
@@ -154,6 +158,23 @@ body {
   font-weight: 650;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.result-panel a {
+  overflow: hidden;
+  color: #2563eb;
+  font-size: 13px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.result-panel .warnings {
+  grid-column: 1 / -1;
+  margin: 2px 0 0;
+  color: #9f1239;
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 @media (max-width: 900px) {
