@@ -8,11 +8,13 @@
       :selected-task-id="selectedTaskId"
       :selected-task-request="task?.request ?? null"
       :task-list-loading="taskListLoading"
+      :deleting-task-id="deletingTaskId"
       :busy="busy"
       @upload="handleUpload"
       @select-dem="handleSelectDem"
       @select-task="handleSelectTask"
       @restore-request="restoreRequest"
+      @delete-task="handleDeleteTask"
       @refresh-tasks="refreshTaskList"
       @run="handleRun"
     />
@@ -31,6 +33,7 @@ import { onMounted, reactive, ref, shallowRef } from "vue";
 
 import {
   createCoverageTask,
+  deleteCoverageTask,
   getCoverageTask,
   listCoverageTasks,
   listDems,
@@ -53,6 +56,7 @@ const task = ref<CoverageTaskStatus | null>(null);
 const taskList = ref<CoverageTaskSummary[]>([]);
 const selectedTaskId = ref<string | null>(null);
 const taskListLoading = ref(false);
+const deletingTaskId = ref<string | null>(null);
 let pollToken = 0;
 const busy = ref(false);
 
@@ -224,6 +228,27 @@ async function handleSelectTask(taskId: string) {
     ElMessage.info(`任务状态：${selected.status}`);
   } catch (error) {
     ElMessage.error(error instanceof Error ? error.message : "加载历史任务失败");
+  }
+}
+
+async function handleDeleteTask(taskId: string) {
+  deletingTaskId.value = taskId;
+  try {
+    await deleteCoverageTask(taskId);
+    if (selectedTaskId.value === taskId) {
+      pollToken++;
+      selectedTaskId.value = null;
+      task.value = null;
+      if (map.value) {
+        removeResultLayers(map.value);
+      }
+    }
+    await refreshTaskList();
+    ElMessage.success("历史任务已删除");
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : "删除任务失败");
+  } finally {
+    deletingTaskId.value = null;
   }
 }
 

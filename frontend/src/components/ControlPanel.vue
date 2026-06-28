@@ -114,6 +114,18 @@
             />
           </el-select>
           <el-button :loading="taskListLoading" @click="$emit('refreshTasks')">刷新</el-button>
+          <el-popconfirm
+            title="删除任务记录和输出文件？"
+            confirm-button-text="删除"
+            cancel-button-text="取消"
+            @confirm="deleteSelectedTask"
+          >
+            <template #reference>
+              <el-button type="danger" :loading="deletingTaskId === selectedTaskId" :disabled="!canDeleteSelectedTask">
+                删除
+              </el-button>
+            </template>
+          </el-popconfirm>
         </div>
         <el-button
           class="restore-button"
@@ -141,6 +153,7 @@ const props = defineProps<{
   selectedTaskId: string | null;
   selectedTaskRequest: CoverageRequest | null;
   taskListLoading: boolean;
+  deletingTaskId: string | null;
   busy: boolean;
 }>();
 
@@ -149,6 +162,7 @@ const emit = defineEmits<{
   selectDem: [demId: string];
   selectTask: [taskId: string];
   restoreRequest: [request: CoverageRequest];
+  deleteTask: [taskId: string];
   refreshTasks: [];
   run: [];
 }>();
@@ -159,6 +173,13 @@ const scanOptions = [
 ];
 
 const demLabel = computed(() => props.dem?.filename ?? "点击或拖拽上传 GeoTIFF DEM");
+const selectedTask = computed(() => props.taskList.find((item) => item.task_id === props.selectedTaskId) ?? null);
+const canDeleteSelectedTask = computed(() => {
+  if (!props.selectedTaskId || props.busy || props.deletingTaskId) {
+    return false;
+  }
+  return selectedTask.value?.status === "finished" || selectedTask.value?.status === "failed";
+});
 
 function onFileChange(uploadFile: UploadFile) {
   const raw = uploadFile.raw;
@@ -178,6 +199,12 @@ function selectTask(taskId: string) {
 function restoreSelectedRequest() {
   if (props.selectedTaskRequest) {
     emit("restoreRequest", props.selectedTaskRequest);
+  }
+}
+
+function deleteSelectedTask() {
+  if (props.selectedTaskId) {
+    emit("deleteTask", props.selectedTaskId);
   }
 }
 

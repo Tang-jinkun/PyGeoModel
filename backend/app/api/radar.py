@@ -2,9 +2,16 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, status
 from fastapi.responses import FileResponse
 
 from app.core.errors import AppError
-from app.schemas.radar import CoverageOutputFile, CoverageOutputKind, CoverageRequest, CoverageTaskStatus, CoverageTaskSummary
+from app.schemas.radar import (
+    CoverageOutputFile,
+    CoverageOutputKind,
+    CoverageRequest,
+    CoverageTaskDeleteResult,
+    CoverageTaskStatus,
+    CoverageTaskSummary,
+)
 from app.services.output_files import list_task_output_files, resolve_task_output_path
-from app.services.task_store import create_task, get_task, list_tasks
+from app.services.task_store import create_task, delete_task, get_task, list_tasks
 from app.workers.coverage_task import run_coverage_task
 
 router = APIRouter()
@@ -29,6 +36,14 @@ def create_coverage_task(payload: CoverageRequest, background_tasks: BackgroundT
 def read_coverage_task(task_id: str) -> CoverageTaskStatus:
     try:
         return get_task(task_id)
+    except AppError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.as_detail()) from exc
+
+
+@router.delete("/coverage/{task_id}", response_model=CoverageTaskDeleteResult)
+def delete_coverage_task(task_id: str) -> CoverageTaskDeleteResult:
+    try:
+        return delete_task(task_id)
     except AppError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.as_detail()) from exc
 

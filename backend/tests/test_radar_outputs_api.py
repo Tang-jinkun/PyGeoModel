@@ -86,6 +86,42 @@ def test_list_coverage_tasks_omits_request(tmp_path: Path) -> None:
     assert "request" not in payload[0]
 
 
+def test_delete_coverage_task_api(tmp_path: Path) -> None:
+    settings.data_dir = tmp_path
+    settings.ensure_directories()
+    write_task(tmp_path, "task_a", "finished")
+    output_dir = tmp_path / "outputs" / "task_a"
+    output_dir.mkdir(parents=True)
+    (output_dir / "visible.geojson").write_text("{}", encoding="utf-8")
+
+    response = TestClient(app).delete("/api/radar/coverage/task_a")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["deleted_task_record"] is True
+    assert payload["deleted_output_dir"] is True
+    assert not output_dir.exists()
+
+
+def test_delete_coverage_task_api_rejects_running(tmp_path: Path) -> None:
+    settings.data_dir = tmp_path
+    settings.ensure_directories()
+    write_task(tmp_path, "task_a", "running")
+
+    response = TestClient(app).delete("/api/radar/coverage/task_a")
+
+    assert response.status_code == 409
+
+
+def test_delete_coverage_task_api_rejects_invalid_id(tmp_path: Path) -> None:
+    settings.data_dir = tmp_path
+    settings.ensure_directories()
+
+    response = TestClient(app).delete("/api/radar/coverage/..%5Ctask_a")
+
+    assert response.status_code == 400
+
+
 def write_task(root: Path, task_id: str, status: str) -> None:
     task_dir = root / "tasks"
     task_dir.mkdir(parents=True, exist_ok=True)

@@ -1,4 +1,6 @@
 import json
+import re
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
@@ -11,13 +13,35 @@ from app.schemas.radar import (
     CoverageOutputFile,
     CoverageOutputs,
     CoverageRequest,
+    CoverageTaskDeleteResult,
     CoverageTaskSummary,
     CoverageTaskStatus,
 )
 
+TASK_ID_PATTERN = re.compile(r"^task_[A-Za-z0-9_-]+$")
+
 
 def _task_path(task_id: str) -> Path:
-    return settings.tasks_dir / f"{task_id}.json"
+    validate_task_id(task_id)
+    path = (settings.tasks_dir / f"{task_id}.json").resolve()
+    tasks_dir = settings.tasks_dir.resolve()
+    if tasks_dir not in path.parents:
+        raise AppError("INVALID_TASK_PATH", "Resolved task path escapes task directory.", status_code=400)
+    return path
+
+
+def _task_output_dir(task_id: str) -> Path:
+    validate_task_id(task_id)
+    path = (settings.outputs_dir / task_id).resolve()
+    outputs_dir = settings.outputs_dir.resolve()
+    if path != outputs_dir and outputs_dir not in path.parents:
+        raise AppError("INVALID_OUTPUT_PATH", "Resolved output path escapes output directory.", status_code=400)
+    return path
+
+
+def validate_task_id(task_id: str) -> None:
+    if not TASK_ID_PATTERN.fullmatch(task_id):
+        raise AppError("INVALID_TASK_ID", "Task id contains unsupported characters.", status_code=400)
 
 
 def create_task(payload: CoverageRequest) -> CoverageTaskStatus:
@@ -118,6 +142,30 @@ def mark_failed(task_id: str, message: str) -> None:
     task.progress = 100
     task.message = message
     save_task(task)
+
+
+def delete_task(task_id: str) -> CoverageTaskDeleteResult:
+    task = get_task(task_id)
+    if task.status in {"pending", "running"}:
+        raise AppError("TASK_ACTIVE", "Pending or running tasks cannot be deleted.", status_code=409)
+
+    task_path = _task_path(task_id)
+    output_dir = _task_output_dir(task_id)
+
+    deleted_task_record = False
+    deleted_output_dir = False
+    if task_path.exists():
+        task_path.unlink()
+        deleted_task_record = True
+    if output_dir.exists():
+        shutil.rmtree(output_dir)
+        deleted_output_dir = True
+
+    return CoverageTaskDeleteResult(
+        task_id=task_id,
+        deleted_task_record=deleted_task_record,
+        deleted_output_dir=deleted_output_dir,
+    )
 
 
 def utc_now() -> str:

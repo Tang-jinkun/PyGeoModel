@@ -2,8 +2,11 @@ import json
 from pathlib import Path
 
 from app.core.config import settings
-from app.schemas.radar import CoverageRequest
-from app.services.task_store import create_task, get_task, list_tasks, mark_running
+from app.schemas.radar import CoverageMetrics, CoverageOutputs, CoverageRequest
+import pytest
+
+from app.core.errors import AppError
+from app.services.task_store import create_task, delete_task, get_task, list_tasks, mark_finished, mark_running
 
 
 def test_create_task_stores_runtime_fields(tmp_path: Path) -> None:
@@ -56,6 +59,64 @@ def test_mark_running_updates_timestamp(tmp_path: Path) -> None:
     assert after.progress == 33
     assert after.updated_at is not None
     assert after.updated_at != before
+
+
+def test_delete_task_removes_record_and_outputs(tmp_path: Path) -> None:
+    settings.data_dir = tmp_path
+    settings.ensure_directories()
+
+    task = create_task(make_request("dem_a"))
+    mark_finished(task.task_id, metrics=CoverageMetrics(), outputs=CoverageOutputs())
+    output_dir = tmp_path / "outputs" / task.task_id
+    output_dir.mkdir(parents=True)
+    (output_dir / "visible.geojson").write_text("{}", encoding="utf-8")
+    (output_dir / "dem_projected.tif").write_bytes(b"intermediate")
+    dem_dir = tmp_path / "dem" / "dem_a"
+    dem_dir.mkdir(parents=True)
+    (dem_dir / "metadata.json").write_text("{}", encoding="utf-8")
+
+    result = delete_task(task.task_id)
+
+    assert result.deleted_task_record is True
+    assert result.deleted_output_dir is True
+    assert not (tmp_path / "tasks" / f"{task.task_id}.json").exists()
+    assert not output_dir.exists()
+    assert dem_dir.exists()
+
+
+def test_delete_task_rejects_running_task(tmp_path: Path) -> None:
+    settings.data_dir = tmp_path
+    settings.ensure_directories()
+
+    task = create_task(make_request("dem_a"))
+    mark_running(task.task_id, "running")
+
+    with pytest.raises(AppError) as exc_info:
+        delete_task(task.task_id)
+
+    assert exc_info.value.code == "TASK_ACTIVE"
+
+
+def test_delete_task_rejects_pending_task(tmp_path: Path) -> None:
+    settings.data_dir = tmp_path
+    settings.ensure_directories()
+
+    task = create_task(make_request("dem_a"))
+
+    with pytest.raises(AppError) as exc_info:
+        delete_task(task.task_id)
+
+    assert exc_info.value.code == "TASK_ACTIVE"
+
+
+def test_get_task_rejects_invalid_task_id(tmp_path: Path) -> None:
+    settings.data_dir = tmp_path
+    settings.ensure_directories()
+
+    with pytest.raises(AppError) as exc_info:
+        get_task("../task_a")
+
+    assert exc_info.value.code == "INVALID_TASK_ID"
 
 
 def make_request(dem_id: str) -> CoverageRequest:

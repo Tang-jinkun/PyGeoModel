@@ -115,3 +115,9 @@ class CoverageTaskSummary(BaseModel):
 
 class CoverageTaskStatus(CoverageTaskSummary):
     request: CoverageRequest | None = None
+
+
+class CoverageTaskDeleteResult(BaseModel):
+    task_id: str
+    deleted_task_record: bool = False
+    deleted_output_dir: bool = False

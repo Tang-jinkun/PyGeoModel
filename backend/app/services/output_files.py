@@ -63,8 +63,14 @@ def resolve_task_output_path(task_id: str, kind: CoverageOutputKind) -> Path:
     if kind not in OUTPUT_FILENAMES:
         raise AppError("OUTPUT_KIND_NOT_FOUND", f"Output kind '{kind}' is not supported.", status_code=404)
 
+    from app.services.task_store import validate_task_id
+
+    validate_task_id(task_id)
+    outputs_dir = settings.outputs_dir.resolve()
     task_dir = (settings.outputs_dir / task_id).resolve()
     path = (task_dir / OUTPUT_FILENAMES[kind]).resolve()
+    if task_dir != outputs_dir and outputs_dir not in task_dir.parents:
+        raise AppError("INVALID_OUTPUT_PATH", "Resolved task directory escapes output directory.", status_code=400)
     if path != task_dir and task_dir not in path.parents:
         raise AppError("INVALID_OUTPUT_PATH", "Resolved output path escapes task directory.", status_code=400)
     return path

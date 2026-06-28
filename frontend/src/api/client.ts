@@ -66,6 +66,12 @@ export interface CoverageTaskStatus extends CoverageTaskSummary {
   request?: CoverageRequest | null;
 }
 
+export interface CoverageTaskDeleteResult {
+  task_id: string;
+  deleted_task_record: boolean;
+  deleted_output_dir: boolean;
+}
+
 export interface CoverageRequest {
   dem_id: string;
   radar: {
@@ -122,6 +128,13 @@ export async function listCoverageTasks(): Promise<CoverageTaskSummary[]> {
 
 export async function getCoverageTask(taskId: string): Promise<CoverageTaskStatus> {
   const response = await fetch(`${API_BASE}/api/radar/coverage/${taskId}`);
+  return handleResponse(response);
+}
+
+export async function deleteCoverageTask(taskId: string): Promise<CoverageTaskDeleteResult> {
+  const response = await fetch(`${API_BASE}/api/radar/coverage/${taskId}`, {
+    method: "DELETE"
+  });
   return handleResponse(response);
 }
 
