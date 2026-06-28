@@ -193,6 +193,7 @@ async function handleRun() {
     if (!map.value) {
       throw new Error("地图尚未初始化完成");
     }
+    removeResultLayers(map.value);
     addRadarMarker(map.value, coverageRequest.radar.lon, coverageRequest.radar.lat);
     task.value = await createCoverageTask(coverageRequest);
     selectedTaskId.value = task.value.task_id;
@@ -223,6 +224,9 @@ async function pollTask(taskId: string, token: number) {
       return;
     }
     if (latest.status === "failed") {
+      if (map.value) {
+        removeResultLayers(map.value);
+      }
       throw new Error(latest.message || "计算失败");
     }
   }
@@ -334,14 +338,17 @@ function restoreRequest(request: CoverageRequest) {
 }
 
 function loadOutputs(result: CoverageTaskStatus) {
-  if (!map.value || !result.outputs) {
+  if (!map.value) {
     return;
   }
   removeResultLayers(map.value);
+  if (!result.outputs) {
+    return;
+  }
 
-  const visible = resolveAssetUrl(result.outputs.visible_geojson);
-  const blocked = resolveAssetUrl(result.outputs.blocked_geojson);
-  const range = resolveAssetUrl(result.outputs.range_geojson);
+  const visible = resolveOutputUrl(result, "visible_geojson", result.outputs.visible_geojson);
+  const blocked = resolveOutputUrl(result, "blocked_geojson", result.outputs.blocked_geojson);
+  const range = resolveOutputUrl(result, "range_geojson", result.outputs.range_geojson);
 
   if (range) {
     addOrUpdateGeoJsonLayer(
@@ -364,5 +371,14 @@ function loadOutputs(result: CoverageTaskStatus) {
       "fill-opacity": 0.38
     });
   }
+}
+
+function resolveOutputUrl(result: CoverageTaskStatus, kind: string, fallback?: string | null) {
+  const files = Array.isArray(result.output_files) ? result.output_files : [];
+  if (files.length) {
+    const file = files.find((item) => item.kind === kind && item.exists);
+    return resolveAssetUrl(file?.url);
+  }
+  return resolveAssetUrl(fallback);
 }
 </script>
