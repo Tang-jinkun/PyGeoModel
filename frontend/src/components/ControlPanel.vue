@@ -104,14 +104,17 @@
       </el-button>
 
       <el-form-item v-if="taskList.length" label="历史任务">
-        <el-select filterable placeholder="选择历史任务" @change="selectTask">
-          <el-option
-            v-for="item in taskList"
-            :key="item.task_id"
-            :label="taskLabel(item)"
-            :value="item.task_id"
-          />
-        </el-select>
+        <div class="history-row">
+          <el-select :model-value="selectedTaskId" filterable placeholder="选择历史任务" @change="selectTask">
+            <el-option
+              v-for="item in taskList"
+              :key="item.task_id"
+              :label="taskLabel(item)"
+              :value="item.task_id"
+            />
+          </el-select>
+          <el-button :loading="taskListLoading" @click="$emit('refreshTasks')">刷新</el-button>
+        </div>
       </el-form-item>
     </el-form>
   </aside>
@@ -128,6 +131,8 @@ const props = defineProps<{
   dem: DemMetadata | null;
   demList: DemMetadata[];
   taskList: CoverageTaskStatus[];
+  selectedTaskId: string | null;
+  taskListLoading: boolean;
   busy: boolean;
 }>();
 
@@ -135,6 +140,7 @@ const emit = defineEmits<{
   upload: [file: File];
   selectDem: [demId: string];
   selectTask: [taskId: string];
+  refreshTasks: [];
   run: [];
 }>();
 
@@ -162,7 +168,9 @@ function selectTask(taskId: string) {
 
 function taskLabel(task: CoverageTaskStatus) {
   const time = task.created_at ? new Date(task.created_at).toLocaleString() : task.task_id;
-  return `${task.status} · ${time}`;
+  const taskShortId = task.task_id.replace(/^task_/, "").slice(-8);
+  const fileCount = task.output_files?.filter((item) => item.exists).length ?? 0;
+  return `${task.status} · ${taskShortId} · ${time} · ${fileCount} 文件`;
 }
 
 function formatFileSize(value?: number | null) {

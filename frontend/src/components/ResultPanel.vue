@@ -37,6 +37,21 @@
       <a v-if="metadataUrl" :href="metadataUrl" target="_blank" rel="noreferrer">model_metadata.json</a>
       <span v-else>-</span>
     </div>
+    <div class="download-list">
+      <strong>结果下载</strong>
+      <a
+        v-for="file in downloadableFiles"
+        :key="`${file.kind}-${file.download_url}`"
+        :href="resolveAssetUrl(file.download_url) ?? file.download_url"
+        :download="file.filename"
+        target="_blank"
+        rel="noreferrer"
+      >
+        {{ file.label }}
+        <span>{{ formatFileSize(file.size_bytes) }}</span>
+      </a>
+      <span v-if="!downloadableFiles.length">-</span>
+    </div>
     <p v-if="task?.warnings?.length" class="warnings">
       {{ task.warnings.join("；") }}
     </p>
@@ -53,6 +68,7 @@ const props = defineProps<{
 }>();
 
 const metadataUrl = computed(() => resolveAssetUrl(props.task?.outputs?.model_metadata_json));
+const downloadableFiles = computed(() => props.task?.output_files?.filter((item) => item.exists) ?? []);
 
 function formatArea(value?: number | null) {
   if (value == null) {
@@ -69,5 +85,15 @@ function formatRatio(value?: number | null) {
     return "-";
   }
   return `${(value * 100).toFixed(1)}%`;
+}
+
+function formatFileSize(value?: number | null) {
+  if (value == null) {
+    return "";
+  }
+  if (value > 1024 * 1024) {
+    return `${(value / 1024 / 1024).toFixed(1)} MB`;
+  }
+  return `${(value / 1024).toFixed(1)} KB`;
 }
 </script>

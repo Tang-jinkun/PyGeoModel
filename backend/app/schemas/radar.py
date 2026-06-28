@@ -3,6 +3,16 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 
+CoverageOutputKind = Literal[
+    "viewshed_tif",
+    "visible_geojson",
+    "blocked_geojson",
+    "range_geojson",
+    "model_metadata_json",
+    "output_manifest_json",
+]
+
+
 class RadarInput(BaseModel):
     lon: float = Field(ge=-180, le=180)
     lat: float = Field(ge=-90, le=90)
@@ -61,6 +71,18 @@ class CoverageOutputs(BaseModel):
     blocked_geojson: str | None = None
     range_geojson: str | None = None
     model_metadata_json: str | None = None
+    output_manifest_json: str | None = None
+
+
+class CoverageOutputFile(BaseModel):
+    kind: CoverageOutputKind
+    label: str
+    url: str
+    download_url: str
+    filename: str
+    media_type: str
+    size_bytes: int | None = None
+    exists: bool = False
 
 
 class CoverageModelMetadata(BaseModel):
@@ -86,5 +108,6 @@ class CoverageTaskStatus(BaseModel):
     updated_at: str | None = None
     metrics: CoverageMetrics | None = None
     outputs: CoverageOutputs | None = None
+    output_files: list[CoverageOutputFile] = Field(default_factory=list)
     model: CoverageModelMetadata | None = None
     warnings: list[str] = Field(default_factory=list)

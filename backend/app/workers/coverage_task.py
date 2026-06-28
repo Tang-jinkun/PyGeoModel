@@ -8,7 +8,7 @@ from shapely.geometry import box, mapping
 
 from app.core.config import settings
 from app.core.errors import AppError
-from app.schemas.radar import CoverageMetrics, CoverageModelMetadata, CoverageOutputs, CoverageRequest
+from app.schemas.radar import CoverageMetrics, CoverageModelMetadata, CoverageOutputFile, CoverageOutputs, CoverageRequest
 from app.services.dem_store import find_dem_file
 from app.services.coverage_model import (
     PreparedCoverageDem,
@@ -17,6 +17,7 @@ from app.services.coverage_model import (
     vectorize_visible_viewshed,
 )
 from app.services.geometry import make_range_geometry, project_geometry
+from app.services.output_files import describe_output_files, list_task_output_files
 from app.services.task_store import mark_failed, mark_finished, mark_running
 
 
@@ -36,7 +37,7 @@ def run_coverage_task(task_id: str, payload: CoverageRequest) -> None:
         gdal_command = _run_gdal_viewshed(projected_dem, viewshed, prepared.radar_x, prepared.radar_y, payload)
 
         mark_running(task_id, "Vectorizing viewshed outputs.", 80)
-        outputs, metrics, model, warnings = _write_vector_outputs(
+        outputs, output_files, metrics, model, warnings = _write_vector_outputs(
             task_id,
             output_dir,
             prepared,
@@ -44,7 +45,14 @@ def run_coverage_task(task_id: str, payload: CoverageRequest) -> None:
             viewshed,
             gdal_command,
         )
-        mark_finished(task_id, metrics=metrics, outputs=outputs, model=model, warnings=warnings)
+        mark_finished(
+            task_id,
+            metrics=metrics,
+            outputs=outputs,
+            output_files=output_files,
+            model=model,
+            warnings=warnings,
+        )
     except Exception as exc:
         mark_failed(task_id, str(exc))
 
@@ -86,7 +94,7 @@ def _write_vector_outputs(
     payload: CoverageRequest,
     viewshed: Path,
     gdal_command: list[str],
-) -> tuple[CoverageOutputs, CoverageMetrics, CoverageModelMetadata, list[str]]:
+) -> tuple[CoverageOutputs, list[CoverageOutputFile], CoverageMetrics, CoverageModelMetadata, list[str]]:
     range_geom = make_range_geometry(
         prepared.radar_x,
         prepared.radar_y,
@@ -110,6 +118,7 @@ def _write_vector_outputs(
     visible_geojson = output_dir / "visible.geojson"
     blocked_geojson = output_dir / "blocked.geojson"
     model_metadata_json = output_dir / "model_metadata.json"
+    output_manifest_json = output_dir / "output_manifest.json"
 
     _write_feature_collection(range_geojson, range_wgs84, {"kind": "theoretical_range"})
     _write_feature_collection(
@@ -138,6 +147,7 @@ def _write_vector_outputs(
         blocked_geojson=f"/outputs/{task_id}/{blocked_geojson.name}",
         range_geojson=f"/outputs/{task_id}/{range_geojson.name}",
         model_metadata_json=f"/outputs/{task_id}/{model_metadata_json.name}",
+        output_manifest_json=f"/outputs/{task_id}/{output_manifest_json.name}",
     )
     warnings = _build_model_warnings(prepared, range_geom)
     model = CoverageModelMetadata(
@@ -169,7 +179,39 @@ def _write_vector_outputs(
         ),
         encoding="utf-8",
     )
-    return outputs, metrics, model, warnings
+    output_paths = {
+        "viewshed_tif": viewshed,
+        "visible_geojson": visible_geojson,
+        "blocked_geojson": blocked_geojson,
+        "range_geojson": range_geojson,
+        "model_metadata_json": model_metadata_json,
+    }
+    manifest_files = describe_output_files(task_id, output_paths)
+    _write_output_manifest(output_manifest_json, manifest_files, metrics, model, warnings)
+    output_files = list_task_output_files(task_id)
+    return outputs, output_files, metrics, model, warnings
+
+
+def _write_output_manifest(
+    path: Path,
+    output_files: list[CoverageOutputFile],
+    metrics: CoverageMetrics,
+    model: CoverageModelMetadata,
+    warnings: list[str],
+) -> None:
+    path.write_text(
+        json.dumps(
+            {
+                "files": [item.model_dump() for item in output_files],
+                "metrics": metrics.model_dump(),
+                "model": model.model_dump(),
+                "warnings": warnings,
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
 
 
 def _build_model_warnings(prepared: PreparedCoverageDem, range_geom) -> list[str]:

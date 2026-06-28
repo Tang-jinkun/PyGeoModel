@@ -5,10 +5,13 @@
       :dem="dem"
       :dem-list="demList"
       :task-list="taskList"
+      :selected-task-id="selectedTaskId"
+      :task-list-loading="taskListLoading"
       :busy="busy"
       @upload="handleUpload"
       @select-dem="handleSelectDem"
       @select-task="handleSelectTask"
+      @refresh-tasks="refreshTaskList"
       @run="handleRun"
     />
 
@@ -37,7 +40,7 @@ import {
 } from "./api/client";
 import ControlPanel from "./components/ControlPanel.vue";
 import ResultPanel from "./components/ResultPanel.vue";
-import { addOrUpdateGeoJsonLayer, addRadarMarker } from "./map/mapLayers";
+import { addOrUpdateGeoJsonLayer, addRadarMarker, removeResultLayers } from "./map/mapLayers";
 
 const mapContainer = ref<HTMLDivElement | null>(null);
 const map = shallowRef<maplibregl.Map | null>(null);
@@ -45,6 +48,9 @@ const dem = ref<DemMetadata | null>(null);
 const demList = ref<DemMetadata[]>([]);
 const task = ref<CoverageTaskStatus | null>(null);
 const taskList = ref<CoverageTaskStatus[]>([]);
+const selectedTaskId = ref<string | null>(null);
+const taskListLoading = ref(false);
+let pollToken = 0;
 const busy = ref(false);
 
 const coverageRequest = reactive<CoverageRequest>({
@@ -129,10 +135,13 @@ async function refreshDemList() {
 }
 
 async function refreshTaskList() {
+  taskListLoading.value = true;
   try {
     taskList.value = await listCoverageTasks();
   } catch {
     taskList.value = [];
+  } finally {
+    taskListLoading.value = false;
   }
 }
 
@@ -158,11 +167,16 @@ async function handleRun() {
   }
 
   busy.value = true;
+  const token = ++pollToken;
   try {
-    addRadarMarker(map.value!, coverageRequest.radar.lon, coverageRequest.radar.lat);
+    if (!map.value) {
+      throw new Error("地图尚未初始化完成");
+    }
+    addRadarMarker(map.value, coverageRequest.radar.lon, coverageRequest.radar.lat);
     task.value = await createCoverageTask(coverageRequest);
+    selectedTaskId.value = task.value.task_id;
     await refreshTaskList();
-    await pollTask(task.value.task_id);
+    await pollTask(task.value.task_id, token);
   } catch (error) {
     ElMessage.error(error instanceof Error ? error.message : "计算失败");
   } finally {
@@ -170,23 +184,32 @@ async function handleRun() {
   }
 }
 
-async function pollTask(taskId: string) {
+async function pollTask(taskId: string, token: number) {
   for (;;) {
     await new Promise((resolve) => window.setTimeout(resolve, 1500));
-    task.value = await getCoverageTask(taskId);
+    if (token !== pollToken) {
+      return;
+    }
+    const latest = await getCoverageTask(taskId);
+    if (token !== pollToken) {
+      return;
+    }
+    task.value = latest;
     void refreshTaskList();
-    if (task.value.status === "finished") {
-      loadOutputs(task.value);
+    if (latest.status === "finished") {
+      loadOutputs(latest);
       ElMessage.success("计算完成");
       return;
     }
-    if (task.value.status === "failed") {
-      throw new Error(task.value.message || "计算失败");
+    if (latest.status === "failed") {
+      throw new Error(latest.message || "计算失败");
     }
   }
 }
 
 async function handleSelectTask(taskId: string) {
+  pollToken++;
+  selectedTaskId.value = taskId;
   try {
     const selected = await getCoverageTask(taskId);
     task.value = selected;
@@ -205,6 +228,7 @@ function loadOutputs(result: CoverageTaskStatus) {
   if (!map.value || !result.outputs) {
     return;
   }
+  removeResultLayers(map.value);
 
   const visible = resolveAssetUrl(result.outputs.visible_geojson);
   const blocked = resolveAssetUrl(result.outputs.blocked_geojson);

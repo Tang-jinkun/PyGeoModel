@@ -92,3 +92,27 @@ export function addRadarMarker(map: maplibregl.Map, lon: number, lat: number) {
     });
   }
 }
+
+export function removeResultLayers(map: maplibregl.Map) {
+  const layerIds = [
+    "visible-layer",
+    "visible-layer-outline",
+    "blocked-layer",
+    "blocked-layer-outline",
+    "range-layer",
+    "range-layer-outline"
+  ];
+  const sourceIds = ["visible-layer-source", "blocked-layer-source", "range-layer-source"];
+
+  for (const layerId of layerIds) {
+    if (map.getLayer(layerId)) {
+      map.removeLayer(layerId);
+    }
+  }
+
+  for (const sourceId of sourceIds) {
+    if (map.getSource(sourceId)) {
+      map.removeSource(sourceId);
+    }
+  }
+}

@@ -8,6 +8,7 @@ from app.core.errors import AppError
 from app.schemas.radar import (
     CoverageMetrics,
     CoverageModelMetadata,
+    CoverageOutputFile,
     CoverageOutputs,
     CoverageRequest,
     CoverageTaskStatus,
@@ -86,6 +87,7 @@ def mark_finished(
     task_id: str,
     metrics: CoverageMetrics,
     outputs: CoverageOutputs,
+    output_files: list[CoverageOutputFile] | None = None,
     model: CoverageModelMetadata | None = None,
     warnings: list[str] | None = None,
 ) -> None:
@@ -95,6 +97,7 @@ def mark_finished(
     task.message = "finished"
     task.metrics = metrics
     task.outputs = outputs
+    task.output_files = output_files or []
     task.model = model
     task.warnings = warnings or []
     save_task(task)

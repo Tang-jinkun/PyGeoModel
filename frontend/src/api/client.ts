@@ -33,7 +33,18 @@ export interface CoverageTaskStatus {
     blocked_geojson?: string | null;
     range_geojson?: string | null;
     model_metadata_json?: string | null;
+    output_manifest_json?: string | null;
   } | null;
+  output_files: Array<{
+    kind: string;
+    label: string;
+    url: string;
+    download_url: string;
+    filename: string;
+    media_type: string;
+    size_bytes?: number | null;
+    exists: boolean;
+  }>;
   model?: {
     target_epsg: number;
     radar_projected_xy: number[];
@@ -112,10 +123,12 @@ export function resolveAssetUrl(path?: string | null): string | null {
   if (!path) {
     return null;
   }
-  if (path.startsWith("http")) {
+  if (/^(https?:|blob:|data:)/.test(path)) {
     return path;
   }
-  return `${API_BASE}${path}`;
+  const normalizedBase = API_BASE.endsWith("/") ? API_BASE.slice(0, -1) : API_BASE;
+  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+  return `${normalizedBase}${normalizedPath}`;
 }
 
 async function handleResponse<T>(response: Response): Promise<T> {
