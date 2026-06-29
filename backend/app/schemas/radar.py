@@ -170,3 +170,34 @@ class CoverageTaskDeleteResult(BaseModel):
     task_id: str
     deleted_task_record: bool = False
     deleted_output_dir: bool = False
+
+
+class CoverageProfileSample(BaseModel):
+    distance_m: float
+    lon: float
+    lat: float
+    terrain_m: float
+    line_of_sight_m: float
+    clearance_m: float
+
+
+class CoverageProfileResult(BaseModel):
+    task_id: str
+    target_lon: float
+    target_lat: float
+    distance_m: float
+    azimuth_deg: float
+    elevation_deg: float
+    radar_ground_m: float
+    target_ground_m: float
+    radar_altitude_m: float
+    target_altitude_m: float
+    blocked: bool
+    obstruction_distance_m: float | None = None
+    obstruction_lon: float | None = None
+    obstruction_lat: float | None = None
+    obstruction_clearance_m: float | None = None
+    min_required_target_height_m: float
+    required_height_delta_m: float
+    reason: str
+    samples: list[CoverageProfileSample] = Field(default_factory=list)

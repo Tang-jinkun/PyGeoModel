@@ -144,6 +144,37 @@ export interface CoverageTaskStatus extends CoverageTaskSummary {
   request?: CoverageRequest | null;
 }
 
+export interface CoverageProfileSample {
+  distance_m: number;
+  lon: number;
+  lat: number;
+  terrain_m: number;
+  line_of_sight_m: number;
+  clearance_m: number;
+}
+
+export interface CoverageProfileResult {
+  task_id: string;
+  target_lon: number;
+  target_lat: number;
+  distance_m: number;
+  azimuth_deg: number;
+  elevation_deg: number;
+  radar_ground_m: number;
+  target_ground_m: number;
+  radar_altitude_m: number;
+  target_altitude_m: number;
+  blocked: boolean;
+  obstruction_distance_m?: number | null;
+  obstruction_lon?: number | null;
+  obstruction_lat?: number | null;
+  obstruction_clearance_m?: number | null;
+  min_required_target_height_m: number;
+  required_height_delta_m: number;
+  reason: string;
+  samples: CoverageProfileSample[];
+}
+
 export interface CoverageTaskDeleteResult {
   task_id: string;
   deleted_task_record: boolean;
@@ -226,6 +257,16 @@ export async function listCoverageTasks(): Promise<CoverageTaskSummary[]> {
 export async function getCoverageTask(taskId: string): Promise<CoverageTaskStatus> {
   const response = await fetch(`${API_BASE}/api/radar/coverage/${taskId}`);
   return normalizeCoverageTaskStatus(await handleResponse(response));
+}
+
+export async function getCoverageProfile(taskId: string, lon: number, lat: number): Promise<CoverageProfileResult> {
+  const params = new URLSearchParams({
+    lon: String(lon),
+    lat: String(lat),
+    samples: "180"
+  });
+  const response = await fetch(`${API_BASE}/api/radar/coverage/${taskId}/profile?${params.toString()}`);
+  return handleResponse(response);
 }
 
 export async function deleteCoverageTask(taskId: string): Promise<CoverageTaskDeleteResult> {

@@ -9,6 +9,10 @@ const DEM_RASTER_SOURCE_ID = "dem-raster-source";
 const DEM_RASTER_LAYER_ID = "dem-raster-layer";
 export const DEM_TERRAIN_SOURCE_ID = "dem-terrain-source";
 const DEM_TERRAIN_MAX_ZOOM = 16;
+const PROFILE_SOURCE_ID = "coverage-profile-source";
+const PROFILE_LINE_LAYER_ID = "coverage-profile-line";
+const PROFILE_TARGET_LAYER_ID = "coverage-profile-target";
+const PROFILE_OBSTRUCTION_LAYER_ID = "coverage-profile-obstruction";
 
 const RESULT_LAYER_IDS: Record<ResultLayerKey, { fill: string; outline: string }> = {
   range: {
@@ -265,6 +269,114 @@ export function addRadarMarker(map: maplibregl.Map, lon: number, lat: number, he
   }
 
   addOrUpdateRadarTower(map, lon, lat, heightM);
+}
+
+export function addOrUpdateProfileLayer(
+  map: maplibregl.Map,
+  radar: [number, number],
+  target: [number, number],
+  obstruction?: [number, number] | null
+) {
+  const features: GeoJSON.Feature[] = [
+    {
+      type: "Feature",
+      properties: { kind: "line" },
+      geometry: {
+        type: "LineString",
+        coordinates: [radar, target]
+      }
+    },
+    {
+      type: "Feature",
+      properties: { kind: "target" },
+      geometry: {
+        type: "Point",
+        coordinates: target
+      }
+    }
+  ];
+
+  if (obstruction) {
+    features.push({
+      type: "Feature",
+      properties: { kind: "obstruction" },
+      geometry: {
+        type: "Point",
+        coordinates: obstruction
+      }
+    });
+  }
+
+  const data: GeoJSON.FeatureCollection = {
+    type: "FeatureCollection",
+    features
+  };
+
+  const existing = map.getSource(PROFILE_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
+  if (existing) {
+    existing.setData(data);
+  } else {
+    map.addSource(PROFILE_SOURCE_ID, {
+      type: "geojson",
+      data
+    });
+  }
+
+  if (!map.getLayer(PROFILE_LINE_LAYER_ID)) {
+    map.addLayer({
+      id: PROFILE_LINE_LAYER_ID,
+      type: "line",
+      source: PROFILE_SOURCE_ID,
+      filter: ["==", ["get", "kind"], "line"],
+      paint: {
+        "line-color": "#111827",
+        "line-width": 3,
+        "line-opacity": 0.78,
+        "line-dasharray": [1.2, 1]
+      }
+    });
+  }
+
+  if (!map.getLayer(PROFILE_TARGET_LAYER_ID)) {
+    map.addLayer({
+      id: PROFILE_TARGET_LAYER_ID,
+      type: "circle",
+      source: PROFILE_SOURCE_ID,
+      filter: ["==", ["get", "kind"], "target"],
+      paint: {
+        "circle-radius": 7,
+        "circle-color": "#2563eb",
+        "circle-stroke-color": "#ffffff",
+        "circle-stroke-width": 2
+      }
+    });
+  }
+
+  if (!map.getLayer(PROFILE_OBSTRUCTION_LAYER_ID)) {
+    map.addLayer({
+      id: PROFILE_OBSTRUCTION_LAYER_ID,
+      type: "circle",
+      source: PROFILE_SOURCE_ID,
+      filter: ["==", ["get", "kind"], "obstruction"],
+      paint: {
+        "circle-radius": 8,
+        "circle-color": "#dc2626",
+        "circle-stroke-color": "#ffffff",
+        "circle-stroke-width": 2
+      }
+    });
+  }
+}
+
+export function removeProfileLayer(map: maplibregl.Map) {
+  for (const layerId of [PROFILE_OBSTRUCTION_LAYER_ID, PROFILE_TARGET_LAYER_ID, PROFILE_LINE_LAYER_ID]) {
+    if (map.getLayer(layerId)) {
+      map.removeLayer(layerId);
+    }
+  }
+  if (map.getSource(PROFILE_SOURCE_ID)) {
+    map.removeSource(PROFILE_SOURCE_ID);
+  }
 }
 
 function addOrUpdateRadarTower(map: maplibregl.Map, lon: number, lat: number, heightM: number) {

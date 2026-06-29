@@ -33,6 +33,7 @@
         @focus-result="handleFocusResult"
       />
       <ResultPanel :task="task" @restore-request="restoreRequest" />
+      <ProfilePanel :profile="profile" :loading="profileLoading" @close="clearProfile" />
     </section>
   </main>
 </template>
@@ -50,11 +51,13 @@ import {
   demTerrainUrlTemplate,
   demTileUrlTemplate,
   getCoverageTask,
+  getCoverageProfile,
   listCoverageTasks,
   listDems,
   normalizeCoverageRequest,
   resolveAssetUrl,
   uploadDem,
+  type CoverageProfileResult,
   type CoverageRequest,
   type CoverageTaskSummary,
   type CoverageTaskStatus,
@@ -62,8 +65,10 @@ import {
 } from "./api/client";
 import ControlPanel from "./components/ControlPanel.vue";
 import LayerControlPanel from "./components/LayerControlPanel.vue";
+import ProfilePanel from "./components/ProfilePanel.vue";
 import ResultPanel from "./components/ResultPanel.vue";
 import {
+  addOrUpdateProfileLayer,
   addOrUpdateGeoJsonLayer,
   addOrUpdateDemRasterLayer,
   addOrUpdateDemTerrain,
@@ -72,6 +77,7 @@ import {
   moveRadarMarkerToTop,
   removeDemRasterLayer,
   removeDemTerrain,
+  removeProfileLayer,
   removeResultLayers,
   setResultLayerOpacity,
   setResultLayerVisibility,
@@ -127,6 +133,9 @@ const voxelPoints = shallowRef<VoxelPoint[]>([]);
 const radarVolumeRequest = shallowRef<CoverageRequest | null>(null);
 const heightLayerOptions = ref<HeightLayerOption[]>([]);
 const selectedHeightLayerM = ref<number | null>(null);
+const profile = shallowRef<CoverageProfileResult | null>(null);
+const profileLoading = ref(false);
+let profileRequestToken = 0;
 const layerControls = reactive<ResultLayerControl[]>([
   {
     key: "radarVolume",
@@ -210,6 +219,7 @@ onMounted(() => {
   });
 
   map.value.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), "top-right");
+  map.value.on("click", handleMapClick);
   map.value.on("load", () => {
     if (dem.value) {
       applyDemMapLayers(dem.value);
@@ -299,6 +309,50 @@ function applyDemMapLayers(selected: DemMetadata) {
   addOrUpdateDemTerrain(map.value, demTerrainUrlTemplate(selected.dem_id), selected.bounds);
 }
 
+async function handleMapClick(event: maplibregl.MapMouseEvent) {
+  const currentTask = task.value;
+  if (!map.value || !currentTask || currentTask.status !== "finished" || !currentTask.request) {
+    return;
+  }
+
+  const token = ++profileRequestToken;
+  profileLoading.value = true;
+  try {
+    const result = await getCoverageProfile(currentTask.task_id, event.lngLat.lng, event.lngLat.lat);
+    if (token !== profileRequestToken || task.value?.task_id !== currentTask.task_id) {
+      return;
+    }
+    profile.value = result;
+    addOrUpdateProfileLayer(
+      map.value,
+      [currentTask.request.radar.lon, currentTask.request.radar.lat],
+      [result.target_lon, result.target_lat],
+      result.obstruction_lon != null && result.obstruction_lat != null
+        ? [result.obstruction_lon, result.obstruction_lat]
+        : null
+    );
+    moveRadarMarkerToTop(map.value);
+  } catch (error) {
+    if (token === profileRequestToken) {
+      ElMessage.error(error instanceof Error ? error.message : "剖面分析失败");
+      clearProfile();
+    }
+  } finally {
+    if (token === profileRequestToken) {
+      profileLoading.value = false;
+    }
+  }
+}
+
+function clearProfile() {
+  profileRequestToken++;
+  profile.value = null;
+  profileLoading.value = false;
+  if (map.value) {
+    removeProfileLayer(map.value);
+  }
+}
+
 async function handleRun() {
   if (!dem.value) {
     ElMessage.warning("请先上传 DEM");
@@ -312,6 +366,7 @@ async function handleRun() {
     if (!map.value) {
       throw new Error("地图尚未初始化完成");
     }
+    clearProfile();
     removeResultLayers(map.value);
     clearLayerAvailability();
     radarVolumeRequest.value = coverageRequest;
@@ -350,6 +405,7 @@ async function pollTask(taskId: string, token: number) {
       return;
     }
     if (latest.status === "failed") {
+      clearProfile();
       if (map.value) {
         removeResultLayers(map.value);
         removeRadarVolume(map.value);
@@ -379,6 +435,7 @@ async function handleSelectTask(taskId: string) {
       ElMessage.success("历史任务已加载");
       return;
     }
+    clearProfile();
     if (map.value) {
       removeResultLayers(map.value);
       removeRadarVolume(map.value);
@@ -433,6 +490,7 @@ async function handleDeleteTask(taskId: string) {
       viewToken++;
       selectedTaskId.value = null;
       task.value = null;
+      clearProfile();
       if (map.value) {
         removeResultLayers(map.value);
         removeRadarVolume(map.value);
@@ -460,6 +518,7 @@ async function handleDeleteDem(demId: string) {
       dem.value = null;
       selectedTaskId.value = null;
       task.value = null;
+      clearProfile();
       if (map.value) {
         removeResultLayers(map.value);
       }
@@ -491,6 +550,7 @@ function restoreRequest(request: CoverageRequest) {
   applyCoverageRequest(normalized);
   selectedTaskId.value = null;
   task.value = null;
+  clearProfile();
   clearLayerAvailability();
   radarVolumeRequest.value = normalized;
 
@@ -532,6 +592,7 @@ function loadOutputs(result: CoverageTaskStatus) {
   if (!map.value) {
     return;
   }
+  clearProfile();
   removeResultLayers(map.value);
   removeRadarVolume(map.value);
   removeVoxelLayer(map.value);
