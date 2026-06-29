@@ -10,6 +10,7 @@ from app.schemas.radar import CoverageRequest
 from app.services.coverage_model import (
     default_simplify_tolerance,
     prepare_coverage_dem,
+    validate_coverage_extent,
     vectorize_visible_viewshed,
 )
 from app.services.geometry import make_range_geometry
@@ -63,6 +64,26 @@ def test_prepare_coverage_dem_rejects_outside_radar(tmp_path: Path) -> None:
         prepare_coverage_dem(source, tmp_path / "projected.tif", make_request(lon=110.0, lat=35.0))
 
     assert exc_info.value.code == "RADAR_OUTSIDE_DEM"
+
+
+def test_validate_coverage_extent_rejects_mostly_outside_range(tmp_path: Path) -> None:
+    source = tmp_path / "source.tif"
+    write_test_dem(source)
+
+    with pytest.raises(AppError) as exc_info:
+        validate_coverage_extent(source, make_request(lon=105.0, lat=35.0, max_range_m=50_000))
+
+    assert exc_info.value.code == "RANGE_OUTSIDE_DEM"
+
+
+def test_prepare_coverage_dem_reports_dem_coverage_ratio(tmp_path: Path) -> None:
+    source = tmp_path / "source.tif"
+    destination = tmp_path / "projected.tif"
+    write_test_dem(source)
+
+    prepared = prepare_coverage_dem(source, destination, make_request(lon=105.0, lat=35.0, max_range_m=2000))
+
+    assert 0 < prepared.dem_coverage_ratio <= 1
 
 
 def test_vectorize_visible_viewshed(tmp_path: Path) -> None:

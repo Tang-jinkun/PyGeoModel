@@ -208,6 +208,10 @@ const modelItems = computed(() => [
   {
     label: "输出简化",
     value: formatDistance(props.task?.model?.simplify_tolerance_m ?? props.task?.request?.advanced?.output_simplify_tolerance_m)
+  },
+  {
+    label: "DEM 覆盖",
+    value: formatRatio(props.task?.model?.dem_coverage_ratio)
   }
 ]);
 

@@ -110,6 +110,7 @@ export interface CoverageTaskSummary {
     radar_projected_xy: number[];
     projected_dem_bounds: number[];
     projected_dem_resolution_m: number[];
+    dem_coverage_ratio: number;
     max_range_m: number;
     scan_mode: string;
     azimuth_deg: number;
@@ -553,6 +554,7 @@ function normalizeModel(payload: unknown): CoverageTaskSummary["model"] {
     radar_projected_xy: numberArray(payload.radar_projected_xy),
     projected_dem_bounds: numberArray(payload.projected_dem_bounds),
     projected_dem_resolution_m: numberArray(payload.projected_dem_resolution_m),
+    dem_coverage_ratio: numberOr(payload.dem_coverage_ratio, 1),
     max_range_m: numberOr(payload.max_range_m, 0),
     scan_mode: stringOr(payload.scan_mode, ""),
     azimuth_deg: numberOr(payload.azimuth_deg, 0),

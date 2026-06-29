@@ -127,6 +127,7 @@ class CoverageModelMetadata(BaseModel):
     radar_projected_xy: list[float]
     projected_dem_bounds: list[float]
     projected_dem_resolution_m: list[float]
+    dem_coverage_ratio: float = 1
     max_range_m: float
     scan_mode: str
     azimuth_deg: float

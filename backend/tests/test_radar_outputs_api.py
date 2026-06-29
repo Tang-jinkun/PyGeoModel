@@ -2,9 +2,13 @@ import json
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+import numpy
+import rasterio
+from rasterio.transform import from_origin
 
 from app.core.config import settings
 from app.main import app, create_app
+from app.services.dem_store import read_dem_metadata
 
 
 def test_list_coverage_outputs(tmp_path: Path) -> None:
@@ -164,6 +168,48 @@ def test_delete_coverage_task_api_rejects_invalid_id(tmp_path: Path) -> None:
     response = TestClient(app).delete("/api/radar/coverage/..%5Ctask_a")
 
     assert response.status_code == 400
+
+
+def test_create_coverage_task_rejects_range_mostly_outside_dem(tmp_path: Path) -> None:
+    settings.data_dir = tmp_path
+    settings.ensure_directories()
+    dem_dir = tmp_path / "dem" / "dem_small"
+    dem_dir.mkdir(parents=True)
+    dem_path = dem_dir / "small.tif"
+    data = numpy.zeros((50, 50), dtype=numpy.float32)
+    with rasterio.open(
+        dem_path,
+        "w",
+        driver="GTiff",
+        width=50,
+        height=50,
+        count=1,
+        dtype=data.dtype,
+        crs="EPSG:4326",
+        transform=from_origin(104.975, 35.025, 0.001, 0.001),
+        nodata=-9999,
+    ) as dataset:
+        dataset.write(data, 1)
+    metadata = read_dem_metadata("dem_small", dem_path)
+    (dem_dir / "metadata.json").write_text(metadata.model_dump_json(indent=2), encoding="utf-8")
+
+    response = TestClient(app).post(
+        "/api/radar/coverage",
+        json={
+            "dem_id": "dem_small",
+            "radar": {"lon": 105.0, "lat": 35.0, "height_m": 10},
+            "target": {"height_m": 0},
+            "coverage": {
+                "max_range_m": 50_000,
+                "scan_mode": "omni",
+                "azimuth_deg": 0,
+                "beam_width_deg": 360,
+            },
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "RANGE_OUTSIDE_DEM"
 
 
 def write_task(root: Path, task_id: str, status: str) -> None:

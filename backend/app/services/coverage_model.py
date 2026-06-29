@@ -13,7 +13,11 @@ from shapely.ops import unary_union
 
 from app.core.errors import AppError
 from app.schemas.radar import CoverageRequest
+from app.services.geometry import make_range_geometry
 from app.services.projection import utm_epsg_from_lonlat
+
+MIN_DEM_COVERAGE_RATIO = 0.5
+WARN_DEM_COVERAGE_RATIO = 0.98
 
 
 @dataclass(frozen=True)
@@ -25,6 +29,7 @@ class PreparedCoverageDem:
     radar_y: float
     projected_bounds: BoundingBox
     resolution_m: tuple[float, float]
+    dem_coverage_ratio: float
 
 
 def prepare_coverage_dem(source: Path, destination: Path, payload: CoverageRequest) -> PreparedCoverageDem:
@@ -41,6 +46,17 @@ def prepare_coverage_dem(source: Path, destination: Path, payload: CoverageReque
         src_radar_x, src_radar_y = project_lonlat_to_crs(payload.radar.lon, payload.radar.lat, src.crs)
         if not point_in_bounds(src_radar_x, src_radar_y, src.bounds):
             raise AppError("RADAR_OUTSIDE_DEM", "Radar point is outside DEM bounds.")
+
+        dem_coverage_ratio = coverage_extent_ratio_for_dataset(src, payload, target_crs, radar_x, radar_y)
+        if dem_coverage_ratio < MIN_DEM_COVERAGE_RATIO:
+            raise AppError(
+                "RANGE_OUTSIDE_DEM",
+                (
+                    "Coverage range is mostly outside the DEM extent "
+                    f"({dem_coverage_ratio:.0%} covered; at least {MIN_DEM_COVERAGE_RATIO:.0%} required)."
+                ),
+                status_code=400,
+            )
 
         target_bounds = bounds_around_point(radar_x, radar_y, payload.coverage.max_range_m)
         src_crop_bounds = transform_bounds(
@@ -125,7 +141,51 @@ def prepare_coverage_dem(source: Path, destination: Path, payload: CoverageReque
         radar_y=radar_y,
         projected_bounds=projected_bounds,
         resolution_m=resolution_m,
+        dem_coverage_ratio=dem_coverage_ratio,
     )
+
+
+def validate_coverage_extent(source: Path, payload: CoverageRequest) -> float:
+    import rasterio
+
+    target_epsg = utm_epsg_from_lonlat(payload.radar.lon, payload.radar.lat)
+    target_crs = CRS.from_epsg(target_epsg)
+    radar_x, radar_y = project_lonlat_to_crs(payload.radar.lon, payload.radar.lat, target_crs)
+    with rasterio.open(source) as src:
+        if src.crs is None:
+            raise AppError("DEM_WITHOUT_CRS", "DEM is missing coordinate reference system.")
+
+        src_radar_x, src_radar_y = project_lonlat_to_crs(payload.radar.lon, payload.radar.lat, src.crs)
+        if not point_in_bounds(src_radar_x, src_radar_y, src.bounds):
+            raise AppError("RADAR_OUTSIDE_DEM", "Radar point is outside DEM bounds.")
+
+        ratio = coverage_extent_ratio_for_dataset(src, payload, target_crs, radar_x, radar_y)
+        if ratio < MIN_DEM_COVERAGE_RATIO:
+            raise AppError(
+                "RANGE_OUTSIDE_DEM",
+                (
+                    "Coverage range is mostly outside the DEM extent "
+                    f"({ratio:.0%} covered; at least {MIN_DEM_COVERAGE_RATIO:.0%} required)."
+                ),
+                status_code=400,
+            )
+        return ratio
+
+
+def coverage_extent_ratio_for_dataset(dataset, payload: CoverageRequest, target_crs, radar_x: float, radar_y: float) -> float:
+    dem_bounds = transform_bounds(dataset.crs, target_crs, *dataset.bounds, densify_pts=21)
+    dem_geom = box(*dem_bounds)
+    range_geom = make_range_geometry(
+        radar_x,
+        radar_y,
+        payload.coverage.max_range_m,
+        payload.coverage.scan_mode,
+        payload.coverage.azimuth_deg,
+        payload.coverage.beam_width_deg,
+    )
+    if range_geom.is_empty or range_geom.area <= 0:
+        return 0.0
+    return max(0.0, min(1.0, dem_geom.intersection(range_geom).area / range_geom.area))
 
 
 def vectorize_visible_viewshed(viewshed: Path):

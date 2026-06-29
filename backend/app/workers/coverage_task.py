@@ -23,6 +23,7 @@ from app.schemas.radar import (
 from app.services.dem_store import find_dem_file
 from app.services.coverage_model import (
     PreparedCoverageDem,
+    WARN_DEM_COVERAGE_RATIO,
     default_simplify_tolerance,
     prepare_coverage_dem,
 )
@@ -507,6 +508,7 @@ def _write_vector_outputs(
             prepared.projected_bounds.top,
         ],
         projected_dem_resolution_m=[prepared.resolution_m[0], prepared.resolution_m[1]],
+        dem_coverage_ratio=prepared.dem_coverage_ratio,
         max_range_m=payload.coverage.max_range_m,
         scan_mode=payload.coverage.scan_mode,
         azimuth_deg=payload.coverage.azimuth_deg,
@@ -600,8 +602,8 @@ def _build_model_warnings(
         prepared.projected_bounds.right,
         prepared.projected_bounds.top,
     )
-    if not dem_bounds_geom.contains(range_geom):
-        warnings.append("Requested radar range is not fully covered by the available DEM extent.")
+    if prepared.dem_coverage_ratio < WARN_DEM_COVERAGE_RATIO:
+        warnings.append(f"DEM covers {prepared.dem_coverage_ratio:.1%} of the requested radar footprint.")
     if diagnostics is not None:
         warnings.extend(diagnostics.notes)
     return warnings

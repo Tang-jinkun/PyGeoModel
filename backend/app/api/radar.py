@@ -12,7 +12,8 @@ from app.schemas.radar import (
     CoverageTaskSummary,
 )
 from app.services.output_files import list_task_output_files, resolve_task_output_path
-from app.services.dem_store import read_dem_metadata
+from app.services.coverage_model import validate_coverage_extent
+from app.services.dem_store import find_dem_file, read_dem_metadata
 from app.services.profile_analysis import analyze_coverage_profile
 from app.services.task_store import create_task, delete_task, get_task, list_tasks
 from app.workers.coverage_task import run_coverage_task
@@ -29,6 +30,7 @@ def list_coverage_tasks() -> list[CoverageTaskSummary]:
 def create_coverage_task(payload: CoverageRequest, background_tasks: BackgroundTasks) -> CoverageTaskStatus:
     try:
         read_dem_metadata(payload.dem_id)
+        validate_coverage_extent(find_dem_file(payload.dem_id), payload)
         task = create_task(payload)
         background_tasks.add_task(run_coverage_task, task.task_id, payload)
         return task
