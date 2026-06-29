@@ -1,7 +1,9 @@
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
+from uuid import uuid4
 
 from pyproj import Transformer
 from shapely.geometry import box, mapping
@@ -17,7 +19,7 @@ from app.services.coverage_model import (
     vectorize_visible_viewshed,
 )
 from app.services.geometry import make_range_geometry, project_geometry
-from app.services.output_files import describe_output_files, list_task_output_files
+from app.services.output_files import OUTPUT_FILENAMES, describe_output_files, list_task_output_files
 from app.services.task_store import mark_failed, mark_finished, mark_running
 
 
@@ -26,25 +28,32 @@ def run_coverage_task(task_id: str, payload: CoverageRequest) -> None:
         mark_running(task_id, "Preparing DEM and projection.", 15)
         output_dir = settings.outputs_dir / task_id
         output_dir.mkdir(parents=True, exist_ok=True)
+        staging_dir = output_dir / f".staging-{uuid4().hex}"
+        staging_dir.mkdir(parents=True, exist_ok=False)
 
         dem_path = find_dem_file(payload.dem_id)
-        projected_dem = output_dir / "dem_projected.tif"
-        viewshed = output_dir / "viewshed.tif"
+        projected_dem = staging_dir / "dem_projected.tif"
+        viewshed = staging_dir / "viewshed.tif"
 
-        prepared = prepare_coverage_dem(dem_path, projected_dem, payload)
+        try:
+            prepared = prepare_coverage_dem(dem_path, projected_dem, payload)
 
-        mark_running(task_id, "Running gdal_viewshed.", 45)
-        gdal_command = _run_gdal_viewshed(projected_dem, viewshed, prepared.radar_x, prepared.radar_y, payload)
+            mark_running(task_id, "Running gdal_viewshed.", 45)
+            gdal_command = _run_gdal_viewshed(projected_dem, viewshed, prepared.radar_x, prepared.radar_y, payload)
 
-        mark_running(task_id, "Vectorizing viewshed outputs.", 80)
-        outputs, output_files, metrics, model, warnings = _write_vector_outputs(
-            task_id,
-            output_dir,
-            prepared,
-            payload,
-            viewshed,
-            gdal_command,
-        )
+            mark_running(task_id, "Vectorizing viewshed outputs.", 80)
+            outputs, output_files, metrics, model, warnings = _write_vector_outputs(
+                task_id,
+                staging_dir,
+                output_dir,
+                prepared,
+                payload,
+                viewshed,
+                gdal_command,
+            )
+        finally:
+            if staging_dir.exists():
+                shutil.rmtree(staging_dir, ignore_errors=True)
         mark_finished(
             task_id,
             metrics=metrics,
@@ -89,6 +98,7 @@ def _run_gdal_viewshed(dem: Path, viewshed: Path, radar_x: float, radar_y: float
 
 def _write_vector_outputs(
     task_id: str,
+    staging_dir: Path,
     output_dir: Path,
     prepared: PreparedCoverageDem,
     payload: CoverageRequest,
@@ -114,11 +124,11 @@ def _write_vector_outputs(
         visible_clipped = visible_clipped.simplify(tolerance, preserve_topology=True)
         blocked_geom = blocked_geom.simplify(tolerance, preserve_topology=True)
 
-    range_geojson = output_dir / "radar_range.geojson"
-    visible_geojson = output_dir / "visible.geojson"
-    blocked_geojson = output_dir / "blocked.geojson"
-    model_metadata_json = output_dir / "model_metadata.json"
-    output_manifest_json = output_dir / "output_manifest.json"
+    range_geojson = staging_dir / "radar_range.geojson"
+    visible_geojson = staging_dir / "visible.geojson"
+    blocked_geojson = staging_dir / "blocked.geojson"
+    model_metadata_json = staging_dir / "model_metadata.json"
+    output_manifest_json = staging_dir / "output_manifest.json"
 
     _write_feature_collection(range_geojson, range_wgs84, {"kind": "theoretical_range"})
     _write_feature_collection(
@@ -167,28 +177,25 @@ def _write_vector_outputs(
         simplify_tolerance_m=tolerance,
         gdal_viewshed_command=gdal_command,
     )
-    model_metadata_json.write_text(
-        json.dumps(
-            {
-                "model": model.model_dump(),
-                "metrics": metrics.model_dump(),
-                "warnings": warnings,
-            },
-            ensure_ascii=False,
-            indent=2,
-        ),
-        encoding="utf-8",
+    _write_json_atomic(
+        model_metadata_json,
+        {
+            "model": model.model_dump(),
+            "metrics": metrics.model_dump(),
+            "warnings": warnings,
+        },
     )
     output_paths = {
-        "viewshed_tif": viewshed,
-        "visible_geojson": visible_geojson,
-        "blocked_geojson": blocked_geojson,
-        "range_geojson": range_geojson,
-        "model_metadata_json": model_metadata_json,
+        kind: staging_dir / filename
+        for kind, filename in OUTPUT_FILENAMES.items()
     }
+    _write_output_manifest(output_manifest_json, [], metrics, model, warnings)
     manifest_files = describe_output_files(task_id, output_paths)
     _write_output_manifest(output_manifest_json, manifest_files, metrics, model, warnings)
+    _ensure_staged_outputs_exist(staging_dir)
+    _commit_staged_outputs(staging_dir, output_dir)
     output_files = list_task_output_files(task_id)
+    _ensure_finished_outputs_exist(output_files)
     return outputs, output_files, metrics, model, warnings
 
 
@@ -199,18 +206,14 @@ def _write_output_manifest(
     model: CoverageModelMetadata,
     warnings: list[str],
 ) -> None:
-    path.write_text(
-        json.dumps(
-            {
-                "files": [item.model_dump() for item in output_files],
-                "metrics": metrics.model_dump(),
-                "model": model.model_dump(),
-                "warnings": warnings,
-            },
-            ensure_ascii=False,
-            indent=2,
-        ),
-        encoding="utf-8",
+    _write_json_atomic(
+        path,
+        {
+            "files": [item.model_dump() for item in output_files],
+            "metrics": metrics.model_dump(),
+            "model": model.model_dump(),
+            "warnings": warnings,
+        },
     )
 
 
@@ -232,7 +235,69 @@ def _write_feature_collection(path: Path, geometry, properties: dict[str, str]) 
     if geometry is not None and not geometry.is_empty:
         features.append({"type": "Feature", "properties": properties, "geometry": mapping(geometry)})
 
-    path.write_text(
-        json.dumps({"type": "FeatureCollection", "features": features}, ensure_ascii=False),
-        encoding="utf-8",
-    )
+    _write_json_atomic(path, {"type": "FeatureCollection", "features": features})
+
+
+def _ensure_finished_outputs_exist(output_files: list[CoverageOutputFile]) -> None:
+    missing = [item.kind for item in output_files if not item.exists or item.size_bytes is None or item.size_bytes <= 0]
+    if missing:
+        raise AppError(
+            "OUTPUT_INCOMPLETE",
+            f"Coverage task outputs are incomplete: {', '.join(missing)}.",
+            status_code=500,
+        )
+
+
+def _ensure_staged_outputs_exist(staging_dir: Path) -> None:
+    missing = [
+        kind
+        for kind, filename in OUTPUT_FILENAMES.items()
+        if not (staging_dir / filename).exists() or (staging_dir / filename).stat().st_size <= 0
+    ]
+    if missing:
+        raise AppError(
+            "OUTPUT_INCOMPLETE",
+            f"Coverage task staged outputs are incomplete: {', '.join(missing)}.",
+            status_code=500,
+        )
+
+
+def _commit_staged_outputs(staging_dir: Path, output_dir: Path) -> None:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    for filename in OUTPUT_FILENAMES.values():
+        source = staging_dir / filename
+        destination = output_dir / filename
+        source.replace(destination)
+    _fsync_directory(output_dir)
+
+
+def _write_json_atomic(path: Path, payload: dict) -> None:
+    _write_text_atomic(path, json.dumps(payload, ensure_ascii=False, indent=2))
+
+
+def _write_text_atomic(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
+    try:
+        with temp_path.open("w", encoding="utf-8") as file:
+            file.write(content)
+            file.flush()
+            os.fsync(file.fileno())
+        temp_path.replace(path)
+        _fsync_directory(path.parent)
+    finally:
+        if temp_path.exists():
+            temp_path.unlink()
+
+
+def _fsync_directory(path: Path) -> None:
+    if os.name == "nt":
+        return
+    try:
+        descriptor = os.open(path, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
