@@ -488,7 +488,10 @@ function applyCoverageRequest(request: CoverageRequest) {
   coverageRequest.advanced.voxel_grid_size = request.advanced.voxel_grid_size;
   coverageRequest.advanced.voxel_vertical_levels = request.advanced.voxel_vertical_levels;
   coverageRequest.advanced.voxel_max_height_m = request.advanced.voxel_max_height_m;
+  coverageRequest.advanced.min_elevation_deg = request.advanced.min_elevation_deg;
   coverageRequest.advanced.max_elevation_deg = request.advanced.max_elevation_deg;
+  coverageRequest.advanced.vertical_beam_width_deg = request.advanced.vertical_beam_width_deg;
+  coverageRequest.advanced.visual_dome_mode = request.advanced.visual_dome_mode;
   coverageRequest.advanced.height_layers_m = [...(request.advanced.height_layers_m ?? [])];
   coverageRequest.reserved_radar_params = { ...(request.reserved_radar_params ?? {}) };
 }

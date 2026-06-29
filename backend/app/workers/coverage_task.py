@@ -174,6 +174,7 @@ def _generate_voxels(
     grid_size = payload.advanced.voxel_grid_size
     vertical_levels = payload.advanced.voxel_vertical_levels
     max_height = payload.advanced.voxel_max_height_m
+    min_elevation = payload.advanced.min_elevation_deg
     max_elevation = payload.advanced.max_elevation_deg
 
     with rasterio.open(min_visible_height) as src:
@@ -213,18 +214,17 @@ def _generate_voxels(
                 delta = abs((az - center + 180) % 360 - 180)
                 if delta > half:
                     continue
-            # Check elevation angle
+            # Apply the theoretical vertical beam envelope; DEM visibility is applied below.
+            min_h_at_dist = max(0.0, dist * math.tan(math.radians(min_elevation))) if dist > 0 else 0.0
             if max_elevation > 0 and dist > 0:
-                elev = math.degrees(math.atan(max_height / dist))
-                if elev > max_elevation:
-                    max_h_at_dist = dist * math.tan(math.radians(max_elevation))
-                else:
-                    max_h_at_dist = max_height
+                max_h_at_dist = min(max_height, dist * math.tan(math.radians(max_elevation)))
             else:
                 max_h_at_dist = max_height
+            if max_h_at_dist <= min_h_at_dist:
+                continue
 
             for level in range(vertical_levels):
-                z = (level + 0.5) * (max_h_at_dist / vertical_levels)
+                z = min_h_at_dist + (level + 0.5) * ((max_h_at_dist - min_h_at_dist) / vertical_levels)
                 if z >= min_h:
                     clearance = z - min_h
                     lon, lat = transformer.transform(x_proj, y_proj)
@@ -241,7 +241,9 @@ def _generate_voxels(
         "grid_size": grid_size,
         "vertical_levels": vertical_levels,
         "max_height_m": max_height,
+        "min_elevation_deg": min_elevation,
         "max_elevation_deg": max_elevation,
+        "vertical_beam_width_deg": max_elevation - min_elevation,
         "point_count": len(points),
         "point_format": "float32",
         "fields": ["lon", "lat", "z_agl_m", "clearance_m"],
@@ -335,7 +337,10 @@ def _write_vector_outputs(
         voxel_grid_size=payload.advanced.voxel_grid_size,
         voxel_vertical_levels=payload.advanced.voxel_vertical_levels,
         voxel_max_height_m=payload.advanced.voxel_max_height_m,
+        min_elevation_deg=payload.advanced.min_elevation_deg,
         max_elevation_deg=payload.advanced.max_elevation_deg,
+        vertical_beam_width_deg=payload.advanced.vertical_beam_width_deg,
+        visual_dome_mode=payload.advanced.visual_dome_mode,
         height_layers_m=height_layers,
     )
     warnings = _build_model_warnings(prepared, range_geom)

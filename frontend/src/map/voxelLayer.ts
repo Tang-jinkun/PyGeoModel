@@ -1,7 +1,8 @@
 import * as maplibregl from "maplibre-gl";
 import * as THREE from "three";
 
-const VOXEL_LAYER_PREFIX = "voxel-layer";
+const VOXEL_LAYER_ID = "voxel-layer";
+const VOXEL_LEGACY_LAYER_PREFIX = `${VOXEL_LAYER_ID}-`;
 let activeVoxelLayer: VoxelCustomLayer | null = null;
 
 export interface VoxelPoint {
@@ -42,7 +43,7 @@ interface VoxelState {
 
 export function addOrUpdateVoxelLayer(map: maplibregl.Map, points: VoxelPoint[], options?: Partial<VoxelRenderOptions>) {
   const renderOptions = normalizeOptions(options);
-  if (activeVoxelLayer && map.getLayer(activeVoxelLayer.id)) {
+  if (activeVoxelLayer?.id === VOXEL_LAYER_ID && map.getLayer(VOXEL_LAYER_ID)) {
     activeVoxelLayer.update(points, renderOptions);
     return;
   }
@@ -52,12 +53,19 @@ export function addOrUpdateVoxelLayer(map: maplibregl.Map, points: VoxelPoint[],
 }
 
 export function removeVoxelLayer(map: maplibregl.Map) {
+  removeLayerIfPresent(map, VOXEL_LAYER_ID);
   for (const layer of map.getStyle().layers ?? []) {
-    if (layer.id.indexOf(VOXEL_LAYER_PREFIX) === 0 && map.getLayer(layer.id)) {
-      map.removeLayer(layer.id);
+    if (layer.id.startsWith(VOXEL_LEGACY_LAYER_PREFIX)) {
+      removeLayerIfPresent(map, layer.id);
     }
   }
   activeVoxelLayer = null;
+}
+
+function removeLayerIfPresent(map: maplibregl.Map, layerId: string) {
+  if (map.getLayer(layerId)) {
+    map.removeLayer(layerId);
+  }
 }
 
 function createVoxelLayer(initialPoints: VoxelPoint[], initialOptions: VoxelRenderOptions): VoxelCustomLayer {
@@ -72,7 +80,7 @@ function createVoxelLayer(initialPoints: VoxelPoint[], initialOptions: VoxelRend
   };
 
   return {
-    id: `${VOXEL_LAYER_PREFIX}-${Math.random().toString(36).slice(2, 10)}`,
+    id: VOXEL_LAYER_ID,
     type: "custom",
     renderingMode: "3d",
     onAdd(map, gl) {

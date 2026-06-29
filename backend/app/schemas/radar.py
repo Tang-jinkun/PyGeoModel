@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 CoverageOutputKind = Literal[
@@ -41,8 +41,18 @@ class AdvancedInput(BaseModel):
     voxel_grid_size: int = Field(default=128, ge=32, le=512)
     voxel_vertical_levels: int = Field(default=16, ge=4, le=64)
     voxel_max_height_m: float = Field(default=3000, ge=500, le=10000)
+    min_elevation_deg: float = Field(default=0, ge=-10, le=89)
     max_elevation_deg: float = Field(default=32, ge=0, le=90)
+    vertical_beam_width_deg: float = Field(default=32, ge=0, le=100)
+    visual_dome_mode: bool = True
     height_layers_m: list[float] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_elevation_range(self) -> "AdvancedInput":
+        if self.max_elevation_deg < self.min_elevation_deg:
+            raise ValueError("max_elevation_deg must be greater than or equal to min_elevation_deg")
+        self.vertical_beam_width_deg = self.max_elevation_deg - self.min_elevation_deg
+        return self
 
 
 class ReservedRadarParams(BaseModel):
@@ -112,7 +122,10 @@ class CoverageModelMetadata(BaseModel):
     voxel_grid_size: int = 128
     voxel_vertical_levels: int = 16
     voxel_max_height_m: float = 3000
+    min_elevation_deg: float = 0
     max_elevation_deg: float = 32
+    vertical_beam_width_deg: float = 32
+    visual_dome_mode: bool = True
     height_layers_m: list[float] = Field(default_factory=list)
 
 

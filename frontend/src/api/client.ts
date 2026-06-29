@@ -23,7 +23,10 @@ const DEFAULT_COVERAGE_REQUEST: CoverageRequest = {
     voxel_grid_size: 128,
     voxel_vertical_levels: 16,
     voxel_max_height_m: 3000,
+    min_elevation_deg: 0,
     max_elevation_deg: 32,
+    vertical_beam_width_deg: 32,
+    visual_dome_mode: true,
     height_layers_m: []
   },
   reserved_radar_params: {}
@@ -113,7 +116,10 @@ export interface CoverageTaskSummary {
     voxel_grid_size: number;
     voxel_vertical_levels: number;
     voxel_max_height_m: number;
+    min_elevation_deg: number;
     max_elevation_deg: number;
+    vertical_beam_width_deg: number;
+    visual_dome_mode: boolean;
     height_layers_m: number[];
   } | null;
   warnings: string[];
@@ -136,7 +142,10 @@ export interface AdvancedInput {
   voxel_grid_size: number;
   voxel_vertical_levels: number;
   voxel_max_height_m: number;
+  min_elevation_deg: number;
   max_elevation_deg: number;
+  vertical_beam_width_deg: number;
+  visual_dome_mode: boolean;
   height_layers_m: number[];
 }
 
@@ -281,7 +290,14 @@ export function normalizeCoverageRequest(payload: unknown, fallback: CoverageReq
       voxel_grid_size: numberOr(advanced.voxel_grid_size, fallback.advanced.voxel_grid_size),
       voxel_vertical_levels: numberOr(advanced.voxel_vertical_levels, fallback.advanced.voxel_vertical_levels),
       voxel_max_height_m: numberOr(advanced.voxel_max_height_m, fallback.advanced.voxel_max_height_m),
+      min_elevation_deg: numberOr(advanced.min_elevation_deg, fallback.advanced.min_elevation_deg),
       max_elevation_deg: numberOr(advanced.max_elevation_deg, fallback.advanced.max_elevation_deg),
+      vertical_beam_width_deg: numberOr(
+        advanced.vertical_beam_width_deg,
+        numberOr(advanced.max_elevation_deg, fallback.advanced.max_elevation_deg) -
+          numberOr(advanced.min_elevation_deg, fallback.advanced.min_elevation_deg)
+      ),
+      visual_dome_mode: booleanOr(advanced.visual_dome_mode, fallback.advanced.visual_dome_mode),
       height_layers_m: Array.isArray(advanced.height_layers_m) ? advanced.height_layers_m.filter((item): item is number => typeof item === "number") : fallback.advanced.height_layers_m
     },
     reserved_radar_params: normalizeReservedRadarParams(payload.reserved_radar_params)
@@ -466,7 +482,13 @@ function normalizeModel(payload: unknown): CoverageTaskSummary["model"] {
     voxel_grid_size: numberOr(payload.voxel_grid_size, 128),
     voxel_vertical_levels: numberOr(payload.voxel_vertical_levels, 16),
     voxel_max_height_m: numberOr(payload.voxel_max_height_m, 3000),
+    min_elevation_deg: numberOr(payload.min_elevation_deg, 0),
     max_elevation_deg: numberOr(payload.max_elevation_deg, 32),
+    vertical_beam_width_deg: numberOr(
+      payload.vertical_beam_width_deg,
+      numberOr(payload.max_elevation_deg, 32) - numberOr(payload.min_elevation_deg, 0)
+    ),
+    visual_dome_mode: booleanOr(payload.visual_dome_mode, true),
     height_layers_m: numberArray(payload.height_layers_m),
     gdal_viewshed_command: Array.isArray(payload.gdal_viewshed_command)
       ? payload.gdal_viewshed_command.filter((item): item is string => typeof item === "string")

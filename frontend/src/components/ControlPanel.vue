@@ -106,6 +106,36 @@
       </div>
 
       <div class="form-grid">
+        <el-form-item label="最低俯仰角 °">
+          <el-input-number
+            v-model="model.advanced.min_elevation_deg"
+            :min="-10"
+            :max="Math.min(89, model.advanced.max_elevation_deg)"
+            :step="0.5"
+            controls-position="right"
+          />
+        </el-form-item>
+        <el-form-item label="最高俯仰角 °">
+          <el-input-number
+            v-model="model.advanced.max_elevation_deg"
+            :min="Math.max(0, model.advanced.min_elevation_deg)"
+            :max="90"
+            :step="0.5"
+            controls-position="right"
+          />
+        </el-form-item>
+      </div>
+
+      <div class="form-grid">
+        <el-form-item label="垂直波束宽度 °">
+          <el-input-number :model-value="verticalBeamWidth" :disabled="true" controls-position="right" />
+        </el-form-item>
+        <el-form-item label="展示穹顶">
+          <el-switch v-model="model.advanced.visual_dome_mode" />
+        </el-form-item>
+      </div>
+
+      <div class="form-grid">
         <el-form-item label="曲率折射">
           <el-switch v-model="model.advanced.use_curvature" />
         </el-form-item>
@@ -235,6 +265,9 @@ const scanOptions = [
 
 const demLabel = computed(() => props.dem?.filename ?? "点击或拖拽上传 GeoTIFF DEM");
 const canDeleteDem = computed(() => Boolean(props.dem && !props.busy && !props.deletingDemId && props.dem.task_count === 0));
+const verticalBeamWidth = computed(() =>
+  Number(Math.max(0, props.model.advanced.max_elevation_deg - props.model.advanced.min_elevation_deg).toFixed(1))
+);
 const deleteDemHint = computed(() => {
   if (!props.dem) {
     return "";

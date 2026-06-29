@@ -176,6 +176,14 @@ const modelItems = computed(() => [
     value: formatAngle(props.task?.model?.beam_width_deg ?? props.task?.request?.coverage?.beam_width_deg)
   },
   {
+    label: "俯仰范围",
+    value: formatElevationRange()
+  },
+  {
+    label: "波束显示",
+    value: (props.task?.model?.visual_dome_mode ?? props.task?.request?.advanced?.visual_dome_mode) ? "展示穹顶" : "真实俯仰"
+  },
+  {
     label: "输出简化",
     value: formatDistance(props.task?.model?.simplify_tolerance_m ?? props.task?.request?.advanced?.output_simplify_tolerance_m)
   }
@@ -247,6 +255,15 @@ function formatAngle(value?: number | null) {
     return "-";
   }
   return `${value.toFixed(1)}°`;
+}
+
+function formatElevationRange() {
+  const minValue = props.task?.model?.min_elevation_deg ?? props.task?.request?.advanced?.min_elevation_deg;
+  const maxValue = props.task?.model?.max_elevation_deg ?? props.task?.request?.advanced?.max_elevation_deg;
+  if (minValue == null || maxValue == null) {
+    return "-";
+  }
+  return `${minValue.toFixed(1)}° ~ ${maxValue.toFixed(1)}°`;
 }
 
 function formatScanMode(value?: string | null) {

@@ -3,7 +3,8 @@ import * as THREE from "three";
 
 import type { CoverageRequest } from "../api/client";
 
-const RADAR_VOLUME_LAYER_PREFIX = "radar-volume-layer";
+const RADAR_VOLUME_LAYER_ID = "radar-volume-layer";
+const RADAR_VOLUME_LEGACY_LAYER_PREFIX = `${RADAR_VOLUME_LAYER_ID}-`;
 const RADAR_VOLUME_MAX_SEGMENTS = 72;
 let activeRadarVolumeLayer: RadarVolumeCustomLayer | null = null;
 
@@ -33,7 +34,7 @@ export function addOrUpdateRadarVolume(
   options?: Partial<RadarVolumeRenderOptions>
 ) {
   const renderOptions = normalizeOptions(options);
-  if (activeRadarVolumeLayer && map.getLayer(activeRadarVolumeLayer.id)) {
+  if (activeRadarVolumeLayer?.id === RADAR_VOLUME_LAYER_ID && map.getLayer(RADAR_VOLUME_LAYER_ID)) {
     activeRadarVolumeLayer.update(request, renderOptions);
     return;
   }
@@ -43,12 +44,19 @@ export function addOrUpdateRadarVolume(
 }
 
 export function removeRadarVolume(map: maplibregl.Map) {
+  removeLayerIfPresent(map, RADAR_VOLUME_LAYER_ID);
   for (const layer of map.getStyle().layers ?? []) {
-    if (layer.id.startsWith(RADAR_VOLUME_LAYER_PREFIX) && map.getLayer(layer.id)) {
-      map.removeLayer(layer.id);
+    if (layer.id.startsWith(RADAR_VOLUME_LEGACY_LAYER_PREFIX)) {
+      removeLayerIfPresent(map, layer.id);
     }
   }
   activeRadarVolumeLayer = null;
+}
+
+function removeLayerIfPresent(map: maplibregl.Map, layerId: string) {
+  if (map.getLayer(layerId)) {
+    map.removeLayer(layerId);
+  }
 }
 
 function createRadarVolumeLayer(
@@ -68,7 +76,7 @@ function createRadarVolumeLayer(
   };
 
   return {
-    id: `${RADAR_VOLUME_LAYER_PREFIX}-${Math.random().toString(36).slice(2, 10)}`,
+    id: RADAR_VOLUME_LAYER_ID,
     type: "custom",
     renderingMode: "3d",
     onAdd(map, gl) {
@@ -226,7 +234,8 @@ interface VolumeShape {
   origin: maplibregl.MercatorCoordinate;
   meter: number;
   radius: number;
-  verticalAngle: number;
+  minElevation: number;
+  maxElevation: number;
   startAzimuth: number;
   endAzimuth: number;
   horizontalSegments: number;
@@ -240,15 +249,21 @@ function getVolumeShape(request: CoverageRequest, anchorAltitudeM: number): Volu
   );
   const meter = origin.meterInMercatorCoordinateUnits();
   const radius = Math.max(1, request.coverage.max_range_m) * meter;
-  const requestedElevation = request.advanced.max_elevation_deg ?? 32;
-  const verticalAngle = THREE.MathUtils.degToRad(Math.min(86, Math.max(72, requestedElevation)));
+  const requestedMinElevation = request.advanced.min_elevation_deg ?? 0;
+  const requestedMaxElevation = request.advanced.max_elevation_deg ?? 32;
+  const minElevationDeg = request.advanced.visual_dome_mode ? 0 : requestedMinElevation;
+  const maxElevationDeg = request.advanced.visual_dome_mode
+    ? Math.min(86, Math.max(72, requestedMaxElevation))
+    : Math.max(requestedMinElevation + 0.1, requestedMaxElevation);
+  const minElevation = THREE.MathUtils.degToRad(Math.max(-10, Math.min(89, minElevationDeg)));
+  const maxElevation = THREE.MathUtils.degToRad(Math.max(-9.9, Math.min(90, maxElevationDeg)));
   const startAzimuth = getStartAzimuth(request);
   const endAzimuth = getEndAzimuth(request);
   const horizontalSegments = request.coverage.scan_mode === "omni"
     ? RADAR_VOLUME_MAX_SEGMENTS
     : Math.max(10, Math.ceil(Math.abs(endAzimuth - startAzimuth) / 4));
   const verticalSegments = 12;
-  return { origin, meter, radius, verticalAngle, startAzimuth, endAzimuth, horizontalSegments, verticalSegments };
+  return { origin, meter, radius, minElevation, maxElevation, startAzimuth, endAzimuth, horizontalSegments, verticalSegments };
 }
 
 function buildRadarVolumeGeometry(shape: VolumeShape) {
@@ -350,7 +365,7 @@ function buildSupplementaryLobes(
     const lobeShape = {
       ...shape,
       radius: shape.radius * lobe.radiusScale,
-      verticalAngle: shape.verticalAngle * lobe.verticalScale,
+      maxElevation: shape.minElevation + (shape.maxElevation - shape.minElevation) * lobe.verticalScale,
       startAzimuth: THREE.MathUtils.degToRad(lobe.center - lobe.width / 2),
       endAzimuth: THREE.MathUtils.degToRad(lobe.center + lobe.width / 2),
       horizontalSegments: Math.max(16, Math.ceil(lobe.width / 3)),
@@ -556,7 +571,7 @@ function getScanBandPositions(shape: VolumeShape, azimuth: number, verticalStart
 }
 
 function volumePoint(shape: VolumeShape, azimuth: number, verticalT: number, radiusScale = 1) {
-  const elevation = shape.verticalAngle * verticalT;
+  const elevation = shape.minElevation + (shape.maxElevation - shape.minElevation) * verticalT;
   const radius = shape.radius * radiusScale;
   const horizontalDistance = Math.cos(elevation) * radius;
   return new THREE.Vector3(
