@@ -117,13 +117,20 @@ interface ResultLayerControl {
 interface HeightLayerOption {
   heightM: number;
   label: string;
-  url: string;
+  visibleUrl: string;
+  blockedUrl: string | null;
+  visibleAreaM2: number;
+  blockedAreaM2: number;
 }
 
 interface HeightLayerManifest {
   height_layers?: Array<{
     height_m?: number;
     filename?: string;
+    visible_filename?: string;
+    blocked_filename?: string;
+    visible_area_m2?: number;
+    blocked_area_m2?: number;
   }>;
 }
 
@@ -880,8 +887,8 @@ async function handleFocusResult() {
   const urls = layerControls
     .flatMap((control) => {
       if (control.key === "heightLayer" && control.available) {
-        const url = getSelectedHeightLayer()?.url;
-        return url ? [url] : [];
+        const selected = getSelectedHeightLayer();
+        return selected ? [selected.visibleUrl, selected.blockedUrl].filter((url): url is string => !!url) : [];
       }
       if (!task.value || task.value.status !== "finished" || !control.available || !isResultLayerKey(control.key)) {
         return [];
@@ -1093,13 +1100,35 @@ function applyHeightLayerControl() {
   addOrUpdateGeoJsonLayer(
     map.value,
     "height-layer",
-    selected.url,
+    selected.visibleUrl,
     {
-      "fill-color": "#f59e0b",
+      "fill-color": "#14b8a6",
       "fill-opacity": control.visible ? control.opacity : 0
     },
-    { "line-color": "#f59e0b", "line-opacity": control.visible ? Math.max(control.opacity, 0.32) : 0, "line-width": 1 }
+    { "line-color": "#0f766e", "line-opacity": control.visible ? Math.max(control.opacity, 0.32) : 0, "line-width": 1 }
   );
+  if (selected.blockedUrl) {
+    addOrUpdateGeoJsonLayer(
+      map.value,
+      "height-layer-blocked",
+      selected.blockedUrl,
+      {
+        "fill-color": "#ef4444",
+        "fill-opacity": control.visible ? Math.max(control.opacity * 0.72, 0.12) : 0
+      },
+      {
+        "line-color": "#b91c1c",
+        "line-opacity": control.visible ? Math.max(control.opacity, 0.3) : 0,
+        "line-width": 1
+      }
+    );
+  } else {
+    for (const layerId of ["height-layer-blocked", "height-layer-blocked-outline"]) {
+      if (map.value.getLayer(layerId)) {
+        map.value.setLayoutProperty(layerId, "visibility", "none");
+      }
+    }
+  }
   setHeightLayerVisibility(control.visible);
   setHeightLayerOpacity(control.opacity);
   moveRadarMarkerToTop(map.value);
@@ -1110,7 +1139,7 @@ function setHeightLayerVisibility(visible: boolean) {
     return;
   }
   const visibility = visible ? "visible" : "none";
-  for (const layerId of ["height-layer", "height-layer-outline"]) {
+  for (const layerId of ["height-layer", "height-layer-outline", "height-layer-blocked", "height-layer-blocked-outline"]) {
     if (map.value.getLayer(layerId)) {
       map.value.setLayoutProperty(layerId, "visibility", visibility);
     }
@@ -1127,6 +1156,12 @@ function setHeightLayerOpacity(opacity: number) {
   if (map.value.getLayer("height-layer-outline")) {
     map.value.setPaintProperty("height-layer-outline", "line-opacity", opacity > 0 ? Math.max(opacity, 0.32) : 0);
   }
+  if (map.value.getLayer("height-layer-blocked")) {
+    map.value.setPaintProperty("height-layer-blocked", "fill-opacity", opacity > 0 ? Math.max(opacity * 0.72, 0.12) : 0);
+  }
+  if (map.value.getLayer("height-layer-blocked-outline")) {
+    map.value.setPaintProperty("height-layer-blocked-outline", "line-opacity", opacity > 0 ? Math.max(opacity, 0.3) : 0);
+  }
 }
 
 function getSelectedHeightLayer() {
@@ -1137,17 +1172,24 @@ function normalizeHeightLayerOptions(manifest: HeightLayerManifest, manifestUrl:
   const layers = Array.isArray(manifest.height_layers) ? manifest.height_layers : [];
   return layers
     .flatMap((item) => {
-      if (typeof item.height_m !== "number" || !Number.isFinite(item.height_m) || !item.filename) {
+      if (typeof item.height_m !== "number" || !Number.isFinite(item.height_m)) {
         return [];
       }
-      const url = resolveHeightLayerUrl(manifestUrl, item.filename);
-      if (!url) {
+      const visibleFilename = item.visible_filename ?? item.filename;
+      const visibleUrl = visibleFilename ? resolveHeightLayerUrl(manifestUrl, visibleFilename) : null;
+      const blockedUrl = item.blocked_filename ? resolveHeightLayerUrl(manifestUrl, item.blocked_filename) : null;
+      if (!visibleUrl) {
         return [];
       }
+      const visibleArea = typeof item.visible_area_m2 === "number" ? item.visible_area_m2 : 0;
+      const blockedArea = typeof item.blocked_area_m2 === "number" ? item.blocked_area_m2 : 0;
       return [{
         heightM: item.height_m,
-        label: `${formatHeightLabel(item.height_m)} 可见`,
-        url
+        label: `${formatHeightLabel(item.height_m)} 可见 ${formatAreaLabel(visibleArea)} / 遮挡 ${formatAreaLabel(blockedArea)}`,
+        visibleUrl,
+        blockedUrl,
+        visibleAreaM2: visibleArea,
+        blockedAreaM2: blockedArea
       }];
     })
     .sort((a, b) => a.heightM - b.heightM);
@@ -1175,6 +1217,13 @@ function formatHeightLabel(heightM: number) {
     return `${(heightM / 1000).toFixed(heightM % 1000 === 0 ? 0 : 1)} km`;
   }
   return `${heightM.toFixed(heightM % 1 === 0 ? 0 : 1)} m`;
+}
+
+function formatAreaLabel(areaM2: number) {
+  if (!Number.isFinite(areaM2) || areaM2 <= 0) {
+    return "0 km²";
+  }
+  return `${(areaM2 / 1_000_000).toFixed(areaM2 >= 10_000_000 ? 1 : 2)} km²`;
 }
 
 function isResultLayerKey(key: LayerKey): key is ResultLayerKey {

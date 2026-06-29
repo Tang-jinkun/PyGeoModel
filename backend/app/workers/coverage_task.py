@@ -269,22 +269,44 @@ def _generate_height_layers(
     for height in height_layers:
         masks = _coverage_masks_for_prepared(data, transform, prepared, payload, height, effective_range)
         visible_mask = masks["final"]
-        geojson_path = staging_dir / f"visible_h_{int(height)}.geojson"
-        features = []
-        geometry = _mask_to_geometry(visible_mask, transform)
-        if not geometry.is_empty:
-            wgs84 = project_geometry(geometry, transformer)
-            features.append({"type": "Feature", "properties": {"height_m": height}, "geometry": mapping(wgs84)})
+        theoretical_mask = masks["theoretical"]
+        blocked_mask = theoretical_mask & ~visible_mask
+        visible_path = staging_dir / f"visible_h_{_height_filename_token(height)}.geojson"
+        blocked_path = staging_dir / f"blocked_h_{_height_filename_token(height)}.geojson"
 
-        _write_feature_collection_geojson(geojson_path, features)
+        _write_height_layer_geojson(visible_path, visible_mask, transform, transformer, height, "visible")
+        _write_height_layer_geojson(blocked_path, blocked_mask, transform, transformer, height, "blocked")
         manifest["height_layers"].append({
             "height_m": height,
-            "filename": geojson_path.name,
+            "visible_filename": visible_path.name,
+            "blocked_filename": blocked_path.name,
+            "theoretical_area_m2": _mask_area(theoretical_mask, transform),
             "visible_area_m2": _mask_area(visible_mask, transform),
+            "blocked_area_m2": _mask_area(blocked_mask, transform),
         })
 
     manifest_path = staging_dir / "height_layers_manifest.json"
     _write_json_atomic(manifest_path, manifest)
+
+
+def _height_filename_token(height_m: float) -> str:
+    if float(height_m).is_integer():
+        return str(int(height_m))
+    return str(height_m).replace("-", "neg_").replace(".", "p")
+
+
+def _write_height_layer_geojson(path: Path, mask, transform, transformer: Transformer, height_m: float, kind: str) -> None:
+    features = []
+    geometry = _mask_to_geometry(mask, transform)
+    if not geometry.is_empty:
+        wgs84 = project_geometry(geometry, transformer)
+        features.append({
+            "type": "Feature",
+            "properties": {"height_m": height_m, "kind": kind},
+            "geometry": mapping(wgs84),
+        })
+
+    _write_feature_collection_geojson(path, features)
 
 
 def _generate_voxels(
@@ -651,6 +673,8 @@ def _commit_staged_outputs(staging_dir: Path, output_dir: Path) -> None:
         destination = output_dir / filename
         source.replace(destination)
     for source in staging_dir.glob("visible_h_*.geojson"):
+        source.replace(output_dir / source.name)
+    for source in staging_dir.glob("blocked_h_*.geojson"):
         source.replace(output_dir / source.name)
     _fsync_directory(output_dir)
 

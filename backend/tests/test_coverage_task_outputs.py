@@ -1,16 +1,22 @@
 import json
 from pathlib import Path
 
+import numpy
 import pytest
+import rasterio
+from rasterio.coords import BoundingBox
+from rasterio.transform import from_origin
 from shapely.geometry import Point
 
 from app.core.errors import AppError
-from app.schemas.radar import CoverageMetrics, CoverageModelMetadata, CoverageOutputFile
+from app.schemas.radar import CoverageMetrics, CoverageModelMetadata, CoverageOutputFile, CoverageRequest
+from app.services.coverage_model import PreparedCoverageDem
 from app.services.output_files import OUTPUT_FILENAMES, describe_output_files
 from app.workers.coverage_task import (
     _commit_staged_outputs,
     _ensure_finished_outputs_exist,
     _ensure_staged_outputs_exist,
+    _generate_height_layers,
     _write_feature_collection,
     _write_json_atomic,
     _write_output_manifest,
@@ -211,3 +217,83 @@ def test_commit_staged_outputs_replaces_public_outputs(tmp_path: Path) -> None:
         "output_manifest.json",
     ])
     assert (output_dir / "visible_h_0.geojson").read_text(encoding="utf-8") == "height-layer"
+
+
+def test_commit_staged_outputs_moves_blocked_height_layers(tmp_path: Path) -> None:
+    staging_dir = tmp_path / ".staging"
+    output_dir = tmp_path / "task_a"
+    staging_dir.mkdir()
+    for filename in OUTPUT_FILENAMES.values():
+        (staging_dir / filename).write_text(filename, encoding="utf-8")
+    (staging_dir / "blocked_h_0.geojson").write_text("blocked-height-layer", encoding="utf-8")
+
+    _commit_staged_outputs(staging_dir, output_dir)
+
+    assert (output_dir / "blocked_h_0.geojson").read_text(encoding="utf-8") == "blocked-height-layer"
+
+
+def test_generate_height_layers_writes_visible_and_blocked_manifests(tmp_path: Path) -> None:
+    min_visible_height = tmp_path / "min_visible_height.tif"
+    data = numpy.array(
+        [
+            [0, 30, 0, 30],
+            [0, 30, 0, 30],
+            [0, 30, 0, 30],
+            [0, 30, 0, 30],
+        ],
+        dtype=numpy.float32,
+    )
+    transform = from_origin(-20, 20, 10, 10)
+    with rasterio.open(
+        min_visible_height,
+        "w",
+        driver="GTiff",
+        width=4,
+        height=4,
+        count=1,
+        dtype=data.dtype,
+        crs="EPSG:32648",
+        transform=transform,
+        nodata=-9999,
+    ) as dataset:
+        dataset.write(data, 1)
+
+    request = CoverageRequest.model_validate(
+        {
+            "dem_id": "dem_test",
+            "radar": {"lon": 105, "lat": 0, "height_m": 10},
+            "target": {"height_m": 0},
+            "coverage": {
+                "max_range_m": 100,
+                "scan_mode": "omni",
+                "azimuth_deg": 0,
+                "beam_width_deg": 360,
+            },
+            "advanced": {
+                "height_layers_m": [0],
+                "min_elevation_deg": 0,
+                "max_elevation_deg": 89,
+            },
+        }
+    )
+    prepared = PreparedCoverageDem(
+        source_dem=tmp_path / "source.tif",
+        projected_dem=tmp_path / "projected.tif",
+        target_epsg=32648,
+        radar_x=0,
+        radar_y=0,
+        projected_bounds=BoundingBox(-20, -20, 20, 20),
+        resolution_m=(10, 10),
+        dem_coverage_ratio=1,
+    )
+
+    _generate_height_layers(tmp_path, min_visible_height, prepared, request)
+
+    manifest = json.loads((tmp_path / "height_layers_manifest.json").read_text(encoding="utf-8"))
+    layer = manifest["height_layers"][0]
+    assert layer["visible_filename"] == "visible_h_0.geojson"
+    assert layer["blocked_filename"] == "blocked_h_0.geojson"
+    assert layer["visible_area_m2"] > 0
+    assert layer["blocked_area_m2"] > 0
+    assert (tmp_path / layer["visible_filename"]).exists()
+    assert (tmp_path / layer["blocked_filename"]).exists()
