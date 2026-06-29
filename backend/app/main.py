@@ -4,6 +4,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.api import dem, radar
 from app.core.config import settings
+from app.services.task_store import recover_interrupted_tasks
 
 
 def create_app() -> FastAPI:
@@ -22,6 +23,7 @@ def create_app() -> FastAPI:
     )
 
     settings.ensure_directories()
+    recover_interrupted_tasks()
     app.mount("/outputs", StaticFiles(directory=settings.outputs_dir), name="outputs")
     app.include_router(dem.router, prefix="/api/dem", tags=["DEM"])
     app.include_router(radar.router, prefix="/api/radar", tags=["Radar"])

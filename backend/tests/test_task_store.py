@@ -6,7 +6,15 @@ from app.schemas.radar import CoverageMetrics, CoverageOutputs, CoverageRequest
 import pytest
 
 from app.core.errors import AppError
-from app.services.task_store import create_task, delete_task, get_task, list_tasks, mark_finished, mark_running
+from app.services.task_store import (
+    create_task,
+    delete_task,
+    get_task,
+    list_tasks,
+    mark_finished,
+    mark_running,
+    recover_interrupted_tasks,
+)
 
 
 def test_create_task_stores_runtime_fields(tmp_path: Path) -> None:
@@ -26,6 +34,7 @@ def test_create_task_stores_runtime_fields(tmp_path: Path) -> None:
     payload = json.loads(task_file.read_text(encoding="utf-8"))
     assert "payload" in payload
     assert "request" not in payload["task"]
+    assert not list((tmp_path / "tasks").glob("*.tmp"))
 
 
 def test_list_tasks_sorted_and_infers_legacy_dem_id(tmp_path: Path) -> None:
@@ -46,6 +55,81 @@ def test_list_tasks_sorted_and_infers_legacy_dem_id(tmp_path: Path) -> None:
     assert detail.request.dem_id == "dem_new"
 
 
+def test_list_tasks_quarantines_corrupt_records(tmp_path: Path) -> None:
+    settings.data_dir = tmp_path
+    settings.ensure_directories()
+
+    write_legacy_task(tmp_path, "task_good", "dem_good", "2026-01-02T00:00:00+00:00")
+    corrupt_path = tmp_path / "tasks" / "task_bad.json"
+    corrupt_path.write_text("{", encoding="utf-8")
+
+    tasks = list_tasks()
+
+    assert [task.task_id for task in tasks] == ["task_good"]
+    assert not corrupt_path.exists()
+    assert list((tmp_path / "tasks").glob("task_bad.json*.corrupt"))
+
+
+def test_list_tasks_ignores_temp_files(tmp_path: Path) -> None:
+    settings.data_dir = tmp_path
+    settings.ensure_directories()
+
+    write_legacy_task(tmp_path, "task_good", "dem_good", "2026-01-02T00:00:00+00:00")
+    temp_path = tmp_path / "tasks" / ".task_good.json.partial.tmp"
+    temp_path.write_text("{", encoding="utf-8")
+
+    tasks = list_tasks()
+
+    assert [task.task_id for task in tasks] == ["task_good"]
+    assert temp_path.exists()
+
+
+def test_list_tasks_quarantines_invalid_shape(tmp_path: Path) -> None:
+    settings.data_dir = tmp_path
+    settings.ensure_directories()
+    bad_path = tmp_path / "tasks" / "task_bad.json"
+    bad_path.write_text("[]", encoding="utf-8")
+
+    assert list_tasks() == []
+    assert not bad_path.exists()
+    assert list((tmp_path / "tasks").glob("task_bad.json*.corrupt"))
+
+
+def test_list_tasks_quarantines_invalid_schema(tmp_path: Path) -> None:
+    settings.data_dir = tmp_path
+    settings.ensure_directories()
+    bad_path = tmp_path / "tasks" / "task_bad.json"
+    bad_path.write_text(json.dumps({"task": {"task_id": "task_bad"}}), encoding="utf-8")
+
+    assert list_tasks() == []
+    assert not bad_path.exists()
+    assert list((tmp_path / "tasks").glob("task_bad.json*.corrupt"))
+
+
+def test_get_task_quarantines_corrupt_record(tmp_path: Path) -> None:
+    settings.data_dir = tmp_path
+    settings.ensure_directories()
+    corrupt_path = tmp_path / "tasks" / "task_bad.json"
+    corrupt_path.write_text("{", encoding="utf-8")
+
+    with pytest.raises(AppError) as exc_info:
+        get_task("task_bad")
+
+    assert exc_info.value.code == "TASK_RECORD_CORRUPT"
+    assert not corrupt_path.exists()
+    assert list((tmp_path / "tasks").glob("task_bad.json*.corrupt"))
+
+
+def test_get_task_missing_raises_not_found(tmp_path: Path) -> None:
+    settings.data_dir = tmp_path
+    settings.ensure_directories()
+
+    with pytest.raises(AppError) as exc_info:
+        get_task("task_missing")
+
+    assert exc_info.value.code == "TASK_NOT_FOUND"
+
+
 def test_mark_running_updates_timestamp(tmp_path: Path) -> None:
     settings.data_dir = tmp_path
     settings.ensure_directories()
@@ -59,6 +143,42 @@ def test_mark_running_updates_timestamp(tmp_path: Path) -> None:
     assert after.progress == 33
     assert after.updated_at is not None
     assert after.updated_at != before
+
+
+def test_recover_interrupted_tasks_marks_active_tasks_failed(tmp_path: Path) -> None:
+    settings.data_dir = tmp_path
+    settings.ensure_directories()
+
+    pending = create_task(make_request("dem_pending"))
+    running = create_task(make_request("dem_running"))
+    finished = create_task(make_request("dem_finished"))
+    mark_running(running.task_id, "running", 40)
+    mark_finished(finished.task_id, metrics=CoverageMetrics(), outputs=CoverageOutputs())
+
+    recovered = recover_interrupted_tasks()
+
+    assert recovered == 2
+    assert get_task(pending.task_id).status == "failed"
+    assert get_task(pending.task_id).progress == 100
+    assert "interrupted" in get_task(pending.task_id).message
+    assert get_task(running.task_id).status == "failed"
+    assert get_task(finished.task_id).status == "finished"
+
+
+def test_recover_interrupted_tasks_skips_corrupt_records(tmp_path: Path) -> None:
+    settings.data_dir = tmp_path
+    settings.ensure_directories()
+
+    pending = create_task(make_request("dem_pending"))
+    corrupt_path = tmp_path / "tasks" / "task_bad.json"
+    corrupt_path.write_text("{", encoding="utf-8")
+
+    recovered = recover_interrupted_tasks()
+
+    assert recovered == 1
+    assert get_task(pending.task_id).status == "failed"
+    assert not corrupt_path.exists()
+    assert list((tmp_path / "tasks").glob("task_bad.json*.corrupt"))
 
 
 def test_delete_task_removes_record_and_outputs(tmp_path: Path) -> None:
@@ -82,6 +202,19 @@ def test_delete_task_removes_record_and_outputs(tmp_path: Path) -> None:
     assert not (tmp_path / "tasks" / f"{task.task_id}.json").exists()
     assert not output_dir.exists()
     assert dem_dir.exists()
+
+
+def test_delete_task_without_output_dir_reports_record_only(tmp_path: Path) -> None:
+    settings.data_dir = tmp_path
+    settings.ensure_directories()
+
+    task = create_task(make_request("dem_a"))
+    mark_finished(task.task_id, metrics=CoverageMetrics(), outputs=CoverageOutputs())
+
+    result = delete_task(task.task_id)
+
+    assert result.deleted_task_record is True
+    assert result.deleted_output_dir is False
 
 
 def test_delete_task_rejects_running_task(tmp_path: Path) -> None:

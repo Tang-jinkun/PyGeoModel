@@ -4,7 +4,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from app.core.config import settings
-from app.main import app
+from app.main import app, create_app
 
 
 def test_list_coverage_outputs(tmp_path: Path) -> None:
@@ -84,6 +84,50 @@ def test_list_coverage_tasks_omits_request(tmp_path: Path) -> None:
     payload = response.json()
     assert payload[0]["task_id"] == "task_a"
     assert "request" not in payload[0]
+
+
+def test_create_app_recovers_interrupted_tasks(tmp_path: Path) -> None:
+    settings.data_dir = tmp_path
+    settings.ensure_directories()
+    write_task(tmp_path, "task_a", "running")
+
+    response = TestClient(create_app()).get("/api/radar/coverage/task_a")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "failed"
+    assert payload["progress"] == 100
+    assert "interrupted" in payload["message"]
+
+
+def test_list_coverage_tasks_skips_corrupt_record(tmp_path: Path) -> None:
+    settings.data_dir = tmp_path
+    settings.ensure_directories()
+    write_task_with_payload(tmp_path, "task_a", "finished")
+    corrupt_path = tmp_path / "tasks" / "task_bad.json"
+    corrupt_path.write_text("{", encoding="utf-8")
+
+    response = TestClient(app).get("/api/radar/coverage")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert [item["task_id"] for item in payload] == ["task_a"]
+    assert not corrupt_path.exists()
+    assert list((tmp_path / "tasks").glob("task_bad.json*.corrupt"))
+
+
+def test_read_coverage_task_reports_corrupt_record(tmp_path: Path) -> None:
+    settings.data_dir = tmp_path
+    settings.ensure_directories()
+    corrupt_path = tmp_path / "tasks" / "task_bad.json"
+    corrupt_path.write_text("{", encoding="utf-8")
+
+    response = TestClient(app).get("/api/radar/coverage/task_bad")
+
+    assert response.status_code == 500
+    assert response.json()["detail"]["code"] == "TASK_RECORD_CORRUPT"
+    assert not corrupt_path.exists()
+    assert list((tmp_path / "tasks").glob("task_bad.json*.corrupt"))
 
 
 def test_delete_coverage_task_api(tmp_path: Path) -> None:
