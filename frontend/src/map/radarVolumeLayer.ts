@@ -8,11 +8,16 @@ const RADAR_VOLUME_MAX_SEGMENTS = 72;
 let activeRadarVolumeLayer: RadarVolumeCustomLayer | null = null;
 
 type RadarVolumeCustomLayer = maplibregl.CustomLayerInterface & {
-  update: (request: CoverageRequest) => void;
+  update: (request: CoverageRequest, options?: RadarVolumeRenderOptions) => void;
 };
+
+interface RadarVolumeRenderOptions {
+  opacity: number;
+}
 
 interface RadarVolumeState {
   request: CoverageRequest;
+  options: RadarVolumeRenderOptions;
   map: maplibregl.Map | null;
   camera: THREE.Camera | null;
   scene: THREE.Scene | null;
@@ -21,13 +26,18 @@ interface RadarVolumeState {
   startedAt: number;
 }
 
-export function addOrUpdateRadarVolume(map: maplibregl.Map, request: CoverageRequest) {
+export function addOrUpdateRadarVolume(
+  map: maplibregl.Map,
+  request: CoverageRequest,
+  options?: Partial<RadarVolumeRenderOptions>
+) {
+  const renderOptions = normalizeOptions(options);
   if (activeRadarVolumeLayer && map.getLayer(activeRadarVolumeLayer.id)) {
-    activeRadarVolumeLayer.update(request);
+    activeRadarVolumeLayer.update(request, renderOptions);
     return;
   }
   removeRadarVolume(map);
-  activeRadarVolumeLayer = createRadarVolumeLayer(request);
+  activeRadarVolumeLayer = createRadarVolumeLayer(request, renderOptions);
   map.addLayer(activeRadarVolumeLayer);
 }
 
@@ -40,9 +50,13 @@ export function removeRadarVolume(map: maplibregl.Map) {
   activeRadarVolumeLayer = null;
 }
 
-function createRadarVolumeLayer(initialRequest: CoverageRequest): RadarVolumeCustomLayer {
+function createRadarVolumeLayer(
+  initialRequest: CoverageRequest,
+  initialOptions: RadarVolumeRenderOptions
+): RadarVolumeCustomLayer {
   const state: RadarVolumeState = {
     request: cloneRequest(initialRequest),
+    options: initialOptions,
     map: null,
     camera: null,
     scene: null,
@@ -85,8 +99,11 @@ function createRadarVolumeLayer(initialRequest: CoverageRequest): RadarVolumeCus
       state.scene = null;
       state.renderer = null;
     },
-    update(request: CoverageRequest) {
+    update(request: CoverageRequest, options?: RadarVolumeRenderOptions) {
       state.request = cloneRequest(request);
+      if (options) {
+        state.options = options;
+      }
       rebuildMesh(state);
       state.map?.triggerRepaint();
     }
@@ -98,12 +115,12 @@ function rebuildMesh(state: RadarVolumeState) {
     return;
   }
   disposeMesh(state);
-  const volume = buildRadarVolume(state.request);
+  const volume = buildRadarVolume(state.request, state.options);
   state.group = volume;
   state.scene.add(volume);
 }
 
-function buildRadarVolume(request: CoverageRequest) {
+function buildRadarVolume(request: CoverageRequest, options: RadarVolumeRenderOptions) {
   const group = new THREE.Group();
   const shape = getVolumeShape(request);
   const geometry = buildRadarVolumeGeometry(shape);
@@ -112,39 +129,45 @@ function buildRadarVolume(request: CoverageRequest) {
   const material = new THREE.MeshBasicMaterial({
     color: mainColor,
     transparent: true,
-    opacity: request.coverage.scan_mode === "sector" ? 0.26 : 0.2,
+    opacity: options.opacity * (request.coverage.scan_mode === "sector" ? 0.36 : 0.28),
     depthWrite: false,
     side: THREE.DoubleSide
   });
   group.add(new THREE.Mesh(geometry, material));
-  group.add(buildTopCap(shape, request.coverage.scan_mode));
+  group.add(buildTopCap(shape, request.coverage.scan_mode, options));
 
   const wireframe = new THREE.LineSegments(
     new THREE.WireframeGeometry(geometry),
     new THREE.LineBasicMaterial({
-      color: 0x93c5fd,
+      color: 0x7dd3fc,
       transparent: true,
-      opacity: 0.5,
+      opacity: options.opacity * 0.72,
       depthWrite: false
     })
   );
   group.add(wireframe);
 
-  group.add(buildRayLines(shape, request.coverage.scan_mode === "sector" ? 18 : 36));
-  group.add(buildBoundaryLines(shape));
-  group.add(buildGroundConnectionLines(shape, request.coverage.scan_mode === "sector" ? 9 : 16));
-  group.add(buildScanPlane(shape));
+  group.add(buildRadarGrid(shape, options));
+  group.add(buildSupplementaryLobes(shape, request, options));
+  group.add(buildRayLines(shape, request.coverage.scan_mode === "sector" ? 18 : 36, options));
+  group.add(buildBoundaryLines(shape, options));
+  group.add(buildGroundConnectionLines(shape, request.coverage.scan_mode === "sector" ? 9 : 16, options));
+  group.add(buildScanPlane(shape, options));
   return group;
 }
 
-function buildTopCap(shape: VolumeShape, scanMode: CoverageRequest["coverage"]["scan_mode"]) {
+function buildTopCap(
+  shape: VolumeShape,
+  scanMode: CoverageRequest["coverage"]["scan_mode"],
+  options: RadarVolumeRenderOptions
+) {
   const geometry = buildTopCapGeometry(shape);
   return new THREE.Mesh(
     geometry,
     new THREE.MeshBasicMaterial({
       color: scanMode === "sector" ? 0x60a5fa : 0x22d3ee,
       transparent: true,
-      opacity: scanMode === "sector" ? 0.34 : 0.28,
+      opacity: options.opacity * (scanMode === "sector" ? 0.42 : 0.34),
       depthWrite: false,
       side: THREE.DoubleSide
     })
@@ -210,7 +233,7 @@ function getVolumeShape(request: CoverageRequest): VolumeShape {
   );
   const meter = origin.meterInMercatorCoordinateUnits();
   const radius = Math.max(1, request.coverage.max_range_m) * meter;
-  const verticalAngle = THREE.MathUtils.degToRad(32);
+  const verticalAngle = THREE.MathUtils.degToRad(Math.min(89, Math.max(2, request.advanced.max_elevation_deg ?? 32)));
   const startAzimuth = getStartAzimuth(request);
   const endAzimuth = getEndAzimuth(request);
   const horizontalSegments = request.coverage.scan_mode === "omni"
@@ -290,7 +313,95 @@ function buildTopCapGeometry(shape: VolumeShape) {
   return geometry;
 }
 
-function buildRayLines(shape: VolumeShape, count: number) {
+function buildSupplementaryLobes(
+  shape: VolumeShape,
+  request: CoverageRequest,
+  options: RadarVolumeRenderOptions
+) {
+  const group = new THREE.Group();
+  const lobes = request.coverage.scan_mode === "omni"
+    ? [
+        { center: 0, width: 84, radiusScale: 0.88, verticalScale: 0.82 },
+        { center: 90, width: 84, radiusScale: 0.88, verticalScale: 0.82 },
+        { center: 180, width: 84, radiusScale: 0.88, verticalScale: 0.82 },
+        { center: 270, width: 84, radiusScale: 0.88, verticalScale: 0.82 }
+      ]
+    : [
+        {
+          center: request.coverage.azimuth_deg - request.coverage.beam_width_deg * 0.72,
+          width: Math.max(12, request.coverage.beam_width_deg * 0.32),
+          radiusScale: 0.62,
+          verticalScale: 0.72
+        },
+        {
+          center: request.coverage.azimuth_deg + request.coverage.beam_width_deg * 0.72,
+          width: Math.max(12, request.coverage.beam_width_deg * 0.32),
+          radiusScale: 0.62,
+          verticalScale: 0.72
+        }
+      ];
+
+  for (const lobe of lobes) {
+    const lobeShape = {
+      ...shape,
+      radius: shape.radius * lobe.radiusScale,
+      verticalAngle: shape.verticalAngle * lobe.verticalScale,
+      startAzimuth: THREE.MathUtils.degToRad(lobe.center - lobe.width / 2),
+      endAzimuth: THREE.MathUtils.degToRad(lobe.center + lobe.width / 2),
+      horizontalSegments: Math.max(16, Math.ceil(lobe.width / 3)),
+      verticalSegments: 10
+    };
+    const geometry = buildRadarVolumeGeometry(lobeShape);
+    group.add(
+      new THREE.Mesh(
+        geometry,
+        new THREE.MeshBasicMaterial({
+          color: 0x34d399,
+          transparent: true,
+          opacity: options.opacity * 0.15,
+          depthWrite: false,
+          side: THREE.DoubleSide
+        })
+      )
+    );
+    group.add(buildRadarGrid(lobeShape, { opacity: options.opacity * 0.62 }));
+  }
+  return group;
+}
+
+function buildRadarGrid(shape: VolumeShape, options: RadarVolumeRenderOptions) {
+  const group = new THREE.Group();
+  const material = new THREE.LineBasicMaterial({
+    color: 0x86efac,
+    transparent: true,
+    opacity: Math.min(1, options.opacity * 0.78),
+    depthWrite: false
+  });
+
+  for (let v = 1; v <= shape.verticalSegments; v += 2) {
+    group.add(buildGridLine(shape, material, (t) => volumePoint(shape, interpolateAzimuth(shape, t), v / shape.verticalSegments)));
+  }
+  const meridianCount = shape.endAzimuth - shape.startAzimuth >= Math.PI * 2 - 0.001 ? 12 : 6;
+  for (let h = 0; h <= meridianCount; h++) {
+    const azimuth = interpolateAzimuth(shape, h / meridianCount);
+    group.add(buildGridLine(shape, material, (t) => volumePoint(shape, azimuth, t)));
+  }
+  return group;
+}
+
+function buildGridLine(shape: VolumeShape, material: THREE.LineBasicMaterial, pointAt: (t: number) => THREE.Vector3) {
+  const positions: number[] = [];
+  const count = Math.max(16, Math.floor(shape.horizontalSegments / 2));
+  for (let index = 0; index <= count; index++) {
+    const point = pointAt(index / count);
+    positions.push(point.x, point.y, point.z);
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  return new THREE.Line(geometry, material.clone());
+}
+
+function buildRayLines(shape: VolumeShape, count: number, options: RadarVolumeRenderOptions) {
   const positions: number[] = [];
   for (let index = 0; index < count; index++) {
     const t = count === 1 ? 0.5 : index / (count - 1);
@@ -305,13 +416,13 @@ function buildRayLines(shape: VolumeShape, count: number) {
     new THREE.LineBasicMaterial({
       color: 0x67e8f9,
       transparent: true,
-      opacity: 0.5,
+      opacity: options.opacity * 0.72,
       depthWrite: false
     })
   );
 }
 
-function buildBoundaryLines(shape: VolumeShape) {
+function buildBoundaryLines(shape: VolumeShape, options: RadarVolumeRenderOptions) {
   const positions: number[] = [];
   const addLine = (a: THREE.Vector3, b: THREE.Vector3) => {
     positions.push(a.x, a.y, a.z, b.x, b.y, b.z);
@@ -333,13 +444,13 @@ function buildBoundaryLines(shape: VolumeShape) {
     new THREE.LineBasicMaterial({
       color: 0xbfdbfe,
       transparent: true,
-      opacity: 0.75,
+      opacity: options.opacity * 0.9,
       depthWrite: false
     })
   );
 }
 
-function buildGroundConnectionLines(shape: VolumeShape, count: number) {
+function buildGroundConnectionLines(shape: VolumeShape, count: number, options: RadarVolumeRenderOptions) {
   const positions: number[] = [];
   for (let index = 0; index < count; index++) {
     const t = count === 1 ? 0.5 : index / (count - 1);
@@ -355,36 +466,59 @@ function buildGroundConnectionLines(shape: VolumeShape, count: number) {
     new THREE.LineBasicMaterial({
       color: 0xf8fafc,
       transparent: true,
-      opacity: 0.28,
+      opacity: options.opacity * 0.36,
       depthWrite: false
     })
   );
 }
 
-function buildScanPlane(shape: VolumeShape) {
-  const positions = getScanPlanePositions(shape, shape.startAzimuth);
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
-  geometry.setIndex([0, 1, 2, 0, 2, 4, 0, 4, 3, 0, 3, 1]);
-  const mesh = new THREE.Mesh(
-    geometry,
-    new THREE.MeshBasicMaterial({
-      color: 0xe0f2fe,
-      transparent: true,
-      opacity: 0.48,
-      depthWrite: false,
-      side: THREE.DoubleSide
-    })
-  );
-  mesh.name = "radar-scan-plane";
-  return mesh;
+function buildScanPlane(shape: VolumeShape, options: RadarVolumeRenderOptions) {
+  const group = new THREE.Group();
+  group.name = "radar-scan-plane";
+  const bands = [
+    { from: 0, to: 0.2, color: 0xef4444 },
+    { from: 0.2, to: 0.4, color: 0xf59e0b },
+    { from: 0.4, to: 0.6, color: 0xfacc15 },
+    { from: 0.6, to: 0.8, color: 0x22c55e },
+    { from: 0.8, to: 1, color: 0x60a5fa }
+  ];
+  for (const band of bands) {
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute(
+      "position",
+      new THREE.Float32BufferAttribute(getScanBandPositions(shape, shape.startAzimuth, band.from, band.to), 3)
+    );
+    geometry.setIndex([0, 1, 2, 0, 2, 4, 0, 4, 3, 0, 3, 1]);
+    const mesh = new THREE.Mesh(
+      geometry,
+      new THREE.MeshBasicMaterial({
+        color: band.color,
+        transparent: true,
+        opacity: options.opacity * 0.72,
+        depthWrite: false,
+        side: THREE.DoubleSide
+      })
+    );
+    mesh.userData.verticalStart = band.from;
+    mesh.userData.verticalEnd = band.to;
+    group.add(mesh);
+  }
+  return group;
 }
 
 function updateScanPlaneGeometry(object: THREE.Object3D, shape: VolumeShape, azimuth: number) {
+  if (object instanceof THREE.Group) {
+    for (const child of object.children) {
+      updateScanPlaneGeometry(child, shape, azimuth);
+    }
+    return;
+  }
   if (!(object instanceof THREE.Mesh) || !(object.geometry instanceof THREE.BufferGeometry)) {
     return;
   }
-  const nextPositions = getScanPlanePositions(shape, azimuth);
+  const verticalStart = typeof object.userData.verticalStart === "number" ? object.userData.verticalStart : 0;
+  const verticalEnd = typeof object.userData.verticalEnd === "number" ? object.userData.verticalEnd : 1;
+  const nextPositions = getScanBandPositions(shape, azimuth, verticalStart, verticalEnd);
   const position = object.geometry.getAttribute("position");
   if (!(position instanceof THREE.BufferAttribute) || position.count !== nextPositions.length / 3) {
     object.geometry.setAttribute("position", new THREE.Float32BufferAttribute(nextPositions, 3));
@@ -397,7 +531,7 @@ function updateScanPlaneGeometry(object: THREE.Object3D, shape: VolumeShape, azi
   object.geometry.computeBoundingSphere();
 }
 
-function getScanPlanePositions(shape: VolumeShape, azimuth: number) {
+function getScanBandPositions(shape: VolumeShape, azimuth: number, verticalStart: number, verticalEnd: number) {
   const positions: number[] = [
     shape.origin.x,
     shape.origin.y,
@@ -408,7 +542,7 @@ function getScanPlanePositions(shape: VolumeShape, azimuth: number) {
     Math.max(THREE.MathUtils.degToRad(3), Math.abs(shape.endAzimuth - shape.startAzimuth) / 8)
   );
   for (const offset of [-scanWidth / 2, scanWidth / 2]) {
-    for (const verticalT of [0, 1]) {
+    for (const verticalT of [verticalStart, verticalEnd]) {
       const point = volumePoint(shape, azimuth + offset, verticalT);
       positions.push(point.x, point.y, point.z);
     }
@@ -443,6 +577,12 @@ function getEndAzimuth(request: CoverageRequest) {
     return Math.PI * 2;
   }
   return THREE.MathUtils.degToRad(request.coverage.azimuth_deg + request.coverage.beam_width_deg / 2);
+}
+
+function normalizeOptions(options?: Partial<RadarVolumeRenderOptions>): RadarVolumeRenderOptions {
+  return {
+    opacity: Math.min(1, Math.max(0, options?.opacity ?? 0.62))
+  };
 }
 
 function cloneRequest(request: CoverageRequest): CoverageRequest {

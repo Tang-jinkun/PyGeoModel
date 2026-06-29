@@ -33,7 +33,7 @@
 <script setup lang="ts">
 import maplibregl from "maplibre-gl";
 import { ElMessage } from "element-plus";
-import { onMounted, reactive, ref, shallowRef } from "vue";
+import { onMounted, reactive, ref, shallowRef, watch } from "vue";
 
 import {
   createCoverageTask,
@@ -71,10 +71,12 @@ import {
   type ResultLayerKey
 } from "./map/mapLayers";
 import { addOrUpdateRadarVolume, removeRadarVolume } from "./map/radarVolumeLayer";
-import { addOrUpdateVoxelLayer, loadVoxelData, removeVoxelLayer } from "./map/voxelLayer";
+import { addOrUpdateVoxelLayer, loadVoxelData, removeVoxelLayer, type VoxelPoint } from "./map/voxelLayer";
+
+type LayerKey = ResultLayerKey | "radarVolume" | "voxel";
 
 interface ResultLayerControl {
-  key: ResultLayerKey;
+  key: LayerKey;
   label: string;
   description: string;
   color: string;
@@ -101,7 +103,19 @@ let viewToken = 0;
 let taskListRequestToken = 0;
 const busy = ref(false);
 let focusToken = 0;
+const voxelPoints = shallowRef<VoxelPoint[]>([]);
+const radarVolumeRequest = shallowRef<CoverageRequest | null>(null);
 const layerControls = reactive<ResultLayerControl[]>([
+  {
+    key: "radarVolume",
+    label: "理论波束",
+    description: "透明雷达包络与扫描扇束",
+    color: "#34d399",
+    visible: true,
+    opacity: 0.62,
+    defaultOpacity: 0.62,
+    available: true
+  },
   {
     key: "visible",
     label: "可探测区",
@@ -131,6 +145,16 @@ const layerControls = reactive<ResultLayerControl[]>([
     opacity: 0.08,
     defaultOpacity: 0.08,
     available: false
+  },
+  {
+    key: "voxel",
+    label: "体素点云",
+    description: "按最低可见高度生成的 3D 点云",
+    color: "#22d3ee",
+    visible: true,
+    opacity: 0.8,
+    defaultOpacity: 0.8,
+    available: false
   }
 ]);
 
@@ -158,8 +182,18 @@ onMounted(() => {
     if (dem.value) {
       applyDemMapLayers(dem.value);
     }
+    syncRadarVolumeLayer();
   });
 });
+
+watch(
+  coverageRequest,
+  () => {
+    radarVolumeRequest.value = coverageRequest;
+    syncRadarVolumeLayer(coverageRequest);
+  },
+  { deep: true }
+);
 
 async function handleUpload(file: File) {
   busy.value = true;
@@ -248,7 +282,9 @@ async function handleRun() {
     }
     removeResultLayers(map.value);
     clearLayerAvailability();
+    radarVolumeRequest.value = coverageRequest;
     addRadarMarker(map.value, coverageRequest.radar.lon, coverageRequest.radar.lat);
+    syncRadarVolumeLayer();
     const created = await createCoverageTask(coverageRequest);
     if (token !== pollToken) {
       return;
@@ -284,6 +320,8 @@ async function pollTask(taskId: string, token: number) {
     if (latest.status === "failed") {
       if (map.value) {
         removeResultLayers(map.value);
+        removeRadarVolume(map.value);
+        removeVoxelLayer(map.value);
         removeDemRasterLayer(map.value);
         removeDemTerrain(map.value);
       }
@@ -311,6 +349,8 @@ async function handleSelectTask(taskId: string) {
     }
     if (map.value) {
       removeResultLayers(map.value);
+      removeRadarVolume(map.value);
+      removeVoxelLayer(map.value);
     }
     clearLayerAvailability();
     ElMessage.info(`任务状态：${selected.status}`);
@@ -363,6 +403,8 @@ async function handleDeleteTask(taskId: string) {
       task.value = null;
       if (map.value) {
         removeResultLayers(map.value);
+        removeRadarVolume(map.value);
+        removeVoxelLayer(map.value);
       }
       clearLayerAvailability();
     }
@@ -418,11 +460,13 @@ function restoreRequest(request: CoverageRequest) {
   selectedTaskId.value = null;
   task.value = null;
   clearLayerAvailability();
+  radarVolumeRequest.value = normalized;
 
   dem.value = restoredDem;
   if (map.value) {
     removeResultLayers(map.value);
     addRadarMarker(map.value, normalized.radar.lon, normalized.radar.lat);
+    syncRadarVolumeLayer();
     map.value.flyTo({ center: [normalized.radar.lon, normalized.radar.lat], zoom: 9 });
   }
   ElMessage.success("历史参数已恢复到表单");
@@ -456,13 +500,20 @@ function loadOutputs(result: CoverageTaskStatus) {
   removeResultLayers(map.value);
   removeRadarVolume(map.value);
   removeVoxelLayer(map.value);
+  voxelPoints.value = [];
+  radarVolumeRequest.value = result.request ?? coverageRequest;
 
   const visible = resolveOutputUrl(result, "visible_geojson", result.outputs?.visible_geojson);
   const blocked = resolveOutputUrl(result, "blocked_geojson", result.outputs?.blocked_geojson);
   const range = resolveOutputUrl(result, "range_geojson", result.outputs?.range_geojson);
   if (!range && !blocked && !visible) {
     clearLayerAvailability();
+    syncRadarVolumeLayer(result.request ?? coverageRequest);
     return;
+  }
+
+  if (result.request) {
+    addRadarMarker(map.value, result.request.radar.lon, result.request.radar.lat, result.request.radar.height_m);
   }
 
   if (range) {
@@ -499,7 +550,8 @@ function loadOutputs(result: CoverageTaskStatus) {
     );
   }
   moveRadarMarkerToTop(map.value);
-  updateLayerAvailability({ range: !!range, blocked: !!blocked, visible: !!visible });
+  syncRadarVolumeLayer(result.request ?? coverageRequest);
+  updateLayerAvailability({ range: !!range, blocked: !!blocked, visible: !!visible, radarVolume: true, voxel: false });
   applyAllLayerControls();
 
   // Load voxel point cloud if available
@@ -520,7 +572,12 @@ async function loadVoxelLayer(result: CoverageTaskStatus) {
   try {
     const points = await loadVoxelData(voxelUrl, manifestUrl);
     if (map.value && task.value?.task_id === result.task_id) {
-      addOrUpdateVoxelLayer(map.value, points);
+      voxelPoints.value = points;
+      const control = getLayerControl("voxel");
+      if (control) {
+        control.available = points.length > 0;
+      }
+      applyVoxelLayerControl();
     }
   } catch (error) {
     console.error("Failed to load voxel data:", error);
@@ -536,7 +593,7 @@ function resolveOutputUrl(result: CoverageTaskStatus, kind: string, fallback?: s
   return resolveAssetUrl(fallback);
 }
 
-function handleLayerControlUpdate(key: ResultLayerKey, patch: Partial<Pick<ResultLayerControl, "visible" | "opacity">>) {
+function handleLayerControlUpdate(key: string, patch: Partial<Pick<ResultLayerControl, "visible" | "opacity">>) {
   const control = layerControls.find((item) => item.key === key);
   if (!control) {
     return;
@@ -560,8 +617,12 @@ async function handleFocusResult() {
   const currentViewToken = viewToken;
 
   const urls = layerControls
-    .filter((control) => control.available)
-    .map((control) => resolveLayerOutputUrl(task.value as CoverageTaskStatus, control.key))
+    .flatMap((control) => {
+      if (!control.available || !isResultLayerKey(control.key)) {
+        return [];
+      }
+      return [resolveLayerOutputUrl(task.value as CoverageTaskStatus, control.key)];
+    })
     .filter((url): url is string => !!url);
 
   const bounds = new maplibregl.LngLatBounds();
@@ -609,6 +670,17 @@ function applyLayerControl(control: ResultLayerControl) {
   if (!map.value || !control.available) {
     return;
   }
+  if (control.key === "radarVolume") {
+    syncRadarVolumeLayer();
+    return;
+  }
+  if (control.key === "voxel") {
+    applyVoxelLayerControl();
+    return;
+  }
+  if (!isResultLayerKey(control.key)) {
+    return;
+  }
   setResultLayerVisibility(map.value, control.key, control.visible);
   setResultLayerOpacity(map.value, control.key, control.opacity);
 }
@@ -616,15 +688,19 @@ function applyLayerControl(control: ResultLayerControl) {
 function clearLayerAvailability() {
   focusToken++;
   for (const control of layerControls) {
-    control.available = false;
+    control.available = control.key === "radarVolume";
     control.visible = true;
     control.opacity = control.defaultOpacity;
   }
+  voxelPoints.value = [];
+  if (map.value) {
+    removeVoxelLayer(map.value);
+  }
 }
 
-function updateLayerAvailability(available: Record<ResultLayerKey, boolean>) {
+function updateLayerAvailability(available: Partial<Record<LayerKey, boolean>>) {
   for (const control of layerControls) {
-    control.available = available[control.key];
+    control.available = available[control.key] ?? false;
     control.visible = true;
     control.opacity = control.defaultOpacity;
   }
@@ -638,5 +714,38 @@ function resolveLayerOutputUrl(result: CoverageTaskStatus, key: ResultLayerKey) 
   };
   const kind = outputKind[key];
   return resolveOutputUrl(result, kind, result.outputs?.[kind]);
+}
+
+function getLayerControl(key: LayerKey) {
+  return layerControls.find((item) => item.key === key);
+}
+
+function syncRadarVolumeLayer(request?: CoverageRequest) {
+  if (!map.value || !map.value.loaded()) {
+    return;
+  }
+  const control = getLayerControl("radarVolume");
+  if (!control?.available || !control.visible) {
+    removeRadarVolume(map.value);
+    return;
+  }
+  addOrUpdateRadarVolume(map.value, request ?? radarVolumeRequest.value ?? coverageRequest, { opacity: control.opacity });
+  moveRadarMarkerToTop(map.value);
+}
+
+function applyVoxelLayerControl() {
+  if (!map.value) {
+    return;
+  }
+  const control = getLayerControl("voxel");
+  if (!control?.available || !control.visible || !voxelPoints.value.length) {
+    removeVoxelLayer(map.value);
+    return;
+  }
+  addOrUpdateVoxelLayer(map.value, voxelPoints.value, { opacity: control.opacity });
+}
+
+function isResultLayerKey(key: LayerKey): key is ResultLayerKey {
+  return key === "range" || key === "blocked" || key === "visible";
 }
 </script>

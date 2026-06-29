@@ -4,7 +4,7 @@ import * as THREE from "three";
 const VOXEL_LAYER_PREFIX = "voxel-layer";
 let activeVoxelLayer: VoxelCustomLayer | null = null;
 
-interface VoxelPoint {
+export interface VoxelPoint {
   x: number;
   y: number;
   z: number;
@@ -23,8 +23,12 @@ interface VoxelManifest {
 }
 
 type VoxelCustomLayer = maplibregl.CustomLayerInterface & {
-  update: (points: VoxelPoint[]) => void;
+  update: (points: VoxelPoint[], options?: VoxelRenderOptions) => void;
 };
+
+interface VoxelRenderOptions {
+  opacity: number;
+}
 
 interface VoxelState {
   map: maplibregl.Map | null;
@@ -32,16 +36,18 @@ interface VoxelState {
   scene: THREE.Scene | null;
   renderer: THREE.WebGLRenderer | null;
   points: VoxelPoint[];
+  options: VoxelRenderOptions;
   pointCloud: THREE.Points | null;
 }
 
-export function addOrUpdateVoxelLayer(map: maplibregl.Map, points: VoxelPoint[]) {
+export function addOrUpdateVoxelLayer(map: maplibregl.Map, points: VoxelPoint[], options?: Partial<VoxelRenderOptions>) {
+  const renderOptions = normalizeOptions(options);
   if (activeVoxelLayer && map.getLayer(activeVoxelLayer.id)) {
-    activeVoxelLayer.update(points);
+    activeVoxelLayer.update(points, renderOptions);
     return;
   }
   removeVoxelLayer(map);
-  activeVoxelLayer = createVoxelLayer(points);
+  activeVoxelLayer = createVoxelLayer(points, renderOptions);
   map.addLayer(activeVoxelLayer);
 }
 
@@ -54,13 +60,14 @@ export function removeVoxelLayer(map: maplibregl.Map) {
   activeVoxelLayer = null;
 }
 
-function createVoxelLayer(initialPoints: VoxelPoint[]): VoxelCustomLayer {
+function createVoxelLayer(initialPoints: VoxelPoint[], initialOptions: VoxelRenderOptions): VoxelCustomLayer {
   const state: VoxelState = {
     map: null,
     camera: null,
     scene: null,
     renderer: null,
     points: initialPoints,
+    options: initialOptions,
     pointCloud: null,
   };
 
@@ -97,8 +104,11 @@ function createVoxelLayer(initialPoints: VoxelPoint[]): VoxelCustomLayer {
       state.scene = null;
       state.renderer = null;
     },
-    update(points: VoxelPoint[]) {
+    update(points: VoxelPoint[], options?: VoxelRenderOptions) {
       state.points = points;
+      if (options) {
+        state.options = options;
+      }
       rebuildPointCloud(state);
       state.map?.triggerRepaint();
     },
@@ -142,13 +152,19 @@ function rebuildPointCloud(state: VoxelState) {
     size: 3,
     vertexColors: true,
     transparent: true,
-    opacity: 0.8,
+    opacity: state.options.opacity,
     sizeAttenuation: true,
     depthWrite: false,
   });
 
   state.pointCloud = new THREE.Points(geometry, material);
   state.scene.add(state.pointCloud);
+}
+
+function normalizeOptions(options?: Partial<VoxelRenderOptions>): VoxelRenderOptions {
+  return {
+    opacity: Math.min(1, Math.max(0, options?.opacity ?? 0.8)),
+  };
 }
 
 function disposePointCloud(state: VoxelState) {

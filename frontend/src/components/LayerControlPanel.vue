@@ -36,10 +36,8 @@
 <script setup lang="ts">
 import { computed } from "vue";
 
-import type { ResultLayerKey } from "../map/mapLayers";
-
 interface LayerControlState {
-  key: ResultLayerKey;
+  key: string;
   label: string;
   description: string;
   color: string;
@@ -53,13 +51,13 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-  updateLayer: [key: ResultLayerKey, patch: Partial<Pick<LayerControlState, "visible" | "opacity">>];
+  updateLayer: [key: string, patch: Partial<Pick<LayerControlState, "visible" | "opacity">>];
   focusResult: [];
 }>();
 
 const availableLayers = computed(() => props.layers.filter((layer) => layer.available));
 
-function updateLayer(key: ResultLayerKey, patch: Partial<Pick<LayerControlState, "visible" | "opacity">>) {
+function updateLayer(key: string, patch: Partial<Pick<LayerControlState, "visible" | "opacity">>) {
   emit("updateLayer", key, patch);
 }
 
