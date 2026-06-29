@@ -12,13 +12,19 @@ from shapely.geometry import box, mapping
 
 from app.core.config import settings
 from app.core.errors import AppError
-from app.schemas.radar import CoverageMetrics, CoverageModelMetadata, CoverageOutputFile, CoverageOutputs, CoverageRequest
+from app.schemas.radar import (
+    CoverageDiagnostics,
+    CoverageMetrics,
+    CoverageModelMetadata,
+    CoverageOutputFile,
+    CoverageOutputs,
+    CoverageRequest,
+)
 from app.services.dem_store import find_dem_file
 from app.services.coverage_model import (
     PreparedCoverageDem,
     default_simplify_tolerance,
     prepare_coverage_dem,
-    vectorize_visible_viewshed,
 )
 from app.services.geometry import make_range_geometry, project_geometry
 from app.services.output_files import OUTPUT_FILENAMES, describe_output_files, list_task_output_files
@@ -56,7 +62,7 @@ def run_coverage_task(task_id: str, payload: CoverageRequest) -> None:
             _generate_voxels(staging_dir, min_visible_height, prepared, payload)
 
             mark_running(task_id, "Vectorizing viewshed outputs.", 85)
-            outputs, output_files, metrics, model, warnings = _write_vector_outputs(
+            outputs, output_files, metrics, model, diagnostics, warnings = _write_vector_outputs(
                 task_id,
                 staging_dir,
                 output_dir,
@@ -75,6 +81,7 @@ def run_coverage_task(task_id: str, payload: CoverageRequest) -> None:
             outputs=outputs,
             output_files=output_files,
             model=model,
+            diagnostics=diagnostics,
             warnings=warnings,
         )
     except Exception as exc:
@@ -113,6 +120,127 @@ def _run_gdal_viewshed(
     return command
 
 
+def _radar_equation_max_range(payload: CoverageRequest) -> float | None:
+    params = payload.reserved_radar_params
+    required = [
+        params.frequency_hz,
+        params.transmit_power_w,
+        params.antenna_gain_db,
+        params.receiver_sensitivity_dbm,
+        params.target_rcs_m2,
+    ]
+    if any(value is None for value in required):
+        return None
+    if (
+        params.frequency_hz <= 0
+        or params.transmit_power_w <= 0
+        or params.target_rcs_m2 <= 0
+    ):
+        return None
+
+    light_speed = 299_792_458.0
+    wavelength = light_speed / params.frequency_hz
+    gain = 10 ** (params.antenna_gain_db / 10)
+    loss = 10 ** ((params.system_loss_db or 0) / 10)
+    threshold_dbm = params.receiver_sensitivity_dbm + (params.noise_figure_db or 0)
+    threshold_w = 10 ** ((threshold_dbm - 30) / 10)
+    if threshold_w <= 0 or loss <= 0:
+        return None
+
+    numerator = params.transmit_power_w * gain * gain * wavelength * wavelength * params.target_rcs_m2
+    denominator = ((4 * math.pi) ** 3) * threshold_w * loss
+    if numerator <= 0 or denominator <= 0:
+        return None
+    return (numerator / denominator) ** 0.25
+
+
+def _effective_max_range(payload: CoverageRequest) -> tuple[float, float | None]:
+    radar_range = _radar_equation_max_range(payload)
+    if radar_range is None:
+        return payload.coverage.max_range_m, None
+    return min(payload.coverage.max_range_m, radar_range), radar_range
+
+
+def _coverage_masks(
+    data,
+    transform,
+    radar_x: float,
+    radar_y: float,
+    payload: CoverageRequest,
+    target_height_m: float,
+    effective_range_m: float,
+):
+    height, width = data.shape
+    cols = numpy.arange(width, dtype=numpy.float64)
+    rows = numpy.arange(height, dtype=numpy.float64)
+    xs = transform.c + (cols + 0.5) * transform.a
+    ys = transform.f + (rows + 0.5) * transform.e
+    x_grid, y_grid = numpy.meshgrid(xs, ys)
+
+    dx = x_grid - radar_x
+    dy = y_grid - radar_y
+    dist = numpy.hypot(dx, dy)
+    finite = numpy.isfinite(data) & (data >= 0)
+
+    sector_mask = numpy.ones_like(data, dtype=bool)
+    if payload.coverage.scan_mode == "sector" and payload.coverage.beam_width_deg < 360:
+        azimuth = (numpy.degrees(numpy.arctan2(dx, dy)) + 360) % 360
+        half = payload.coverage.beam_width_deg / 2
+        center = payload.coverage.azimuth_deg % 360
+        delta = numpy.abs((azimuth - center + 180) % 360 - 180)
+        sector_mask = delta <= half
+
+    requested_range_mask = dist <= payload.coverage.max_range_m
+    effective_range_mask = dist <= effective_range_m
+    min_height = dist * math.tan(math.radians(payload.advanced.min_elevation_deg))
+    max_height = dist * math.tan(math.radians(payload.advanced.max_elevation_deg))
+    elevation_mask = (target_height_m >= min_height) & (target_height_m <= max_height)
+    terrain_mask = finite & (data <= target_height_m)
+    theoretical_mask = sector_mask & effective_range_mask & elevation_mask
+    final_mask = theoretical_mask & terrain_mask
+    return {
+        "sector": sector_mask,
+        "requested_range": requested_range_mask,
+        "effective_range": effective_range_mask,
+        "elevation": elevation_mask,
+        "terrain": terrain_mask,
+        "theoretical": theoretical_mask,
+        "final": final_mask,
+    }
+
+
+def _coverage_masks_for_prepared(
+    data,
+    transform,
+    prepared: PreparedCoverageDem,
+    payload: CoverageRequest,
+    target_height_m: float,
+    effective_range_m: float,
+):
+    return _coverage_masks(data, transform, prepared.radar_x, prepared.radar_y, payload, target_height_m, effective_range_m)
+
+
+def _mask_to_geometry(mask, transform):
+    from rasterio.features import shapes
+    from shapely.geometry import shape as shp_shape
+    from shapely.ops import unary_union
+
+    geometries = [
+        shp_shape(geom)
+        for geom, value in shapes(mask.astype(numpy.uint8), mask=mask, transform=transform)
+        if value > 0
+    ]
+    if not geometries:
+        from shapely.geometry import GeometryCollection
+
+        return GeometryCollection()
+    return unary_union(geometries)
+
+
+def _mask_area(mask, transform) -> float:
+    return float(mask.sum()) * abs(float(transform.a) * float(transform.e))
+
+
 def _generate_height_layers(
     staging_dir: Path,
     min_visible_height: Path,
@@ -120,44 +248,39 @@ def _generate_height_layers(
     payload: CoverageRequest,
 ) -> None:
     import rasterio
-    from rasterio.features import shapes
 
     height_layers = payload.advanced.height_layers_m or [0, 100, 300, 500, 1000, 2000, 3000]
+    effective_range, radar_equation_range = _effective_max_range(payload)
     with rasterio.open(min_visible_height) as src:
         data = src.read(1)
         transform = src.transform
 
-    range_geom = make_range_geometry(
-        prepared.radar_x,
-        prepared.radar_y,
-        payload.coverage.max_range_m,
-        payload.coverage.scan_mode,
-        payload.coverage.azimuth_deg,
-        payload.coverage.beam_width_deg,
-    )
     transformer = Transformer.from_crs(f"EPSG:{prepared.target_epsg}", "EPSG:4326", always_xy=True)
-    manifest = {"height_layers": []}
+    manifest = {
+        "height_layers": [],
+        "model": {
+            "min_elevation_deg": payload.advanced.min_elevation_deg,
+            "max_elevation_deg": payload.advanced.max_elevation_deg,
+            "radar_equation_active": radar_equation_range is not None,
+            "effective_max_range_m": effective_range,
+        },
+    }
     for height in height_layers:
-        visible_mask = data <= height
-        geometries = []
-        for geom, value in shapes(visible_mask.astype(numpy.uint8), mask=visible_mask, transform=transform):
-            if value > 0:
-                geometries.append(geom)
-
+        masks = _coverage_masks_for_prepared(data, transform, prepared, payload, height, effective_range)
+        visible_mask = masks["final"]
         geojson_path = staging_dir / f"visible_h_{int(height)}.geojson"
         features = []
-        if geometries:
-            from shapely.geometry import shape as shp_shape
-            from shapely.ops import unary_union
-
-            union = unary_union([shp_shape(g) for g in geometries])
-            clipped = union.intersection(range_geom)
-            if not clipped.is_empty:
-                wgs84 = project_geometry(clipped, transformer)
-                features.append({"type": "Feature", "properties": {"height_m": height}, "geometry": mapping(wgs84)})
+        geometry = _mask_to_geometry(visible_mask, transform)
+        if not geometry.is_empty:
+            wgs84 = project_geometry(geometry, transformer)
+            features.append({"type": "Feature", "properties": {"height_m": height}, "geometry": mapping(wgs84)})
 
         _write_feature_collection_geojson(geojson_path, features)
-        manifest["height_layers"].append({"height_m": height, "filename": geojson_path.name})
+        manifest["height_layers"].append({
+            "height_m": height,
+            "filename": geojson_path.name,
+            "visible_area_m2": _mask_area(visible_mask, transform),
+        })
 
     manifest_path = staging_dir / "height_layers_manifest.json"
     _write_json_atomic(manifest_path, manifest)
@@ -176,6 +299,7 @@ def _generate_voxels(
     max_height = payload.advanced.voxel_max_height_m
     min_elevation = payload.advanced.min_elevation_deg
     max_elevation = payload.advanced.max_elevation_deg
+    effective_range, radar_equation_range = _effective_max_range(payload)
 
     with rasterio.open(min_visible_height) as src:
         data = src.read(1)
@@ -204,7 +328,7 @@ def _generate_voxels(
             dx = x_proj - prepared.radar_x
             dy = y_proj - prepared.radar_y
             dist = math.hypot(dx, dy)
-            if dist > payload.coverage.max_range_m:
+            if dist > effective_range:
                 continue
             # Check azimuth for sector scan
             if payload.coverage.scan_mode == "sector":
@@ -244,6 +368,9 @@ def _generate_voxels(
         "min_elevation_deg": min_elevation,
         "max_elevation_deg": max_elevation,
         "vertical_beam_width_deg": max_elevation - min_elevation,
+        "radar_equation_active": radar_equation_range is not None,
+        "radar_equation_max_range_m": radar_equation_range,
+        "effective_max_range_m": effective_range,
         "point_count": len(points),
         "point_format": "float32",
         "fields": ["lon", "lat", "z_agl_m", "clearance_m"],
@@ -261,8 +388,8 @@ def _write_vector_outputs(
     viewshed: Path,
     min_visible_height: Path,
     gdal_command: list[str],
-) -> tuple[CoverageOutputs, list[CoverageOutputFile], CoverageMetrics, CoverageModelMetadata, list[str]]:
-    range_geom = make_range_geometry(
+) -> tuple[CoverageOutputs, list[CoverageOutputFile], CoverageMetrics, CoverageModelMetadata, CoverageDiagnostics, list[str]]:
+    requested_range_geom = make_range_geometry(
         prepared.radar_x,
         prepared.radar_y,
         payload.coverage.max_range_m,
@@ -270,14 +397,30 @@ def _write_vector_outputs(
         payload.coverage.azimuth_deg,
         payload.coverage.beam_width_deg,
     )
+    effective_range, radar_equation_range = _effective_max_range(payload)
     transformer = Transformer.from_crs(f"EPSG:{prepared.target_epsg}", "EPSG:4326", always_xy=True)
-    range_wgs84 = project_geometry(range_geom, transformer)
-    visible_geom = vectorize_visible_viewshed(viewshed)
-    visible_clipped = visible_geom.intersection(range_geom)
-    blocked_geom = range_geom.difference(visible_clipped)
+
+    import rasterio
+
+    with rasterio.open(min_visible_height) as src:
+        min_visible_data = src.read(1)
+        min_visible_transform = src.transform
+
+    masks = _coverage_masks_for_prepared(
+        min_visible_data,
+        min_visible_transform,
+        prepared,
+        payload,
+        payload.target.height_m,
+        effective_range,
+    )
+    theoretical_geom = _mask_to_geometry(masks["theoretical"], min_visible_transform)
+    visible_clipped = _mask_to_geometry(masks["final"], min_visible_transform)
+    blocked_geom = theoretical_geom.difference(visible_clipped)
 
     tolerance = default_simplify_tolerance(prepared.resolution_m, payload.advanced.output_simplify_tolerance_m)
     if tolerance > 0:
+        theoretical_geom = theoretical_geom.simplify(tolerance, preserve_topology=True)
         visible_clipped = visible_clipped.simplify(tolerance, preserve_topology=True)
         blocked_geom = blocked_geom.simplify(tolerance, preserve_topology=True)
 
@@ -287,7 +430,16 @@ def _write_vector_outputs(
     model_metadata_json = staging_dir / "model_metadata.json"
     output_manifest_json = staging_dir / "output_manifest.json"
 
-    _write_feature_collection(range_geojson, range_wgs84, {"kind": "theoretical_range"})
+    _write_feature_collection(
+        range_geojson,
+        project_geometry(theoretical_geom, transformer) if not theoretical_geom.is_empty else theoretical_geom,
+        {
+            "kind": "theoretical_footprint",
+            "effective_max_range_m": effective_range,
+            "min_elevation_deg": payload.advanced.min_elevation_deg,
+            "max_elevation_deg": payload.advanced.max_elevation_deg,
+        },
+    )
     _write_feature_collection(
         visible_geojson,
         project_geometry(visible_clipped, transformer) if not visible_clipped.is_empty else visible_clipped,
@@ -299,11 +451,38 @@ def _write_vector_outputs(
         {"kind": "blocked"},
     )
 
+    theoretical_area = _mask_area(masks["theoretical"], min_visible_transform)
+    visible_area = _mask_area(masks["final"], min_visible_transform)
+    terrain_visible_area = _mask_area(masks["terrain"] & masks["sector"] & masks["requested_range"], min_visible_transform)
+    beam_eligible_area = _mask_area(masks["elevation"] & masks["sector"] & masks["requested_range"], min_visible_transform)
+    requested_area = requested_range_geom.area
+    effective_range_geom = make_range_geometry(
+        prepared.radar_x,
+        prepared.radar_y,
+        effective_range,
+        payload.coverage.scan_mode,
+        payload.coverage.azimuth_deg,
+        payload.coverage.beam_width_deg,
+    )
+    radar_equation_limited_area = max(0.0, requested_area - effective_range_geom.area) if radar_equation_range is not None else 0.0
+    blocked_area = max(0.0, theoretical_area - visible_area)
     metrics = CoverageMetrics(
-        theoretical_area_m2=range_geom.area,
-        visible_area_m2=visible_clipped.area,
-        blocked_area_m2=blocked_geom.area,
-        blocked_ratio=blocked_geom.area / range_geom.area if range_geom.area > 0 else 0,
+        theoretical_area_m2=theoretical_area,
+        visible_area_m2=visible_area,
+        blocked_area_m2=blocked_area,
+        blocked_ratio=blocked_area / theoretical_area if theoretical_area > 0 else 0,
+        terrain_visible_area_m2=terrain_visible_area,
+        beam_eligible_area_m2=beam_eligible_area,
+        radar_equation_limited_area_m2=radar_equation_limited_area,
+    )
+    diagnostics = CoverageDiagnostics(
+        radar_equation_active=radar_equation_range is not None,
+        radar_equation_max_range_m=radar_equation_range,
+        effective_max_range_m=effective_range,
+        terrain_blocked_area_m2=blocked_area,
+        elevation_limited_area_m2=max(0.0, _mask_area(masks["sector"] & masks["effective_range"], min_visible_transform) - theoretical_area),
+        radar_equation_limited_area_m2=radar_equation_limited_area,
+        notes=_build_diagnostic_notes(payload, effective_range, radar_equation_range),
     )
     outputs = CoverageOutputs(
         viewshed_tif=f"/outputs/{task_id}/{viewshed.name}",
@@ -342,25 +521,29 @@ def _write_vector_outputs(
         vertical_beam_width_deg=payload.advanced.vertical_beam_width_deg,
         visual_dome_mode=payload.advanced.visual_dome_mode,
         height_layers_m=height_layers,
+        radar_equation_active=diagnostics.radar_equation_active,
+        radar_equation_max_range_m=diagnostics.radar_equation_max_range_m,
+        effective_max_range_m=effective_range,
     )
-    warnings = _build_model_warnings(prepared, range_geom)
+    warnings = _build_model_warnings(prepared, requested_range_geom, diagnostics)
     _write_json_atomic(
         model_metadata_json,
         {
             "model": model.model_dump(),
             "metrics": metrics.model_dump(),
+            "diagnostics": diagnostics.model_dump(),
             "warnings": warnings,
         },
     )
     output_paths = {kind: staging_dir / filename for kind, filename in OUTPUT_FILENAMES.items()}
-    _write_output_manifest(output_manifest_json, [], metrics, model, warnings)
+    _write_output_manifest(output_manifest_json, [], metrics, model, warnings, diagnostics)
     manifest_files = describe_output_files(task_id, output_paths)
-    _write_output_manifest(output_manifest_json, manifest_files, metrics, model, warnings)
+    _write_output_manifest(output_manifest_json, manifest_files, metrics, model, warnings, diagnostics)
     _ensure_staged_outputs_exist(staging_dir)
     _commit_staged_outputs(staging_dir, output_dir)
     output_files = list_task_output_files(task_id)
     _ensure_finished_outputs_exist(output_files)
-    return outputs, output_files, metrics, model, warnings
+    return outputs, output_files, metrics, model, diagnostics, warnings
 
 
 def _write_output_manifest(
@@ -369,6 +552,7 @@ def _write_output_manifest(
     metrics: CoverageMetrics,
     model: CoverageModelMetadata,
     warnings: list[str],
+    diagnostics: CoverageDiagnostics | None = None,
 ) -> None:
     _write_json_atomic(
         path,
@@ -376,12 +560,39 @@ def _write_output_manifest(
             "files": [item.model_dump() for item in output_files],
             "metrics": metrics.model_dump(),
             "model": model.model_dump(),
+            "diagnostics": diagnostics.model_dump() if diagnostics else None,
             "warnings": warnings,
         },
     )
 
 
-def _build_model_warnings(prepared: PreparedCoverageDem, range_geom) -> list[str]:
+def _build_diagnostic_notes(
+    payload: CoverageRequest,
+    effective_range: float,
+    radar_equation_range: float | None,
+) -> list[str]:
+    notes: list[str] = []
+    if radar_equation_range is None:
+        notes.append("Radar equation is inactive because one or more RF parameters are missing.")
+    elif effective_range < payload.coverage.max_range_m:
+        notes.append(
+            f"Radar equation limits effective range to {effective_range:.0f} m, below requested {payload.coverage.max_range_m:.0f} m."
+        )
+    else:
+        notes.append("Radar equation is active but does not reduce the requested maximum range.")
+
+    if payload.advanced.min_elevation_deg > 0:
+        notes.append(f"Targets below {payload.advanced.min_elevation_deg:.1f}° elevation are excluded.")
+    if payload.advanced.max_elevation_deg < 90:
+        notes.append(f"Targets above {payload.advanced.max_elevation_deg:.1f}° elevation are excluded.")
+    return notes
+
+
+def _build_model_warnings(
+    prepared: PreparedCoverageDem,
+    range_geom,
+    diagnostics: CoverageDiagnostics | None = None,
+) -> list[str]:
     warnings: list[str] = []
     dem_bounds_geom = box(
         prepared.projected_bounds.left,
@@ -391,6 +602,8 @@ def _build_model_warnings(prepared: PreparedCoverageDem, range_geom) -> list[str
     )
     if not dem_bounds_geom.contains(range_geom):
         warnings.append("Requested radar range is not fully covered by the available DEM extent.")
+    if diagnostics is not None:
+        warnings.extend(diagnostics.notes)
     return warnings
 
 

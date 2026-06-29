@@ -28,6 +28,20 @@
           size="small"
           @input="(value: number | number[]) => updateLayer(layer.key, { opacity: sliderValue(value) / 100 })"
         />
+        <el-select
+          v-if="layer.key === 'heightLayer' && heightLayers.length"
+          :model-value="selectedHeightM"
+          size="small"
+          placeholder="选择高度层"
+          @change="(value: number) => $emit('selectHeightLayer', value)"
+        >
+          <el-option
+            v-for="item in heightLayers"
+            :key="item.heightM"
+            :label="item.label"
+            :value="item.heightM"
+          />
+        </el-select>
       </article>
     </div>
   </section>
@@ -46,16 +60,26 @@ interface LayerControlState {
   available: boolean;
 }
 
+interface HeightLayerState {
+  heightM: number;
+  label: string;
+}
+
 const props = defineProps<{
   layers: LayerControlState[];
+  heightLayers?: HeightLayerState[];
+  selectedHeightM?: number | null;
 }>();
 
 const emit = defineEmits<{
   updateLayer: [key: string, patch: Partial<Pick<LayerControlState, "visible" | "opacity">>];
+  selectHeightLayer: [heightM: number];
   focusResult: [];
 }>();
 
 const availableLayers = computed(() => props.layers.filter((layer) => layer.available));
+const heightLayers = computed(() => props.heightLayers ?? []);
+const selectedHeightM = computed(() => props.selectedHeightM ?? null);
 
 function updateLayer(key: string, patch: Partial<Pick<LayerControlState, "visible" | "opacity">>) {
   emit("updateLayer", key, patch);

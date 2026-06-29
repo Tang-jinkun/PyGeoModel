@@ -324,9 +324,11 @@ export function removeResultLayers(map: maplibregl.Map) {
     "blocked-layer",
     "blocked-layer-outline",
     "range-layer",
-    "range-layer-outline"
+    "range-layer-outline",
+    "height-layer",
+    "height-layer-outline"
   ];
-  const sourceIds = ["visible-layer-source", "blocked-layer-source", "range-layer-source"];
+  const sourceIds = ["visible-layer-source", "blocked-layer-source", "range-layer-source", "height-layer-source"];
 
   for (const layerId of layerIds) {
     if (map.getLayer(layerId)) {

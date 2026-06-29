@@ -78,6 +78,12 @@
 
     <section class="result-section">
       <h2>诊断</h2>
+      <div class="metric-grid">
+        <div v-for="item in diagnosticItems" :key="item.label" class="metric-item">
+          <strong>{{ item.label }}</strong>
+          <span>{{ item.value }}</span>
+        </div>
+      </div>
       <div v-if="warningItems.length" class="warning-box">
         <strong>{{ warningItems.length }} 条警告</strong>
         <ul>
@@ -151,6 +157,14 @@ const metricItems = computed(() => [
   {
     label: "遮挡比例",
     value: formatRatio(props.task?.metrics?.blocked_ratio)
+  },
+  {
+    label: "地形可见",
+    value: formatArea(props.task?.metrics?.terrain_visible_area_m2)
+  },
+  {
+    label: "俯仰可用",
+    value: formatArea(props.task?.metrics?.beam_eligible_area_m2)
   }
 ]);
 
@@ -168,6 +182,10 @@ const modelItems = computed(() => [
     value: formatDistance(props.task?.model?.max_range_m ?? props.task?.request?.coverage?.max_range_m)
   },
   {
+    label: "有效距离",
+    value: formatDistance(props.task?.model?.effective_max_range_m ?? props.task?.diagnostics?.effective_max_range_m)
+  },
+  {
     label: "方位角",
     value: formatAngle(props.task?.model?.azimuth_deg ?? props.task?.request?.coverage?.azimuth_deg)
   },
@@ -182,6 +200,10 @@ const modelItems = computed(() => [
   {
     label: "波束显示",
     value: (props.task?.model?.visual_dome_mode ?? props.task?.request?.advanced?.visual_dome_mode) ? "展示穹顶" : "真实俯仰"
+  },
+  {
+    label: "雷达方程",
+    value: formatRadarEquationStatus()
   },
   {
     label: "输出简化",
@@ -212,6 +234,21 @@ const downloadGroups = computed(() => {
   ];
   return groups.filter((group) => group.files.length);
 });
+
+const diagnosticItems = computed(() => [
+  {
+    label: "地形遮挡",
+    value: formatArea(props.task?.diagnostics?.terrain_blocked_area_m2)
+  },
+  {
+    label: "俯仰限制",
+    value: formatArea(props.task?.diagnostics?.elevation_limited_area_m2)
+  },
+  {
+    label: "能量限制",
+    value: formatArea(props.task?.diagnostics?.radar_equation_limited_area_m2)
+  }
+]);
 
 function getFileGroup(file: CoverageOutputFile) {
   if (file.kind.includes("geojson") || file.media_type.includes("geo+json")) {
@@ -264,6 +301,15 @@ function formatElevationRange() {
     return "-";
   }
   return `${minValue.toFixed(1)}° ~ ${maxValue.toFixed(1)}°`;
+}
+
+function formatRadarEquationStatus() {
+  const active = props.task?.model?.radar_equation_active ?? props.task?.diagnostics?.radar_equation_active;
+  if (!active) {
+    return "未启用";
+  }
+  const range = props.task?.model?.radar_equation_max_range_m ?? props.task?.diagnostics?.radar_equation_max_range_m;
+  return range ? `启用，${formatDistance(range)}` : "启用";
 }
 
 function formatScanMode(value?: string | null) {

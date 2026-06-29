@@ -12,6 +12,7 @@ from uuid import uuid4
 from app.core.config import settings
 from app.core.errors import AppError
 from app.schemas.radar import (
+    CoverageDiagnostics,
     CoverageMetrics,
     CoverageModelMetadata,
     CoverageOutputFile,
@@ -137,6 +138,7 @@ def mark_finished(
     outputs: CoverageOutputs,
     output_files: list[CoverageOutputFile] | None = None,
     model: CoverageModelMetadata | None = None,
+    diagnostics: CoverageDiagnostics | None = None,
     warnings: list[str] | None = None,
 ) -> None:
     with _task_lock(task_id):
@@ -148,6 +150,7 @@ def mark_finished(
         task.outputs = outputs
         task.output_files = output_files or []
         task.model = model
+        task.diagnostics = diagnostics
         task.warnings = warnings or []
         _save_task_unlocked(task)
 

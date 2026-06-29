@@ -88,6 +88,9 @@ export interface CoverageTaskSummary {
     visible_area_m2: number;
     blocked_area_m2: number;
     blocked_ratio: number;
+    terrain_visible_area_m2: number;
+    beam_eligible_area_m2: number;
+    radar_equation_limited_area_m2: number;
   } | null;
   outputs?: {
     viewshed_tif?: string | null;
@@ -121,6 +124,18 @@ export interface CoverageTaskSummary {
     vertical_beam_width_deg: number;
     visual_dome_mode: boolean;
     height_layers_m: number[];
+    radar_equation_active: boolean;
+    radar_equation_max_range_m?: number | null;
+    effective_max_range_m: number;
+  } | null;
+  diagnostics?: {
+    radar_equation_active: boolean;
+    radar_equation_max_range_m?: number | null;
+    effective_max_range_m: number;
+    terrain_blocked_area_m2: number;
+    elevation_limited_area_m2: number;
+    radar_equation_limited_area_m2: number;
+    notes: string[];
   } | null;
   warnings: string[];
 }
@@ -334,6 +349,7 @@ function normalizeCoverageTaskSummary(payload: unknown): CoverageTaskSummary {
     outputs,
     output_files: explicitOutputFiles.length ? explicitOutputFiles : deriveOutputFilesFromOutputs(outputs),
     model: normalizeModel(task.model),
+    diagnostics: normalizeDiagnostics(task.diagnostics),
     warnings: normalizeWarnings(task.warnings)
   };
 }
@@ -346,7 +362,25 @@ function normalizeMetrics(payload: unknown): CoverageTaskSummary["metrics"] {
     theoretical_area_m2: numberOr(payload.theoretical_area_m2, 0),
     visible_area_m2: numberOr(payload.visible_area_m2, 0),
     blocked_area_m2: numberOr(payload.blocked_area_m2, 0),
-    blocked_ratio: numberOr(payload.blocked_ratio, 0)
+    blocked_ratio: numberOr(payload.blocked_ratio, 0),
+    terrain_visible_area_m2: numberOr(payload.terrain_visible_area_m2, 0),
+    beam_eligible_area_m2: numberOr(payload.beam_eligible_area_m2, 0),
+    radar_equation_limited_area_m2: numberOr(payload.radar_equation_limited_area_m2, 0)
+  };
+}
+
+function normalizeDiagnostics(payload: unknown): CoverageTaskSummary["diagnostics"] {
+  if (!isRecord(payload)) {
+    return null;
+  }
+  return {
+    radar_equation_active: booleanOr(payload.radar_equation_active, false),
+    radar_equation_max_range_m: typeof payload.radar_equation_max_range_m === "number" ? payload.radar_equation_max_range_m : null,
+    effective_max_range_m: numberOr(payload.effective_max_range_m, 0),
+    terrain_blocked_area_m2: numberOr(payload.terrain_blocked_area_m2, 0),
+    elevation_limited_area_m2: numberOr(payload.elevation_limited_area_m2, 0),
+    radar_equation_limited_area_m2: numberOr(payload.radar_equation_limited_area_m2, 0),
+    notes: normalizeWarnings(payload.notes)
   };
 }
 
@@ -360,7 +394,11 @@ function normalizeOutputs(payload: unknown): CoverageTaskSummary["outputs"] {
     blocked_geojson: nullableString(payload.blocked_geojson),
     range_geojson: nullableString(payload.range_geojson),
     model_metadata_json: nullableString(payload.model_metadata_json),
-    output_manifest_json: nullableString(payload.output_manifest_json)
+    output_manifest_json: nullableString(payload.output_manifest_json),
+    min_visible_height_tif: nullableString(payload.min_visible_height_tif),
+    voxel_manifest_json: nullableString(payload.voxel_manifest_json),
+    voxel_points_bin: nullableString(payload.voxel_points_bin),
+    height_layers_manifest_json: nullableString(payload.height_layers_manifest_json)
   };
 }
 
@@ -490,6 +528,9 @@ function normalizeModel(payload: unknown): CoverageTaskSummary["model"] {
     ),
     visual_dome_mode: booleanOr(payload.visual_dome_mode, true),
     height_layers_m: numberArray(payload.height_layers_m),
+    radar_equation_active: booleanOr(payload.radar_equation_active, false),
+    radar_equation_max_range_m: typeof payload.radar_equation_max_range_m === "number" ? payload.radar_equation_max_range_m : null,
+    effective_max_range_m: numberOr(payload.effective_max_range_m, numberOr(payload.max_range_m, 0)),
     gdal_viewshed_command: Array.isArray(payload.gdal_viewshed_command)
       ? payload.gdal_viewshed_command.filter((item): item is string => typeof item === "string")
       : []

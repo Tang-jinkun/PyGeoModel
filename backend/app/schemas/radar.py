@@ -61,6 +61,7 @@ class ReservedRadarParams(BaseModel):
     antenna_gain_db: float | None = None
     receiver_sensitivity_dbm: float | None = None
     target_rcs_m2: float | None = None
+    system_loss_db: float | None = None
     pulse_width_s: float | None = None
     prf_hz: float | None = None
     noise_figure_db: float | None = None
@@ -82,6 +83,19 @@ class CoverageMetrics(BaseModel):
     visible_area_m2: float = 0
     blocked_area_m2: float = 0
     blocked_ratio: float = 0
+    terrain_visible_area_m2: float = 0
+    beam_eligible_area_m2: float = 0
+    radar_equation_limited_area_m2: float = 0
+
+
+class CoverageDiagnostics(BaseModel):
+    radar_equation_active: bool = False
+    radar_equation_max_range_m: float | None = None
+    effective_max_range_m: float = 0
+    terrain_blocked_area_m2: float = 0
+    elevation_limited_area_m2: float = 0
+    radar_equation_limited_area_m2: float = 0
+    notes: list[str] = Field(default_factory=list)
 
 
 class CoverageOutputs(BaseModel):
@@ -127,6 +141,9 @@ class CoverageModelMetadata(BaseModel):
     vertical_beam_width_deg: float = 32
     visual_dome_mode: bool = True
     height_layers_m: list[float] = Field(default_factory=list)
+    radar_equation_active: bool = False
+    radar_equation_max_range_m: float | None = None
+    effective_max_range_m: float = 0
 
 
 class CoverageTaskSummary(BaseModel):
@@ -141,6 +158,7 @@ class CoverageTaskSummary(BaseModel):
     outputs: CoverageOutputs | None = None
     output_files: list[CoverageOutputFile] = Field(default_factory=list)
     model: CoverageModelMetadata | None = None
+    diagnostics: CoverageDiagnostics | None = None
     warnings: list[str] = Field(default_factory=list)
 
 

@@ -24,7 +24,14 @@
 
     <section class="map-shell">
       <div ref="mapContainer" class="map-container"></div>
-      <LayerControlPanel :layers="layerControls" @update-layer="handleLayerControlUpdate" @focus-result="handleFocusResult" />
+      <LayerControlPanel
+        :layers="layerControls"
+        :height-layers="heightLayerOptions"
+        :selected-height-m="selectedHeightLayerM"
+        @update-layer="handleLayerControlUpdate"
+        @select-height-layer="handleSelectHeightLayer"
+        @focus-result="handleFocusResult"
+      />
       <ResultPanel :task="task" @restore-request="restoreRequest" />
     </section>
   </main>
@@ -73,7 +80,7 @@ import {
 import { addOrUpdateRadarVolume, removeRadarVolume } from "./map/radarVolumeLayer";
 import { addOrUpdateVoxelLayer, loadVoxelData, removeVoxelLayer, type VoxelPoint } from "./map/voxelLayer";
 
-type LayerKey = ResultLayerKey | "radarVolume" | "voxel";
+type LayerKey = ResultLayerKey | "radarVolume" | "voxel" | "heightLayer";
 
 interface ResultLayerControl {
   key: LayerKey;
@@ -84,6 +91,19 @@ interface ResultLayerControl {
   opacity: number;
   defaultOpacity: number;
   available: boolean;
+}
+
+interface HeightLayerOption {
+  heightM: number;
+  label: string;
+  url: string;
+}
+
+interface HeightLayerManifest {
+  height_layers?: Array<{
+    height_m?: number;
+    filename?: string;
+  }>;
 }
 
 const mapContainer = ref<HTMLDivElement | null>(null);
@@ -105,6 +125,8 @@ const busy = ref(false);
 let focusToken = 0;
 const voxelPoints = shallowRef<VoxelPoint[]>([]);
 const radarVolumeRequest = shallowRef<CoverageRequest | null>(null);
+const heightLayerOptions = ref<HeightLayerOption[]>([]);
+const selectedHeightLayerM = ref<number | null>(null);
 const layerControls = reactive<ResultLayerControl[]>([
   {
     key: "radarVolume",
@@ -144,6 +166,16 @@ const layerControls = reactive<ResultLayerControl[]>([
     visible: false,
     opacity: 0.08,
     defaultOpacity: 0.08,
+    available: false
+  },
+  {
+    key: "heightLayer",
+    label: "高度层",
+    description: "不同目标高度的可见范围",
+    color: "#f59e0b",
+    visible: true,
+    opacity: 0.32,
+    defaultOpacity: 0.32,
     available: false
   },
   {
@@ -504,6 +536,8 @@ function loadOutputs(result: CoverageTaskStatus) {
   removeRadarVolume(map.value);
   removeVoxelLayer(map.value);
   voxelPoints.value = [];
+  heightLayerOptions.value = [];
+  selectedHeightLayerM.value = null;
   radarVolumeRequest.value = result.request ?? coverageRequest;
 
   const visible = resolveOutputUrl(result, "visible_geojson", result.outputs?.visible_geojson);
@@ -554,12 +588,48 @@ function loadOutputs(result: CoverageTaskStatus) {
   }
   moveRadarMarkerToTop(map.value);
   syncRadarVolumeLayer(result.request ?? coverageRequest);
-  updateLayerAvailability({ range: !!range, blocked: !!blocked, visible: !!visible, radarVolume: true, voxel: false });
+  updateLayerAvailability({ range: !!range, blocked: !!blocked, visible: !!visible, radarVolume: true, voxel: false, heightLayer: false });
   applyAllLayerControls();
+
+  void loadHeightLayers(result);
 
   // Load voxel point cloud if available
   if (result.request) {
     void loadVoxelLayer(result);
+  }
+}
+
+async function loadHeightLayers(result: CoverageTaskStatus) {
+  if (!map.value) {
+    return;
+  }
+  const manifestUrl = resolveOutputUrl(
+    result,
+    "height_layers_manifest_json",
+    result.outputs?.height_layers_manifest_json
+  );
+  if (!manifestUrl) {
+    return;
+  }
+  try {
+    const response = await fetch(manifestUrl);
+    if (!response.ok) {
+      throw new Error(`高度层清单读取失败：${response.status}`);
+    }
+    const manifest = await response.json() as HeightLayerManifest;
+    const options = normalizeHeightLayerOptions(manifest, manifestUrl);
+    if (!options.length || task.value?.task_id !== result.task_id) {
+      return;
+    }
+    heightLayerOptions.value = options;
+    selectedHeightLayerM.value = chooseInitialHeightLayer(options, result.request);
+    const control = getLayerControl("heightLayer");
+    if (control) {
+      control.available = true;
+    }
+    applyHeightLayerControl();
+  } catch (error) {
+    console.error("Failed to load height layers:", error);
   }
 }
 
@@ -610,6 +680,11 @@ function handleLayerControlUpdate(key: string, patch: Partial<Pick<ResultLayerCo
   applyLayerControl(control);
 }
 
+function handleSelectHeightLayer(heightM: number) {
+  selectedHeightLayerM.value = heightM;
+  applyHeightLayerControl();
+}
+
 async function handleFocusResult() {
   if (!map.value || !task.value || task.value.status !== "finished") {
     ElMessage.info("暂无可定位的结果");
@@ -621,6 +696,10 @@ async function handleFocusResult() {
 
   const urls = layerControls
     .flatMap((control) => {
+      if (control.key === "heightLayer" && control.available) {
+        const url = getSelectedHeightLayer()?.url;
+        return url ? [url] : [];
+      }
       if (!control.available || !isResultLayerKey(control.key)) {
         return [];
       }
@@ -681,6 +760,10 @@ function applyLayerControl(control: ResultLayerControl) {
     applyVoxelLayerControl();
     return;
   }
+  if (control.key === "heightLayer") {
+    applyHeightLayerControl();
+    return;
+  }
   if (!isResultLayerKey(control.key)) {
     return;
   }
@@ -696,6 +779,8 @@ function clearLayerAvailability() {
     control.opacity = control.defaultOpacity;
   }
   voxelPoints.value = [];
+  heightLayerOptions.value = [];
+  selectedHeightLayerM.value = null;
   if (map.value) {
     removeVoxelLayer(map.value);
   }
@@ -746,6 +831,103 @@ function applyVoxelLayerControl() {
     return;
   }
   addOrUpdateVoxelLayer(map.value, voxelPoints.value, { opacity: control.opacity });
+}
+
+function applyHeightLayerControl() {
+  if (!map.value) {
+    return;
+  }
+  const control = getLayerControl("heightLayer");
+  const selected = getSelectedHeightLayer();
+  if (!control?.available || !selected) {
+    setHeightLayerVisibility(false);
+    return;
+  }
+  addOrUpdateGeoJsonLayer(
+    map.value,
+    "height-layer",
+    selected.url,
+    {
+      "fill-color": "#f59e0b",
+      "fill-opacity": control.visible ? control.opacity : 0
+    },
+    { "line-color": "#f59e0b", "line-opacity": control.visible ? Math.max(control.opacity, 0.32) : 0, "line-width": 1 }
+  );
+  setHeightLayerVisibility(control.visible);
+  setHeightLayerOpacity(control.opacity);
+  moveRadarMarkerToTop(map.value);
+}
+
+function setHeightLayerVisibility(visible: boolean) {
+  if (!map.value) {
+    return;
+  }
+  const visibility = visible ? "visible" : "none";
+  for (const layerId of ["height-layer", "height-layer-outline"]) {
+    if (map.value.getLayer(layerId)) {
+      map.value.setLayoutProperty(layerId, "visibility", visibility);
+    }
+  }
+}
+
+function setHeightLayerOpacity(opacity: number) {
+  if (!map.value) {
+    return;
+  }
+  if (map.value.getLayer("height-layer")) {
+    map.value.setPaintProperty("height-layer", "fill-opacity", opacity);
+  }
+  if (map.value.getLayer("height-layer-outline")) {
+    map.value.setPaintProperty("height-layer-outline", "line-opacity", opacity > 0 ? Math.max(opacity, 0.32) : 0);
+  }
+}
+
+function getSelectedHeightLayer() {
+  return heightLayerOptions.value.find((item) => item.heightM === selectedHeightLayerM.value) ?? null;
+}
+
+function normalizeHeightLayerOptions(manifest: HeightLayerManifest, manifestUrl: string): HeightLayerOption[] {
+  const layers = Array.isArray(manifest.height_layers) ? manifest.height_layers : [];
+  return layers
+    .flatMap((item) => {
+      if (typeof item.height_m !== "number" || !Number.isFinite(item.height_m) || !item.filename) {
+        return [];
+      }
+      const url = resolveHeightLayerUrl(manifestUrl, item.filename);
+      if (!url) {
+        return [];
+      }
+      return [{
+        heightM: item.height_m,
+        label: `${formatHeightLabel(item.height_m)} 可见`,
+        url
+      }];
+    })
+    .sort((a, b) => a.heightM - b.heightM);
+}
+
+function resolveHeightLayerUrl(manifestUrl: string, filename: string) {
+  if (/^(https?:|blob:|data:)/.test(filename)) {
+    return filename;
+  }
+  try {
+    return new URL(filename, manifestUrl).toString();
+  } catch {
+    const base = manifestUrl.slice(0, manifestUrl.lastIndexOf("/") + 1);
+    return `${base}${filename}`;
+  }
+}
+
+function chooseInitialHeightLayer(options: HeightLayerOption[], request?: CoverageRequest | null) {
+  const targetHeight = request?.target.height_m ?? coverageRequest.target.height_m;
+  return options.find((item) => item.heightM >= targetHeight)?.heightM ?? options[options.length - 1]?.heightM ?? null;
+}
+
+function formatHeightLabel(heightM: number) {
+  if (Math.abs(heightM) >= 1000) {
+    return `${(heightM / 1000).toFixed(heightM % 1000 === 0 ? 0 : 1)} km`;
+  }
+  return `${heightM.toFixed(heightM % 1 === 0 ? 0 : 1)} m`;
 }
 
 function isResultLayerKey(key: LayerKey): key is ResultLayerKey {
