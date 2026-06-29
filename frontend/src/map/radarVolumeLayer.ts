@@ -18,6 +18,7 @@ interface RadarVolumeRenderOptions {
 interface RadarVolumeState {
   request: CoverageRequest;
   options: RadarVolumeRenderOptions;
+  anchorAltitudeM: number | null;
   map: maplibregl.Map | null;
   camera: THREE.Camera | null;
   scene: THREE.Scene | null;
@@ -57,6 +58,7 @@ function createRadarVolumeLayer(
   const state: RadarVolumeState = {
     request: cloneRequest(initialRequest),
     options: initialOptions,
+    anchorAltitudeM: null,
     map: null,
     camera: null,
     scene: null,
@@ -86,6 +88,10 @@ function createRadarVolumeLayer(
         return;
       }
       state.camera.projectionMatrix = new THREE.Matrix4().fromArray(matrix as number[]);
+      const nextAnchorAltitudeM = getRadarAnchorAltitudeM(state.request, state.map);
+      if (state.anchorAltitudeM == null || Math.abs(nextAnchorAltitudeM - state.anchorAltitudeM) > 1) {
+        rebuildMesh(state);
+      }
       updateAnimatedRadarVolume(state);
       state.renderer.resetState();
       state.renderer.render(state.scene, state.camera);
@@ -115,14 +121,15 @@ function rebuildMesh(state: RadarVolumeState) {
     return;
   }
   disposeMesh(state);
-  const volume = buildRadarVolume(state.request, state.options);
+  state.anchorAltitudeM = getRadarAnchorAltitudeM(state.request, state.map);
+  const volume = buildRadarVolume(state.request, state.options, state.anchorAltitudeM);
   state.group = volume;
   state.scene.add(volume);
 }
 
-function buildRadarVolume(request: CoverageRequest, options: RadarVolumeRenderOptions) {
+function buildRadarVolume(request: CoverageRequest, options: RadarVolumeRenderOptions, anchorAltitudeM: number) {
   const group = new THREE.Group();
-  const shape = getVolumeShape(request);
+  const shape = getVolumeShape(request, anchorAltitudeM);
   const geometry = buildRadarVolumeGeometry(shape);
   const mainColor = request.coverage.scan_mode === "sector" ? 0x2563eb : 0x0891b2;
 
@@ -202,7 +209,7 @@ function updateAnimatedRadarVolume(state: RadarVolumeState) {
     return;
   }
   const elapsed = (performance.now() - state.startedAt) / 1000;
-  const shape = getVolumeShape(state.request);
+  const shape = getVolumeShape(state.request, state.anchorAltitudeM ?? getRadarAnchorAltitudeM(state.request, state.map));
   const scanAzimuth = getCurrentScanAzimuth(shape, state.request.coverage.scan_mode, elapsed);
   updateScanPlaneGeometry(scanPlane, shape, scanAzimuth);
 }
@@ -226,14 +233,15 @@ interface VolumeShape {
   verticalSegments: number;
 }
 
-function getVolumeShape(request: CoverageRequest): VolumeShape {
+function getVolumeShape(request: CoverageRequest, anchorAltitudeM: number): VolumeShape {
   const origin = maplibregl.MercatorCoordinate.fromLngLat(
     { lng: request.radar.lon, lat: request.radar.lat },
-    request.radar.height_m
+    anchorAltitudeM
   );
   const meter = origin.meterInMercatorCoordinateUnits();
   const radius = Math.max(1, request.coverage.max_range_m) * meter;
-  const verticalAngle = THREE.MathUtils.degToRad(Math.min(89, Math.max(2, request.advanced.max_elevation_deg ?? 32)));
+  const requestedElevation = request.advanced.max_elevation_deg ?? 32;
+  const verticalAngle = THREE.MathUtils.degToRad(Math.min(86, Math.max(72, requestedElevation)));
   const startAzimuth = getStartAzimuth(request);
   const endAzimuth = getEndAzimuth(request);
   const horizontalSegments = request.coverage.scan_mode === "omni"
@@ -264,9 +272,6 @@ function buildRadarVolumeGeometry(shape: VolumeShape) {
     }
   }
 
-  for (let h = 0; h < shape.horizontalSegments; h++) {
-    indices.push(0, vertex(h + 1, 0), vertex(h, 0));
-  }
   if (Math.abs(shape.endAzimuth - shape.startAzimuth) < Math.PI * 2 - 0.001) {
     for (const h of [0, shape.horizontalSegments]) {
       for (let v = 0; v < shape.verticalSegments; v++) {
@@ -577,6 +582,14 @@ function getEndAzimuth(request: CoverageRequest) {
     return Math.PI * 2;
   }
   return THREE.MathUtils.degToRad(request.coverage.azimuth_deg + request.coverage.beam_width_deg / 2);
+}
+
+function getRadarAnchorAltitudeM(request: CoverageRequest, map: maplibregl.Map | null) {
+  const queryTerrainElevation = map?.queryTerrainElevation?.bind(map);
+  const terrainElevation = queryTerrainElevation
+    ? queryTerrainElevation({ lng: request.radar.lon, lat: request.radar.lat })
+    : null;
+  return (Number.isFinite(terrainElevation) ? terrainElevation ?? 0 : 0) + request.radar.height_m;
 }
 
 function normalizeOptions(options?: Partial<RadarVolumeRenderOptions>): RadarVolumeRenderOptions {
