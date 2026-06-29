@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -202,3 +202,26 @@ class CoverageProfileResult(BaseModel):
     required_height_delta_m: float
     reason: str
     samples: list[CoverageProfileSample] = Field(default_factory=list)
+
+
+class FusionRequest(BaseModel):
+    task_ids: list[str] = Field(min_length=2, max_length=12)
+
+
+class FusionMetrics(BaseModel):
+    task_count: int
+    union_visible_area_m2: float = 0
+    overlap_visible_area_m2: float = 0
+    union_theoretical_area_m2: float = 0
+    blind_area_m2: float = 0
+    overlap_ratio: float = 0
+    blind_ratio: float = 0
+
+
+class FusionResult(BaseModel):
+    task_ids: list[str]
+    metrics: FusionMetrics
+    visible_union_geojson: dict[str, Any]
+    overlap_geojson: dict[str, Any]
+    blind_geojson: dict[str, Any]
+    warnings: list[str] = Field(default_factory=list)

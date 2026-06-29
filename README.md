@@ -96,6 +96,7 @@ The backend model layer now includes:
 - Scan range geometry for omni and sector modes.
 - Viewshed raster vectorization into visible geometry.
 - Visible/blocked/theoretical area metrics in square meters.
+- Finished task fusion API for visible union, redundant overlap, and blind-area analysis across multiple radar coverage results.
 
 Model tests:
 

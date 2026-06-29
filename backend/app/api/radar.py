@@ -10,10 +10,13 @@ from app.schemas.radar import (
     CoverageTaskDeleteResult,
     CoverageTaskStatus,
     CoverageTaskSummary,
+    FusionRequest,
+    FusionResult,
 )
 from app.services.output_files import list_task_output_files, resolve_task_output_path
 from app.services.coverage_model import validate_coverage_extent
 from app.services.dem_store import find_dem_file, read_dem_metadata
+from app.services.fusion_analysis import analyze_fusion
 from app.services.profile_analysis import analyze_coverage_profile
 from app.services.task_store import create_task, delete_task, get_task, list_tasks
 from app.workers.coverage_task import run_coverage_task
@@ -34,6 +37,14 @@ def create_coverage_task(payload: CoverageRequest, background_tasks: BackgroundT
         task = create_task(payload)
         background_tasks.add_task(run_coverage_task, task.task_id, payload)
         return task
+    except AppError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.as_detail()) from exc
+
+
+@router.post("/fusion", response_model=FusionResult)
+def create_fusion_analysis(payload: FusionRequest) -> FusionResult:
+    try:
+        return analyze_fusion(payload)
     except AppError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.as_detail()) from exc
 
