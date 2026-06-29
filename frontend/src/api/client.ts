@@ -176,6 +176,25 @@ export interface CoverageProfileResult {
   samples: CoverageProfileSample[];
 }
 
+export interface FusionMetrics {
+  task_count: number;
+  union_visible_area_m2: number;
+  overlap_visible_area_m2: number;
+  union_theoretical_area_m2: number;
+  blind_area_m2: number;
+  overlap_ratio: number;
+  blind_ratio: number;
+}
+
+export interface FusionResult {
+  task_ids: string[];
+  metrics: FusionMetrics;
+  visible_union_geojson: GeoJSON.FeatureCollection;
+  overlap_geojson: GeoJSON.FeatureCollection;
+  blind_geojson: GeoJSON.FeatureCollection;
+  warnings: string[];
+}
+
 export interface CoverageTaskDeleteResult {
   task_id: string;
   deleted_task_record: boolean;
@@ -267,6 +286,17 @@ export async function getCoverageProfile(taskId: string, lon: number, lat: numbe
     samples: "180"
   });
   const response = await fetch(`${API_BASE}/api/radar/coverage/${taskId}/profile?${params.toString()}`);
+  return handleResponse(response);
+}
+
+export async function createFusionAnalysis(taskIds: string[]): Promise<FusionResult> {
+  const response = await fetch(`${API_BASE}/api/radar/fusion`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ task_ids: taskIds })
+  });
   return handleResponse(response);
 }
 

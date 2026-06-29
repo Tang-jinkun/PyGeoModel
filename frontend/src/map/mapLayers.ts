@@ -13,6 +13,15 @@ const PROFILE_SOURCE_ID = "coverage-profile-source";
 const PROFILE_LINE_LAYER_ID = "coverage-profile-line";
 const PROFILE_TARGET_LAYER_ID = "coverage-profile-target";
 const PROFILE_OBSTRUCTION_LAYER_ID = "coverage-profile-obstruction";
+const FUSION_LAYER_IDS = [
+  "fusion-visible-layer",
+  "fusion-visible-layer-outline",
+  "fusion-overlap-layer",
+  "fusion-overlap-layer-outline",
+  "fusion-blind-layer",
+  "fusion-blind-layer-outline"
+];
+const FUSION_SOURCE_IDS = ["fusion-visible-layer-source", "fusion-overlap-layer-source", "fusion-blind-layer-source"];
 
 const RESULT_LAYER_IDS: Record<ResultLayerKey, { fill: string; outline: string }> = {
   range: {
@@ -368,6 +377,45 @@ export function addOrUpdateProfileLayer(
   }
 }
 
+export function addOrUpdateGeoJsonDataLayer(
+  map: maplibregl.Map,
+  id: string,
+  data: GeoJSON.GeoJSON,
+  paint: NonNullable<maplibregl.FillLayerSpecification["paint"]>,
+  linePaint?: NonNullable<maplibregl.LineLayerSpecification["paint"]>
+) {
+  const sourceId = `${id}-source`;
+  const existing = map.getSource(sourceId) as maplibregl.GeoJSONSource | undefined;
+
+  if (existing) {
+    existing.setData(data);
+  } else {
+    map.addSource(sourceId, {
+      type: "geojson",
+      data
+    });
+  }
+
+  if (!map.getLayer(id)) {
+    map.addLayer({
+      id,
+      type: "fill",
+      source: sourceId,
+      paint
+    });
+  }
+
+  const lineId = `${id}-outline`;
+  if (linePaint && !map.getLayer(lineId)) {
+    map.addLayer({
+      id: lineId,
+      type: "line",
+      source: sourceId,
+      paint: linePaint
+    });
+  }
+}
+
 export function removeProfileLayer(map: maplibregl.Map) {
   for (const layerId of [PROFILE_OBSTRUCTION_LAYER_ID, PROFILE_TARGET_LAYER_ID, PROFILE_LINE_LAYER_ID]) {
     if (map.getLayer(layerId)) {
@@ -376,6 +424,19 @@ export function removeProfileLayer(map: maplibregl.Map) {
   }
   if (map.getSource(PROFILE_SOURCE_ID)) {
     map.removeSource(PROFILE_SOURCE_ID);
+  }
+}
+
+export function removeFusionLayers(map: maplibregl.Map) {
+  for (const layerId of FUSION_LAYER_IDS) {
+    if (map.getLayer(layerId)) {
+      map.removeLayer(layerId);
+    }
+  }
+  for (const sourceId of FUSION_SOURCE_IDS) {
+    if (map.getSource(sourceId)) {
+      map.removeSource(sourceId);
+    }
   }
 }
 

@@ -34,6 +34,13 @@
       />
       <ResultPanel :task="task" @restore-request="restoreRequest" />
       <ProfilePanel :profile="profile" :loading="profileLoading" @close="clearProfile" />
+      <FusionPanel
+        :tasks="taskList"
+        :result="fusionResult"
+        :loading="fusionLoading"
+        @run="handleRunFusion"
+        @clear="clearFusion"
+      />
     </section>
   </main>
 </template>
@@ -45,6 +52,7 @@ import { onMounted, reactive, ref, shallowRef, watch } from "vue";
 
 import {
   createCoverageTask,
+  createFusionAnalysis,
   deleteDem,
   deleteCoverageTask,
   defaultCoverageRequest,
@@ -59,16 +67,19 @@ import {
   uploadDem,
   type CoverageProfileResult,
   type CoverageRequest,
+  type FusionResult,
   type CoverageTaskSummary,
   type CoverageTaskStatus,
   type DemMetadata
 } from "./api/client";
 import ControlPanel from "./components/ControlPanel.vue";
+import FusionPanel from "./components/FusionPanel.vue";
 import LayerControlPanel from "./components/LayerControlPanel.vue";
 import ProfilePanel from "./components/ProfilePanel.vue";
 import ResultPanel from "./components/ResultPanel.vue";
 import {
   addOrUpdateProfileLayer,
+  addOrUpdateGeoJsonDataLayer,
   addOrUpdateGeoJsonLayer,
   addOrUpdateDemRasterLayer,
   addOrUpdateDemTerrain,
@@ -78,6 +89,7 @@ import {
   removeDemRasterLayer,
   removeDemTerrain,
   removeProfileLayer,
+  removeFusionLayers,
   removeResultLayers,
   setResultLayerOpacity,
   setResultLayerVisibility,
@@ -136,6 +148,9 @@ const selectedHeightLayerM = ref<number | null>(null);
 const profile = shallowRef<CoverageProfileResult | null>(null);
 const profileLoading = ref(false);
 let profileRequestToken = 0;
+const fusionResult = shallowRef<FusionResult | null>(null);
+const fusionLoading = ref(false);
+let fusionRequestToken = 0;
 const layerControls = reactive<ResultLayerControl[]>([
   {
     key: "radarVolume",
@@ -353,6 +368,70 @@ function clearProfile() {
   }
 }
 
+async function handleRunFusion(taskIds: string[]) {
+  if (!map.value || taskIds.length < 2) {
+    ElMessage.warning("请选择至少两个已完成任务");
+    return;
+  }
+  const token = ++fusionRequestToken;
+  fusionLoading.value = true;
+  try {
+    const result = await createFusionAnalysis(taskIds);
+    if (token !== fusionRequestToken) {
+      return;
+    }
+    fusionResult.value = result;
+    drawFusionLayers(result);
+    ElMessage.success("融合分析完成");
+  } catch (error) {
+    if (token === fusionRequestToken) {
+      ElMessage.error(error instanceof Error ? error.message : "融合分析失败");
+    }
+  } finally {
+    if (token === fusionRequestToken) {
+      fusionLoading.value = false;
+    }
+  }
+}
+
+function drawFusionLayers(result: FusionResult) {
+  if (!map.value) {
+    return;
+  }
+  removeFusionLayers(map.value);
+  addOrUpdateGeoJsonDataLayer(
+    map.value,
+    "fusion-visible-layer",
+    result.visible_union_geojson,
+    { "fill-color": "#059669", "fill-opacity": 0.22 },
+    { "line-color": "#047857", "line-width": 2, "line-opacity": 0.72 }
+  );
+  addOrUpdateGeoJsonDataLayer(
+    map.value,
+    "fusion-overlap-layer",
+    result.overlap_geojson,
+    { "fill-color": "#7c3aed", "fill-opacity": 0.34 },
+    { "line-color": "#6d28d9", "line-width": 2, "line-opacity": 0.78 }
+  );
+  addOrUpdateGeoJsonDataLayer(
+    map.value,
+    "fusion-blind-layer",
+    result.blind_geojson,
+    { "fill-color": "#ef4444", "fill-opacity": 0.3 },
+    { "line-color": "#b91c1c", "line-width": 2, "line-opacity": 0.78 }
+  );
+  moveRadarMarkerToTop(map.value);
+}
+
+function clearFusion() {
+  fusionRequestToken++;
+  fusionResult.value = null;
+  fusionLoading.value = false;
+  if (map.value) {
+    removeFusionLayers(map.value);
+  }
+}
+
 async function handleRun() {
   if (!dem.value) {
     ElMessage.warning("请先上传 DEM");
@@ -367,6 +446,7 @@ async function handleRun() {
       throw new Error("地图尚未初始化完成");
     }
     clearProfile();
+    clearFusion();
     removeResultLayers(map.value);
     clearLayerAvailability();
     radarVolumeRequest.value = coverageRequest;
@@ -406,6 +486,7 @@ async function pollTask(taskId: string, token: number) {
     }
     if (latest.status === "failed") {
       clearProfile();
+      clearFusion();
       if (map.value) {
         removeResultLayers(map.value);
         removeRadarVolume(map.value);
@@ -436,6 +517,7 @@ async function handleSelectTask(taskId: string) {
       return;
     }
     clearProfile();
+    clearFusion();
     if (map.value) {
       removeResultLayers(map.value);
       removeRadarVolume(map.value);
@@ -485,12 +567,14 @@ async function handleDeleteTask(taskId: string) {
   deletingTaskId.value = taskId;
   try {
     await deleteCoverageTask(taskId);
+    clearFusion();
     if (selectedTaskId.value === taskId) {
       pollToken++;
       viewToken++;
       selectedTaskId.value = null;
       task.value = null;
       clearProfile();
+      clearFusion();
       if (map.value) {
         removeResultLayers(map.value);
         removeRadarVolume(map.value);
@@ -519,6 +603,7 @@ async function handleDeleteDem(demId: string) {
       selectedTaskId.value = null;
       task.value = null;
       clearProfile();
+      clearFusion();
       if (map.value) {
         removeResultLayers(map.value);
       }
@@ -551,6 +636,7 @@ function restoreRequest(request: CoverageRequest) {
   selectedTaskId.value = null;
   task.value = null;
   clearProfile();
+  clearFusion();
   clearLayerAvailability();
   radarVolumeRequest.value = normalized;
 
@@ -844,6 +930,7 @@ function clearLayerAvailability() {
   selectedHeightLayerM.value = null;
   if (map.value) {
     removeVoxelLayer(map.value);
+    removeFusionLayers(map.value);
   }
 }
 
