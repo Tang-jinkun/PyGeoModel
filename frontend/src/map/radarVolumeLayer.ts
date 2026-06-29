@@ -1,0 +1,457 @@
+import maplibregl from "maplibre-gl";
+import * as THREE from "three";
+
+import type { CoverageRequest } from "../api/client";
+
+const RADAR_VOLUME_LAYER_PREFIX = "radar-volume-layer";
+const RADAR_VOLUME_MAX_SEGMENTS = 72;
+let activeRadarVolumeLayer: RadarVolumeCustomLayer | null = null;
+
+type RadarVolumeCustomLayer = maplibregl.CustomLayerInterface & {
+  update: (request: CoverageRequest) => void;
+};
+
+interface RadarVolumeState {
+  request: CoverageRequest;
+  map: maplibregl.Map | null;
+  camera: THREE.Camera | null;
+  scene: THREE.Scene | null;
+  renderer: THREE.WebGLRenderer | null;
+  group: THREE.Group | null;
+  startedAt: number;
+}
+
+export function addOrUpdateRadarVolume(map: maplibregl.Map, request: CoverageRequest) {
+  if (activeRadarVolumeLayer && map.getLayer(activeRadarVolumeLayer.id)) {
+    activeRadarVolumeLayer.update(request);
+    return;
+  }
+  removeRadarVolume(map);
+  activeRadarVolumeLayer = createRadarVolumeLayer(request);
+  map.addLayer(activeRadarVolumeLayer);
+}
+
+export function removeRadarVolume(map: maplibregl.Map) {
+  for (const layer of map.getStyle().layers ?? []) {
+    if (layer.id.startsWith(RADAR_VOLUME_LAYER_PREFIX) && map.getLayer(layer.id)) {
+      map.removeLayer(layer.id);
+    }
+  }
+  activeRadarVolumeLayer = null;
+}
+
+function createRadarVolumeLayer(initialRequest: CoverageRequest): RadarVolumeCustomLayer {
+  const state: RadarVolumeState = {
+    request: cloneRequest(initialRequest),
+    map: null,
+    camera: null,
+    scene: null,
+    renderer: null,
+    group: null,
+    startedAt: performance.now()
+  };
+
+  return {
+    id: `${RADAR_VOLUME_LAYER_PREFIX}-${Math.random().toString(36).slice(2, 10)}`,
+    type: "custom",
+    renderingMode: "3d",
+    onAdd(map, gl) {
+      state.map = map;
+      state.camera = new THREE.Camera();
+      state.scene = new THREE.Scene();
+      state.renderer = new THREE.WebGLRenderer({
+        canvas: map.getCanvas(),
+        context: gl,
+        antialias: true
+      });
+      state.renderer.autoClear = false;
+      rebuildMesh(state);
+    },
+    render(_gl, matrix) {
+      if (!state.map || !state.camera || !state.scene || !state.renderer) {
+        return;
+      }
+      state.camera.projectionMatrix = new THREE.Matrix4().fromArray(matrix as number[]);
+      updateAnimatedRadarVolume(state);
+      state.renderer.resetState();
+      state.renderer.render(state.scene, state.camera);
+      state.map.triggerRepaint();
+    },
+    onRemove() {
+      disposeMesh(state);
+      state.renderer?.dispose();
+      state.map = null;
+      state.camera = null;
+      state.scene = null;
+      state.renderer = null;
+    },
+    update(request: CoverageRequest) {
+      state.request = cloneRequest(request);
+      rebuildMesh(state);
+      state.map?.triggerRepaint();
+    }
+  };
+}
+
+function rebuildMesh(state: RadarVolumeState) {
+  if (!state.scene) {
+    return;
+  }
+  disposeMesh(state);
+  const volume = buildRadarVolume(state.request);
+  state.group = volume;
+  state.scene.add(volume);
+}
+
+function buildRadarVolume(request: CoverageRequest) {
+  const group = new THREE.Group();
+  const shape = getVolumeShape(request);
+  const geometry = buildRadarVolumeGeometry(shape);
+  const mainColor = request.coverage.scan_mode === "sector" ? 0x2563eb : 0x0891b2;
+
+  const material = new THREE.MeshBasicMaterial({
+    color: mainColor,
+    transparent: true,
+    opacity: request.coverage.scan_mode === "sector" ? 0.26 : 0.2,
+    depthWrite: false,
+    side: THREE.DoubleSide
+  });
+  group.add(new THREE.Mesh(geometry, material));
+  group.add(buildTopCap(shape, request.coverage.scan_mode));
+
+  const wireframe = new THREE.LineSegments(
+    new THREE.WireframeGeometry(geometry),
+    new THREE.LineBasicMaterial({
+      color: 0x93c5fd,
+      transparent: true,
+      opacity: 0.5,
+      depthWrite: false
+    })
+  );
+  group.add(wireframe);
+
+  group.add(buildRayLines(shape, request.coverage.scan_mode === "sector" ? 18 : 36));
+  group.add(buildBoundaryLines(shape));
+  group.add(buildGroundConnectionLines(shape, request.coverage.scan_mode === "sector" ? 9 : 16));
+  group.add(buildScanPlane(shape));
+  return group;
+}
+
+function buildTopCap(shape: VolumeShape, scanMode: CoverageRequest["coverage"]["scan_mode"]) {
+  const geometry = buildTopCapGeometry(shape);
+  return new THREE.Mesh(
+    geometry,
+    new THREE.MeshBasicMaterial({
+      color: scanMode === "sector" ? 0x60a5fa : 0x22d3ee,
+      transparent: true,
+      opacity: scanMode === "sector" ? 0.34 : 0.28,
+      depthWrite: false,
+      side: THREE.DoubleSide
+    })
+  );
+}
+
+function disposeMesh(state: RadarVolumeState) {
+  if (!state.group || !state.scene) {
+    return;
+  }
+  state.scene.remove(state.group);
+  state.group.traverse((object) => {
+    if (object instanceof THREE.Mesh || object instanceof THREE.Line || object instanceof THREE.LineSegments) {
+      object.geometry.dispose();
+      const material = object.material;
+      if (Array.isArray(material)) {
+        material.forEach((item) => item.dispose());
+      } else {
+        material.dispose();
+      }
+    }
+  });
+  state.group = null;
+}
+
+function updateAnimatedRadarVolume(state: RadarVolumeState) {
+  if (!state.group) {
+    return;
+  }
+  const scanPlane = state.group.getObjectByName("radar-scan-plane");
+  if (!scanPlane) {
+    return;
+  }
+  const elapsed = (performance.now() - state.startedAt) / 1000;
+  const shape = getVolumeShape(state.request);
+  const scanAzimuth = getCurrentScanAzimuth(shape, state.request.coverage.scan_mode, elapsed);
+  updateScanPlaneGeometry(scanPlane, shape, scanAzimuth);
+}
+
+function getCurrentScanAzimuth(shape: VolumeShape, scanMode: CoverageRequest["coverage"]["scan_mode"], elapsed: number) {
+  if (scanMode === "omni") {
+    return elapsed * 0.65;
+  }
+  const sweep = (Math.sin(elapsed * 1.2) + 1) / 2;
+  return shape.startAzimuth + (shape.endAzimuth - shape.startAzimuth) * sweep;
+}
+
+interface VolumeShape {
+  origin: maplibregl.MercatorCoordinate;
+  meter: number;
+  radius: number;
+  verticalAngle: number;
+  startAzimuth: number;
+  endAzimuth: number;
+  horizontalSegments: number;
+  verticalSegments: number;
+}
+
+function getVolumeShape(request: CoverageRequest): VolumeShape {
+  const origin = maplibregl.MercatorCoordinate.fromLngLat(
+    { lng: request.radar.lon, lat: request.radar.lat },
+    request.radar.height_m
+  );
+  const meter = origin.meterInMercatorCoordinateUnits();
+  const radius = Math.max(1, request.coverage.max_range_m) * meter;
+  const verticalAngle = THREE.MathUtils.degToRad(32);
+  const startAzimuth = getStartAzimuth(request);
+  const endAzimuth = getEndAzimuth(request);
+  const horizontalSegments = request.coverage.scan_mode === "omni"
+    ? RADAR_VOLUME_MAX_SEGMENTS
+    : Math.max(10, Math.ceil(Math.abs(endAzimuth - startAzimuth) / 4));
+  const verticalSegments = 12;
+  return { origin, meter, radius, verticalAngle, startAzimuth, endAzimuth, horizontalSegments, verticalSegments };
+}
+
+function buildRadarVolumeGeometry(shape: VolumeShape) {
+  const positions: number[] = [];
+  const indices: number[] = [];
+  positions.push(shape.origin.x, shape.origin.y, shape.origin.z);
+  for (let h = 0; h <= shape.horizontalSegments; h++) {
+    const azimuth = interpolateAzimuth(shape, h / shape.horizontalSegments);
+    for (let v = 0; v <= shape.verticalSegments; v++) {
+      const point = volumePoint(shape, azimuth, v / shape.verticalSegments);
+      positions.push(point.x, point.y, point.z);
+    }
+  }
+
+  const row = shape.verticalSegments + 1;
+  const vertex = (h: number, v: number) => 1 + h * row + v;
+  for (let h = 0; h < shape.horizontalSegments; h++) {
+    for (let v = 0; v < shape.verticalSegments; v++) {
+      indices.push(vertex(h, v), vertex(h + 1, v), vertex(h + 1, v + 1));
+      indices.push(vertex(h, v), vertex(h + 1, v + 1), vertex(h, v + 1));
+    }
+  }
+
+  for (let h = 0; h < shape.horizontalSegments; h++) {
+    indices.push(0, vertex(h + 1, 0), vertex(h, 0));
+  }
+  if (Math.abs(shape.endAzimuth - shape.startAzimuth) < Math.PI * 2 - 0.001) {
+    for (const h of [0, shape.horizontalSegments]) {
+      for (let v = 0; v < shape.verticalSegments; v++) {
+        indices.push(0, vertex(h, v), vertex(h, v + 1));
+      }
+    }
+  }
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setIndex(indices);
+  geometry.computeVertexNormals();
+  return geometry;
+}
+
+function buildTopCapGeometry(shape: VolumeShape) {
+  const positions: number[] = [];
+  const indices: number[] = [];
+  const topStartT = 0.55;
+  const topSegments = 6;
+
+  for (let h = 0; h <= shape.horizontalSegments; h++) {
+    const azimuth = interpolateAzimuth(shape, h / shape.horizontalSegments);
+    for (let v = 0; v <= topSegments; v++) {
+      const verticalT = topStartT + (1 - topStartT) * (v / topSegments);
+      const point = volumePoint(shape, azimuth, verticalT, 1.002);
+      positions.push(point.x, point.y, point.z);
+    }
+  }
+
+  const row = topSegments + 1;
+  const vertex = (h: number, v: number) => h * row + v;
+  for (let h = 0; h < shape.horizontalSegments; h++) {
+    for (let v = 0; v < topSegments; v++) {
+      indices.push(vertex(h, v), vertex(h + 1, v), vertex(h + 1, v + 1));
+      indices.push(vertex(h, v), vertex(h + 1, v + 1), vertex(h, v + 1));
+    }
+  }
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setIndex(indices);
+  geometry.computeVertexNormals();
+  return geometry;
+}
+
+function buildRayLines(shape: VolumeShape, count: number) {
+  const positions: number[] = [];
+  for (let index = 0; index < count; index++) {
+    const t = count === 1 ? 0.5 : index / (count - 1);
+    const azimuth = interpolateAzimuth(shape, t);
+    const end = volumePoint(shape, azimuth, 0.82);
+    positions.push(shape.origin.x, shape.origin.y, shape.origin.z, end.x, end.y, end.z);
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  return new THREE.LineSegments(
+    geometry,
+    new THREE.LineBasicMaterial({
+      color: 0x67e8f9,
+      transparent: true,
+      opacity: 0.5,
+      depthWrite: false
+    })
+  );
+}
+
+function buildBoundaryLines(shape: VolumeShape) {
+  const positions: number[] = [];
+  const addLine = (a: THREE.Vector3, b: THREE.Vector3) => {
+    positions.push(a.x, a.y, a.z, b.x, b.y, b.z);
+  };
+  for (let h = 0; h < shape.horizontalSegments; h++) {
+    addLine(volumePoint(shape, interpolateAzimuth(shape, h / shape.horizontalSegments), 0), volumePoint(shape, interpolateAzimuth(shape, (h + 1) / shape.horizontalSegments), 0));
+    addLine(volumePoint(shape, interpolateAzimuth(shape, h / shape.horizontalSegments), 1), volumePoint(shape, interpolateAzimuth(shape, (h + 1) / shape.horizontalSegments), 1));
+  }
+  for (const t of [0, 1]) {
+    const azimuth = interpolateAzimuth(shape, t);
+    for (let v = 0; v < shape.verticalSegments; v++) {
+      addLine(volumePoint(shape, azimuth, v / shape.verticalSegments), volumePoint(shape, azimuth, (v + 1) / shape.verticalSegments));
+    }
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  return new THREE.LineSegments(
+    geometry,
+    new THREE.LineBasicMaterial({
+      color: 0xbfdbfe,
+      transparent: true,
+      opacity: 0.75,
+      depthWrite: false
+    })
+  );
+}
+
+function buildGroundConnectionLines(shape: VolumeShape, count: number) {
+  const positions: number[] = [];
+  for (let index = 0; index < count; index++) {
+    const t = count === 1 ? 0.5 : index / (count - 1);
+    const azimuth = interpolateAzimuth(shape, t);
+    const top = volumePoint(shape, azimuth, 0.75);
+    const ground = volumePoint(shape, azimuth, 0);
+    positions.push(top.x, top.y, top.z, ground.x, ground.y, shape.origin.z);
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  return new THREE.LineSegments(
+    geometry,
+    new THREE.LineBasicMaterial({
+      color: 0xf8fafc,
+      transparent: true,
+      opacity: 0.28,
+      depthWrite: false
+    })
+  );
+}
+
+function buildScanPlane(shape: VolumeShape) {
+  const positions = getScanPlanePositions(shape, shape.startAzimuth);
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setIndex([0, 1, 2, 0, 2, 4, 0, 4, 3, 0, 3, 1]);
+  const mesh = new THREE.Mesh(
+    geometry,
+    new THREE.MeshBasicMaterial({
+      color: 0xe0f2fe,
+      transparent: true,
+      opacity: 0.48,
+      depthWrite: false,
+      side: THREE.DoubleSide
+    })
+  );
+  mesh.name = "radar-scan-plane";
+  return mesh;
+}
+
+function updateScanPlaneGeometry(object: THREE.Object3D, shape: VolumeShape, azimuth: number) {
+  if (!(object instanceof THREE.Mesh) || !(object.geometry instanceof THREE.BufferGeometry)) {
+    return;
+  }
+  const nextPositions = getScanPlanePositions(shape, azimuth);
+  const position = object.geometry.getAttribute("position");
+  if (!(position instanceof THREE.BufferAttribute) || position.count !== nextPositions.length / 3) {
+    object.geometry.setAttribute("position", new THREE.Float32BufferAttribute(nextPositions, 3));
+  } else {
+    for (let index = 0; index < nextPositions.length; index++) {
+      position.array[index] = nextPositions[index];
+    }
+    position.needsUpdate = true;
+  }
+  object.geometry.computeBoundingSphere();
+}
+
+function getScanPlanePositions(shape: VolumeShape, azimuth: number) {
+  const positions: number[] = [
+    shape.origin.x,
+    shape.origin.y,
+    shape.origin.z
+  ];
+  const scanWidth = Math.min(
+    THREE.MathUtils.degToRad(10),
+    Math.max(THREE.MathUtils.degToRad(3), Math.abs(shape.endAzimuth - shape.startAzimuth) / 8)
+  );
+  for (const offset of [-scanWidth / 2, scanWidth / 2]) {
+    for (const verticalT of [0, 1]) {
+      const point = volumePoint(shape, azimuth + offset, verticalT);
+      positions.push(point.x, point.y, point.z);
+    }
+  }
+  return positions;
+}
+
+function volumePoint(shape: VolumeShape, azimuth: number, verticalT: number, radiusScale = 1) {
+  const elevation = shape.verticalAngle * verticalT;
+  const radius = shape.radius * radiusScale;
+  const horizontalDistance = Math.cos(elevation) * radius;
+  return new THREE.Vector3(
+    shape.origin.x + Math.sin(azimuth) * horizontalDistance,
+    shape.origin.y - Math.cos(azimuth) * horizontalDistance,
+    shape.origin.z + Math.sin(elevation) * radius
+  );
+}
+
+function interpolateAzimuth(shape: VolumeShape, t: number) {
+  return shape.startAzimuth + (shape.endAzimuth - shape.startAzimuth) * t;
+}
+
+function getStartAzimuth(request: CoverageRequest) {
+  if (request.coverage.scan_mode === "omni") {
+    return 0;
+  }
+  return THREE.MathUtils.degToRad(request.coverage.azimuth_deg - request.coverage.beam_width_deg / 2);
+}
+
+function getEndAzimuth(request: CoverageRequest) {
+  if (request.coverage.scan_mode === "omni") {
+    return Math.PI * 2;
+  }
+  return THREE.MathUtils.degToRad(request.coverage.azimuth_deg + request.coverage.beam_width_deg / 2);
+}
+
+function cloneRequest(request: CoverageRequest): CoverageRequest {
+  return {
+    ...request,
+    radar: { ...request.radar },
+    target: { ...request.target },
+    coverage: { ...request.coverage },
+    advanced: { ...request.advanced },
+    reserved_radar_params: { ...(request.reserved_radar_params ?? {}) }
+  };
+}

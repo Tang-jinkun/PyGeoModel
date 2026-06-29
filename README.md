@@ -22,7 +22,7 @@ It intentionally does not implement the full radar equation, RCS modeling, weath
 ```bash
 cd backend
 python -m venv .venv
-.\.venv\Scripts\Activate.ps1
+source .venv/bin/activate  # Windows PowerShell: .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 uvicorn app.main:app --reload
 ```
@@ -49,6 +49,8 @@ Open:
 http://localhost:5173
 ```
 
+The Vite dev server proxies `/api` and `/outputs` to the backend. For local development it defaults to `http://localhost:8000`; Docker Compose sets `VITE_PROXY_TARGET=http://backend:8000`.
+
 ## Docker Compose
 
 ```bash
@@ -59,6 +61,21 @@ Services:
 
 - Backend API: `http://localhost:8000`
 - Frontend: `http://localhost:5173`
+
+The compose build passes Tencent Cloud mirrors for Debian apt, pip, and npm package downloads. To speed up Docker Hub base image pulls on Tencent Cloud hosts, configure the Docker daemon registry mirror:
+
+```json
+{
+  "registry-mirrors": ["https://mirror.ccs.tencentyun.com"]
+}
+```
+
+Then restart Docker and rebuild:
+
+```bash
+sudo systemctl restart docker
+docker compose build --pull
+```
 
 ## MVP Workflow
 
@@ -84,7 +101,15 @@ Model tests:
 
 ```bash
 cd backend
+source .venv/bin/activate
 python -m pytest -q
+```
+
+Frontend build check:
+
+```bash
+cd frontend
+npm run build
 ```
 
 ## Important Limits

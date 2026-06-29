@@ -19,7 +19,12 @@ const DEFAULT_COVERAGE_REQUEST: CoverageRequest = {
   advanced: {
     use_curvature: true,
     curvature_coeff: 0.75,
-    output_simplify_tolerance_m: 30
+    output_simplify_tolerance_m: 30,
+    voxel_grid_size: 128,
+    voxel_vertical_levels: 16,
+    voxel_max_height_m: 3000,
+    max_elevation_deg: 32,
+    height_layers_m: []
   },
   reserved_radar_params: {}
 };
@@ -61,7 +66,11 @@ export type CoverageOutputKind =
   | "blocked_geojson"
   | "range_geojson"
   | "model_metadata_json"
-  | "output_manifest_json";
+  | "output_manifest_json"
+  | "min_visible_height_tif"
+  | "voxel_manifest_json"
+  | "voxel_points_bin"
+  | "height_layers_manifest_json";
 
 export interface CoverageTaskSummary {
   task_id: string;
@@ -84,6 +93,10 @@ export interface CoverageTaskSummary {
     range_geojson?: string | null;
     model_metadata_json?: string | null;
     output_manifest_json?: string | null;
+    min_visible_height_tif?: string | null;
+    voxel_manifest_json?: string | null;
+    voxel_points_bin?: string | null;
+    height_layers_manifest_json?: string | null;
   } | null;
   output_files: CoverageOutputFile[];
   model?: {
@@ -97,6 +110,11 @@ export interface CoverageTaskSummary {
     beam_width_deg: number;
     simplify_tolerance_m: number;
     gdal_viewshed_command: string[];
+    voxel_grid_size: number;
+    voxel_vertical_levels: number;
+    voxel_max_height_m: number;
+    max_elevation_deg: number;
+    height_layers_m: number[];
   } | null;
   warnings: string[];
 }
@@ -109,6 +127,17 @@ export interface CoverageTaskDeleteResult {
   task_id: string;
   deleted_task_record: boolean;
   deleted_output_dir: boolean;
+}
+
+export interface AdvancedInput {
+  use_curvature: boolean;
+  curvature_coeff: number;
+  output_simplify_tolerance_m: number;
+  voxel_grid_size: number;
+  voxel_vertical_levels: number;
+  voxel_max_height_m: number;
+  max_elevation_deg: number;
+  height_layers_m: number[];
 }
 
 export interface CoverageRequest {
@@ -127,11 +156,7 @@ export interface CoverageRequest {
     azimuth_deg: number;
     beam_width_deg: number;
   };
-  advanced: {
-    use_curvature: boolean;
-    curvature_coeff: number;
-    output_simplify_tolerance_m: number;
-  };
+  advanced: AdvancedInput;
   reserved_radar_params?: Record<string, number | null>;
 }
 
@@ -198,6 +223,14 @@ export function resolveAssetUrl(path?: string | null): string | null {
   return `${normalizedBase}${normalizedPath}`;
 }
 
+export function demTileUrlTemplate(demId: string): string {
+  return resolveAssetUrl(`/api/dem/${demId}/tiles/{z}/{x}/{y}.png`) ?? "";
+}
+
+export function demTerrainUrlTemplate(demId: string): string {
+  return resolveAssetUrl(`/api/dem/${demId}/terrain/{z}/{x}/{y}.png`) ?? "";
+}
+
 async function handleResponse<T>(response: Response): Promise<T> {
   const payload = await response.json().catch(() => null);
   if (!response.ok) {
@@ -244,7 +277,12 @@ export function normalizeCoverageRequest(payload: unknown, fallback: CoverageReq
       output_simplify_tolerance_m: numberOr(
         advanced.output_simplify_tolerance_m,
         fallback.advanced.output_simplify_tolerance_m
-      )
+      ),
+      voxel_grid_size: numberOr(advanced.voxel_grid_size, fallback.advanced.voxel_grid_size),
+      voxel_vertical_levels: numberOr(advanced.voxel_vertical_levels, fallback.advanced.voxel_vertical_levels),
+      voxel_max_height_m: numberOr(advanced.voxel_max_height_m, fallback.advanced.voxel_max_height_m),
+      max_elevation_deg: numberOr(advanced.max_elevation_deg, fallback.advanced.max_elevation_deg),
+      height_layers_m: Array.isArray(advanced.height_layers_m) ? advanced.height_layers_m.filter((item): item is number => typeof item === "number") : fallback.advanced.height_layers_m
     },
     reserved_radar_params: normalizeReservedRadarParams(payload.reserved_radar_params)
   };
@@ -364,6 +402,30 @@ function deriveOutputFilesFromOutputs(outputs: CoverageTaskSummary["outputs"]): 
       label: "输出清单",
       media_type: "application/json",
       filename: "output_manifest.json"
+    },
+    {
+      kind: "min_visible_height_tif",
+      label: "最低可见高度",
+      media_type: "image/tiff",
+      filename: "min_visible_height.tif"
+    },
+    {
+      kind: "voxel_manifest_json",
+      label: "体素清单",
+      media_type: "application/json",
+      filename: "voxel_manifest.json"
+    },
+    {
+      kind: "voxel_points_bin",
+      label: "体素点云",
+      media_type: "application/octet-stream",
+      filename: "voxel_points.bin"
+    },
+    {
+      kind: "height_layers_manifest_json",
+      label: "高度层清单",
+      media_type: "application/json",
+      filename: "height_layers_manifest.json"
     }
   ];
   return specs.flatMap((spec) => {
@@ -401,6 +463,11 @@ function normalizeModel(payload: unknown): CoverageTaskSummary["model"] {
     azimuth_deg: numberOr(payload.azimuth_deg, 0),
     beam_width_deg: numberOr(payload.beam_width_deg, 360),
     simplify_tolerance_m: numberOr(payload.simplify_tolerance_m, 0),
+    voxel_grid_size: numberOr(payload.voxel_grid_size, 128),
+    voxel_vertical_levels: numberOr(payload.voxel_vertical_levels, 16),
+    voxel_max_height_m: numberOr(payload.voxel_max_height_m, 3000),
+    max_elevation_deg: numberOr(payload.max_elevation_deg, 32),
+    height_layers_m: numberArray(payload.height_layers_m),
     gdal_viewshed_command: Array.isArray(payload.gdal_viewshed_command)
       ? payload.gdal_viewshed_command.filter((item): item is string => typeof item === "string")
       : []
@@ -426,7 +493,7 @@ function cloneCoverageRequest(request: CoverageRequest): CoverageRequest {
     radar: { ...request.radar },
     target: { ...request.target },
     coverage: { ...request.coverage },
-    advanced: { ...request.advanced },
+    advanced: { ...request.advanced, height_layers_m: [...(request.advanced.height_layers_m ?? [])] },
     reserved_radar_params: { ...(request.reserved_radar_params ?? {}) }
   };
 }
@@ -442,7 +509,11 @@ function normalizeOutputKind(value: unknown): CoverageOutputKind | undefined {
     "blocked_geojson",
     "range_geojson",
     "model_metadata_json",
-    "output_manifest_json"
+    "output_manifest_json",
+    "min_visible_height_tif",
+    "voxel_manifest_json",
+    "voxel_points_bin",
+    "height_layers_manifest_json"
   ];
   return kinds.find((kind) => kind === value);
 }

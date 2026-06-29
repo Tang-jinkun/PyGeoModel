@@ -10,6 +10,10 @@ CoverageOutputKind = Literal[
     "range_geojson",
     "model_metadata_json",
     "output_manifest_json",
+    "min_visible_height_tif",
+    "voxel_manifest_json",
+    "voxel_points_bin",
+    "height_layers_manifest_json",
 ]
 
 
@@ -34,6 +38,11 @@ class AdvancedInput(BaseModel):
     use_curvature: bool = True
     curvature_coeff: float = Field(default=0.75, ge=0, le=1)
     output_simplify_tolerance_m: float | None = Field(default=None, ge=0)
+    voxel_grid_size: int = Field(default=128, ge=32, le=512)
+    voxel_vertical_levels: int = Field(default=16, ge=4, le=64)
+    voxel_max_height_m: float = Field(default=3000, ge=500, le=10000)
+    max_elevation_deg: float = Field(default=32, ge=0, le=90)
+    height_layers_m: list[float] = Field(default_factory=list)
 
 
 class ReservedRadarParams(BaseModel):
@@ -72,6 +81,10 @@ class CoverageOutputs(BaseModel):
     range_geojson: str | None = None
     model_metadata_json: str | None = None
     output_manifest_json: str | None = None
+    min_visible_height_tif: str | None = None
+    voxel_manifest_json: str | None = None
+    voxel_points_bin: str | None = None
+    height_layers_manifest_json: str | None = None
 
 
 class CoverageOutputFile(BaseModel):
@@ -96,6 +109,11 @@ class CoverageModelMetadata(BaseModel):
     beam_width_deg: float
     simplify_tolerance_m: float
     gdal_viewshed_command: list[str] = Field(default_factory=list)
+    voxel_grid_size: int = 128
+    voxel_vertical_levels: int = 16
+    voxel_max_height_m: float = 3000
+    max_elevation_deg: float = 32
+    height_layers_m: list[float] = Field(default_factory=list)
 
 
 class CoverageTaskSummary(BaseModel):

@@ -1,7 +1,10 @@
 import json
+import math
 from pathlib import Path
 
+import numpy
 import pytest
+from rasterio.transform import from_origin
 
 from app.core.errors import AppError
 from app.core.config import settings
@@ -130,6 +133,33 @@ def test_find_dem_file_rejects_filename_path_escape(tmp_path: Path) -> None:
         find_dem_file("dem_a")
 
     assert exc_info.value.code == "INVALID_DEM_PATH"
+
+
+def test_read_dem_metadata_converts_nan_nodata_to_null(tmp_path: Path) -> None:
+    import rasterio
+
+    settings.data_dir = tmp_path
+    settings.ensure_directories()
+    dem_dir = tmp_path / "dem" / "dem_nan"
+    dem_dir.mkdir(parents=True)
+    dem_path = dem_dir / "nan_nodata.tif"
+    with rasterio.open(
+        dem_path,
+        "w",
+        driver="GTiff",
+        width=2,
+        height=2,
+        count=1,
+        dtype="float32",
+        crs="EPSG:4326",
+        transform=from_origin(100, 30, 0.1, 0.1),
+        nodata=math.nan,
+    ) as dataset:
+        dataset.write(numpy.zeros((2, 2), dtype=numpy.float32), 1)
+
+    metadata = read_dem_metadata("dem_nan", dem_path)
+
+    assert metadata.nodata is None
 
 
 def write_metadata(root: Path, dem_id: str, filename: str, uploaded_at: str) -> None:

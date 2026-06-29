@@ -13,6 +13,10 @@ OUTPUT_FILENAMES: dict[CoverageOutputKind, str] = {
     "range_geojson": "radar_range.geojson",
     "model_metadata_json": "model_metadata.json",
     "output_manifest_json": "output_manifest.json",
+    "min_visible_height_tif": "min_visible_height.tif",
+    "voxel_manifest_json": "voxel_manifest.json",
+    "voxel_points_bin": "voxel_points.bin",
+    "height_layers_manifest_json": "height_layers_manifest.json",
 }
 
 OUTPUT_MEDIA_TYPES: dict[CoverageOutputKind, str] = {
@@ -22,6 +26,10 @@ OUTPUT_MEDIA_TYPES: dict[CoverageOutputKind, str] = {
     "range_geojson": "application/geo+json",
     "model_metadata_json": "application/json",
     "output_manifest_json": "application/json",
+    "min_visible_height_tif": "image/tiff",
+    "voxel_manifest_json": "application/json",
+    "voxel_points_bin": "application/octet-stream",
+    "height_layers_manifest_json": "application/json",
 }
 
 OUTPUT_LABELS: dict[CoverageOutputKind, str] = {
@@ -31,6 +39,10 @@ OUTPUT_LABELS: dict[CoverageOutputKind, str] = {
     "range_geojson": "Theoretical Range GeoJSON",
     "model_metadata_json": "Model Metadata JSON",
     "output_manifest_json": "Output Manifest JSON",
+    "min_visible_height_tif": "Min Visible Height GeoTIFF",
+    "voxel_manifest_json": "Voxel Manifest JSON",
+    "voxel_points_bin": "Voxel Points Binary",
+    "height_layers_manifest_json": "Height Layers Manifest JSON",
 }
 
 

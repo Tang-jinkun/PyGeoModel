@@ -183,6 +183,10 @@ def test_commit_staged_outputs_replaces_public_outputs(tmp_path: Path) -> None:
     output_dir = tmp_path / "task_a"
     staging_dir.mkdir()
     for filename in [
+        "min_visible_height.tif",
+        "voxel_manifest.json",
+        "voxel_points.bin",
+        "height_layers_manifest.json",
         "viewshed.tif",
         "visible.geojson",
         "blocked.geojson",
@@ -191,6 +195,7 @@ def test_commit_staged_outputs_replaces_public_outputs(tmp_path: Path) -> None:
         "output_manifest.json",
     ]:
         (staging_dir / filename).write_text(filename, encoding="utf-8")
+    (staging_dir / "visible_h_0.geojson").write_text("height-layer", encoding="utf-8")
 
     _ensure_staged_outputs_exist(staging_dir)
     _commit_staged_outputs(staging_dir, output_dir)
@@ -205,3 +210,4 @@ def test_commit_staged_outputs_replaces_public_outputs(tmp_path: Path) -> None:
         "model_metadata.json",
         "output_manifest.json",
     ])
+    assert (output_dir / "visible_h_0.geojson").read_text(encoding="utf-8") == "height-layer"

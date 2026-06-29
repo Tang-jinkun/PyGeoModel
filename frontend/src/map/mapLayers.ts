@@ -2,6 +2,14 @@ import maplibregl from "maplibre-gl";
 
 export type ResultLayerKey = "range" | "blocked" | "visible";
 
+const DEM_BOUNDS_SOURCE_ID = "dem-bounds-source";
+const DEM_BOUNDS_FILL_LAYER_ID = "dem-bounds-fill";
+const DEM_BOUNDS_OUTLINE_LAYER_ID = "dem-bounds-outline";
+const DEM_RASTER_SOURCE_ID = "dem-raster-source";
+const DEM_RASTER_LAYER_ID = "dem-raster-layer";
+export const DEM_TERRAIN_SOURCE_ID = "dem-terrain-source";
+const DEM_TERRAIN_MAX_ZOOM = 16;
+
 const RESULT_LAYER_IDS: Record<ResultLayerKey, { fill: string; outline: string }> = {
   range: {
     fill: "range-layer",
@@ -16,6 +24,153 @@ const RESULT_LAYER_IDS: Record<ResultLayerKey, { fill: string; outline: string }
     outline: "visible-layer-outline"
   }
 };
+
+export function addOrUpdateDemBoundsLayer(map: maplibregl.Map, bounds: number[]) {
+  if (bounds.length !== 4 || !bounds.every(Number.isFinite)) {
+    return;
+  }
+
+  const [minLon, minLat, maxLon, maxLat] = bounds;
+  const data: GeoJSON.FeatureCollection = {
+    type: "FeatureCollection",
+    features: [
+      {
+        type: "Feature",
+        properties: {},
+        geometry: {
+          type: "Polygon",
+          coordinates: [
+            [
+              [minLon, minLat],
+              [maxLon, minLat],
+              [maxLon, maxLat],
+              [minLon, maxLat],
+              [minLon, minLat]
+            ]
+          ]
+        }
+      }
+    ]
+  };
+
+  const existing = map.getSource(DEM_BOUNDS_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
+  if (existing) {
+    existing.setData(data);
+  } else {
+    map.addSource(DEM_BOUNDS_SOURCE_ID, {
+      type: "geojson",
+      data
+    });
+  }
+
+  if (!map.getLayer(DEM_BOUNDS_FILL_LAYER_ID)) {
+    map.addLayer({
+      id: DEM_BOUNDS_FILL_LAYER_ID,
+      type: "fill",
+      source: DEM_BOUNDS_SOURCE_ID,
+      paint: {
+        "fill-color": "#f59e0b",
+        "fill-opacity": 0.12
+      }
+    });
+  }
+
+  if (!map.getLayer(DEM_BOUNDS_OUTLINE_LAYER_ID)) {
+    map.addLayer({
+      id: DEM_BOUNDS_OUTLINE_LAYER_ID,
+      type: "line",
+      source: DEM_BOUNDS_SOURCE_ID,
+      paint: {
+        "line-color": "#d97706",
+        "line-width": 2,
+        "line-opacity": 0.9
+      }
+    });
+  }
+}
+
+export function addOrUpdateDemRasterLayer(map: maplibregl.Map, tileUrl: string, bounds: number[]) {
+  if (map.getLayer(DEM_RASTER_LAYER_ID)) {
+    map.removeLayer(DEM_RASTER_LAYER_ID);
+  }
+  if (map.getSource(DEM_RASTER_SOURCE_ID)) {
+    map.removeSource(DEM_RASTER_SOURCE_ID);
+  }
+
+  const sourceBounds = bounds.length === 4 && bounds.every(Number.isFinite)
+    ? (bounds as [number, number, number, number])
+    : undefined;
+  map.addSource(DEM_RASTER_SOURCE_ID, {
+    type: "raster",
+    tiles: [tileUrl],
+    tileSize: 256,
+    bounds: sourceBounds,
+    minzoom: 0,
+    maxzoom: 16
+  });
+  const beforeLayer = map.getLayer(DEM_BOUNDS_FILL_LAYER_ID) ? DEM_BOUNDS_FILL_LAYER_ID : undefined;
+  map.addLayer(
+    {
+      id: DEM_RASTER_LAYER_ID,
+      type: "raster",
+      source: DEM_RASTER_SOURCE_ID,
+      paint: {
+        "raster-opacity": 0.72,
+        "raster-resampling": "linear",
+        "raster-fade-duration": 0
+      }
+    },
+    beforeLayer
+  );
+}
+
+export function removeDemRasterLayer(map: maplibregl.Map) {
+  if (map.getLayer(DEM_RASTER_LAYER_ID)) {
+    map.removeLayer(DEM_RASTER_LAYER_ID);
+  }
+  if (map.getSource(DEM_RASTER_SOURCE_ID)) {
+    map.removeSource(DEM_RASTER_SOURCE_ID);
+  }
+}
+
+export function addOrUpdateDemTerrain(map: maplibregl.Map, tileUrl: string, bounds: number[], exaggeration = 1.35) {
+  map.setTerrain(null);
+  if (map.getSource(DEM_TERRAIN_SOURCE_ID)) {
+    map.removeSource(DEM_TERRAIN_SOURCE_ID);
+  }
+
+  const sourceBounds = bounds.length === 4 && bounds.every(Number.isFinite)
+    ? (bounds as [number, number, number, number])
+    : undefined;
+  map.addSource(DEM_TERRAIN_SOURCE_ID, {
+    type: "raster-dem",
+    tiles: [tileUrl],
+    tileSize: 256,
+    bounds: sourceBounds,
+    minzoom: 0,
+    maxzoom: DEM_TERRAIN_MAX_ZOOM,
+    encoding: "terrarium"
+  });
+  map.setTerrain({ source: DEM_TERRAIN_SOURCE_ID, exaggeration });
+}
+
+export function removeDemTerrain(map: maplibregl.Map) {
+  map.setTerrain(null);
+  if (map.getSource(DEM_TERRAIN_SOURCE_ID)) {
+    map.removeSource(DEM_TERRAIN_SOURCE_ID);
+  }
+}
+
+export function removeDemBoundsLayer(map: maplibregl.Map) {
+  for (const layerId of [DEM_BOUNDS_FILL_LAYER_ID, DEM_BOUNDS_OUTLINE_LAYER_ID]) {
+    if (map.getLayer(layerId)) {
+      map.removeLayer(layerId);
+    }
+  }
+  if (map.getSource(DEM_BOUNDS_SOURCE_ID)) {
+    map.removeSource(DEM_BOUNDS_SOURCE_ID);
+  }
+}
 
 export function addOrUpdateGeoJsonLayer(
   map: maplibregl.Map,
@@ -56,7 +211,7 @@ export function addOrUpdateGeoJsonLayer(
   }
 }
 
-export function addRadarMarker(map: maplibregl.Map, lon: number, lat: number) {
+export function addRadarMarker(map: maplibregl.Map, lon: number, lat: number, heightM = 30) {
   const sourceId = "radar-point-source";
   const data: GeoJSON.FeatureCollection = {
     type: "FeatureCollection",
@@ -108,6 +263,58 @@ export function addRadarMarker(map: maplibregl.Map, lon: number, lat: number) {
       }
     });
   }
+
+  addOrUpdateRadarTower(map, lon, lat, heightM);
+}
+
+function addOrUpdateRadarTower(map: maplibregl.Map, lon: number, lat: number, heightM: number) {
+  const sourceId = "radar-tower-source";
+  const radiusDeg = 0.002;
+  const coordinates: [number, number][] = [];
+  for (let index = 0; index <= 24; index++) {
+    const angle = (Math.PI * 2 * index) / 24;
+    coordinates.push([lon + Math.cos(angle) * radiusDeg, lat + Math.sin(angle) * radiusDeg]);
+  }
+  const data: GeoJSON.FeatureCollection = {
+    type: "FeatureCollection",
+    features: [
+      {
+        type: "Feature",
+        properties: {
+          height: Math.max(30, heightM)
+        },
+        geometry: {
+          type: "Polygon",
+          coordinates: [coordinates]
+        }
+      }
+    ]
+  };
+
+  const existing = map.getSource(sourceId) as maplibregl.GeoJSONSource | undefined;
+  if (existing) {
+    existing.setData(data);
+  } else {
+    map.addSource(sourceId, {
+      type: "geojson",
+      data
+    });
+  }
+
+  if (!map.getLayer("radar-tower")) {
+    map.addLayer({
+      id: "radar-tower",
+      type: "fill-extrusion",
+      source: sourceId,
+      paint: {
+        "fill-extrusion-color": "#f59e0b",
+        "fill-extrusion-height": ["get", "height"],
+        "fill-extrusion-base": 0,
+        "fill-extrusion-opacity": 0.88,
+        "fill-extrusion-vertical-gradient": true
+      }
+    });
+  }
 }
 
 export function removeResultLayers(map: maplibregl.Map) {
@@ -155,7 +362,7 @@ export function setResultLayerOpacity(map: maplibregl.Map, key: ResultLayerKey, 
 }
 
 export function moveRadarMarkerToTop(map: maplibregl.Map) {
-  for (const layerId of ["radar-point-halo", "radar-point"]) {
+  for (const layerId of ["radar-tower", "radar-point-halo", "radar-point"]) {
     if (map.getLayer(layerId)) {
       map.moveLayer(layerId);
     }

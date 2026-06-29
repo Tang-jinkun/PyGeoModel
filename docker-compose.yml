@@ -3,10 +3,15 @@ services:
     build:
       context: .
       dockerfile: backend/Dockerfile
+      args:
+        DEBIAN_MIRROR: http://mirrors.tencentyun.com/debian
+        DEBIAN_SECURITY_MIRROR: http://mirrors.tencentyun.com/debian-security
+        PIP_INDEX_URL: http://mirrors.tencentyun.com/pypi/simple
+        PIP_TRUSTED_HOST: mirrors.tencentyun.com
     environment:
       PYGEOMODEL_DATA_DIR: /workspace/data
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     volumes:
       - ./data:/workspace/data
 
@@ -14,9 +19,13 @@ services:
     build:
       context: .
       dockerfile: frontend/Dockerfile
+      args:
+        NPM_REGISTRY: https://mirrors.cloud.tencent.com/npm/
     environment:
-      VITE_API_BASE: ""
+      VITE_API_BASE: /PyGeoModel
+      VITE_BASE_PATH: /PyGeoModel/
+      VITE_PROXY_TARGET: http://backend:8000
     ports:
-      - "5173:5173"
+      - "127.0.0.1:5173:5173"
     depends_on:
       - backend

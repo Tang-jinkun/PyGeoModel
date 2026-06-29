@@ -1,10 +1,12 @@
 import json
+import math
 import os
 import shutil
 import subprocess
 from pathlib import Path
 from uuid import uuid4
 
+import numpy
 from pyproj import Transformer
 from shapely.geometry import box, mapping
 
@@ -33,15 +35,27 @@ def run_coverage_task(task_id: str, payload: CoverageRequest) -> None:
 
         dem_path = find_dem_file(payload.dem_id)
         projected_dem = staging_dir / "dem_projected.tif"
-        viewshed = staging_dir / "viewshed.tif"
 
         try:
             prepared = prepare_coverage_dem(dem_path, projected_dem, payload)
 
-            mark_running(task_id, "Running gdal_viewshed.", 45)
-            gdal_command = _run_gdal_viewshed(projected_dem, viewshed, prepared.radar_x, prepared.radar_y, payload)
+            mark_running(task_id, "Running gdal_viewshed (NORMAL).", 35)
+            viewshed = staging_dir / "viewshed.tif"
+            gdal_command = _run_gdal_viewshed(
+                projected_dem, viewshed, prepared.radar_x, prepared.radar_y, payload, mode="NORMAL"
+            )
 
-            mark_running(task_id, "Vectorizing viewshed outputs.", 80)
+            mark_running(task_id, "Running gdal_viewshed (GROUND).", 50)
+            min_visible_height = staging_dir / "min_visible_height.tif"
+            _run_gdal_viewshed(
+                projected_dem, min_visible_height, prepared.radar_x, prepared.radar_y, payload, mode="GROUND"
+            )
+
+            mark_running(task_id, "Generating height layers and voxels.", 70)
+            _generate_height_layers(staging_dir, min_visible_height, prepared, payload)
+            _generate_voxels(staging_dir, min_visible_height, prepared, payload)
+
+            mark_running(task_id, "Vectorizing viewshed outputs.", 85)
             outputs, output_files, metrics, model, warnings = _write_vector_outputs(
                 task_id,
                 staging_dir,
@@ -49,6 +63,7 @@ def run_coverage_task(task_id: str, payload: CoverageRequest) -> None:
                 prepared,
                 payload,
                 viewshed,
+                min_visible_height,
                 gdal_command,
             )
         finally:
@@ -66,7 +81,9 @@ def run_coverage_task(task_id: str, payload: CoverageRequest) -> None:
         mark_failed(task_id, str(exc))
 
 
-def _run_gdal_viewshed(dem: Path, viewshed: Path, radar_x: float, radar_y: float, payload: CoverageRequest) -> list[str]:
+def _run_gdal_viewshed(
+    dem: Path, viewshed: Path, radar_x: float, radar_y: float, payload: CoverageRequest, *, mode: str
+) -> list[str]:
     if shutil.which("gdal_viewshed") is None:
         raise AppError("GDAL_VIEWSHED_NOT_FOUND", "gdal_viewshed command is not available.", status_code=500)
 
@@ -83,7 +100,7 @@ def _run_gdal_viewshed(dem: Path, viewshed: Path, radar_x: float, radar_y: float
         "-md",
         str(payload.coverage.max_range_m),
         "-om",
-        "NORMAL",
+        mode,
     ]
 
     if payload.advanced.use_curvature:
@@ -96,6 +113,143 @@ def _run_gdal_viewshed(dem: Path, viewshed: Path, radar_x: float, radar_y: float
     return command
 
 
+def _generate_height_layers(
+    staging_dir: Path,
+    min_visible_height: Path,
+    prepared: PreparedCoverageDem,
+    payload: CoverageRequest,
+) -> None:
+    import rasterio
+    from rasterio.features import shapes
+
+    height_layers = payload.advanced.height_layers_m or [0, 100, 300, 500, 1000, 2000, 3000]
+    with rasterio.open(min_visible_height) as src:
+        data = src.read(1)
+        transform = src.transform
+
+    range_geom = make_range_geometry(
+        prepared.radar_x,
+        prepared.radar_y,
+        payload.coverage.max_range_m,
+        payload.coverage.scan_mode,
+        payload.coverage.azimuth_deg,
+        payload.coverage.beam_width_deg,
+    )
+    transformer = Transformer.from_crs(f"EPSG:{prepared.target_epsg}", "EPSG:4326", always_xy=True)
+    manifest = {"height_layers": []}
+    for height in height_layers:
+        visible_mask = data <= height
+        geometries = []
+        for geom, value in shapes(visible_mask.astype(numpy.uint8), mask=visible_mask, transform=transform):
+            if value > 0:
+                geometries.append(geom)
+
+        geojson_path = staging_dir / f"visible_h_{int(height)}.geojson"
+        features = []
+        if geometries:
+            from shapely.geometry import shape as shp_shape
+            from shapely.ops import unary_union
+
+            union = unary_union([shp_shape(g) for g in geometries])
+            clipped = union.intersection(range_geom)
+            if not clipped.is_empty:
+                wgs84 = project_geometry(clipped, transformer)
+                features.append({"type": "Feature", "properties": {"height_m": height}, "geometry": mapping(wgs84)})
+
+        _write_feature_collection_geojson(geojson_path, features)
+        manifest["height_layers"].append({"height_m": height, "filename": geojson_path.name})
+
+    manifest_path = staging_dir / "height_layers_manifest.json"
+    _write_json_atomic(manifest_path, manifest)
+
+
+def _generate_voxels(
+    staging_dir: Path,
+    min_visible_height: Path,
+    prepared: PreparedCoverageDem,
+    payload: CoverageRequest,
+) -> None:
+    import rasterio
+
+    grid_size = payload.advanced.voxel_grid_size
+    vertical_levels = payload.advanced.voxel_vertical_levels
+    max_height = payload.advanced.voxel_max_height_m
+    max_elevation = payload.advanced.max_elevation_deg
+
+    with rasterio.open(min_visible_height) as src:
+        data = src.read(1)
+        transform = src.transform
+        height, width = data.shape
+
+    # Sample grid
+    x_indices = numpy.linspace(0, width - 1, grid_size, dtype=numpy.int32)
+    y_indices = numpy.linspace(0, height - 1, grid_size, dtype=numpy.int32)
+    transformer = Transformer.from_crs(f"EPSG:{prepared.target_epsg}", "EPSG:4326", always_xy=True)
+
+    points = []
+    for yi in y_indices:
+        for xi in x_indices:
+            yi_int = int(round(yi))
+            xi_int = int(round(xi))
+            if not (0 <= yi_int < height and 0 <= xi_int < width):
+                continue
+            min_h = data[yi_int, xi_int]
+            if not numpy.isfinite(min_h) or min_h < 0:
+                continue
+            # Convert pixel to projected coordinates
+            x_proj = transform.c + xi_int * transform.a
+            y_proj = transform.f + yi_int * transform.e
+            # Check distance from radar
+            dx = x_proj - prepared.radar_x
+            dy = y_proj - prepared.radar_y
+            dist = math.hypot(dx, dy)
+            if dist > payload.coverage.max_range_m:
+                continue
+            # Check azimuth for sector scan
+            if payload.coverage.scan_mode == "sector":
+                az = (math.degrees(math.atan2(dx, dy)) + 360) % 360
+                half = payload.coverage.beam_width_deg / 2
+                center = payload.coverage.azimuth_deg % 360
+                delta = abs((az - center + 180) % 360 - 180)
+                if delta > half:
+                    continue
+            # Check elevation angle
+            if max_elevation > 0 and dist > 0:
+                elev = math.degrees(math.atan(max_height / dist))
+                if elev > max_elevation:
+                    max_h_at_dist = dist * math.tan(math.radians(max_elevation))
+                else:
+                    max_h_at_dist = max_height
+            else:
+                max_h_at_dist = max_height
+
+            for level in range(vertical_levels):
+                z = (level + 0.5) * (max_h_at_dist / vertical_levels)
+                if z >= min_h:
+                    clearance = z - min_h
+                    lon, lat = transformer.transform(x_proj, y_proj)
+                    points.append((lon, lat, z, clearance))
+
+    # Write binary: each point is 4 x float32
+    voxel_path = staging_dir / "voxel_points.bin"
+    array = numpy.array(points, dtype=numpy.float32).flatten()
+    with open(voxel_path, "wb") as f:
+        f.write(array.tobytes())
+
+    # Write manifest
+    manifest = {
+        "grid_size": grid_size,
+        "vertical_levels": vertical_levels,
+        "max_height_m": max_height,
+        "max_elevation_deg": max_elevation,
+        "point_count": len(points),
+        "point_format": "float32",
+        "fields": ["lon", "lat", "z_agl_m", "clearance_m"],
+        "bytes_per_point": 16,
+    }
+    _write_json_atomic(staging_dir / "voxel_manifest.json", manifest)
+
+
 def _write_vector_outputs(
     task_id: str,
     staging_dir: Path,
@@ -103,6 +257,7 @@ def _write_vector_outputs(
     prepared: PreparedCoverageDem,
     payload: CoverageRequest,
     viewshed: Path,
+    min_visible_height: Path,
     gdal_command: list[str],
 ) -> tuple[CoverageOutputs, list[CoverageOutputFile], CoverageMetrics, CoverageModelMetadata, list[str]]:
     range_geom = make_range_geometry(
@@ -133,23 +288,20 @@ def _write_vector_outputs(
     _write_feature_collection(range_geojson, range_wgs84, {"kind": "theoretical_range"})
     _write_feature_collection(
         visible_geojson,
-        project_geometry(visible_clipped, transformer),
+        project_geometry(visible_clipped, transformer) if not visible_clipped.is_empty else visible_clipped,
         {"kind": "visible"},
     )
     _write_feature_collection(
         blocked_geojson,
-        project_geometry(blocked_geom, transformer),
+        project_geometry(blocked_geom, transformer) if not blocked_geom.is_empty else blocked_geom,
         {"kind": "blocked"},
     )
 
-    theoretical_area = float(range_geom.area)
-    visible_area = float(visible_clipped.area)
-    blocked_area = float(blocked_geom.area)
     metrics = CoverageMetrics(
-        theoretical_area_m2=theoretical_area,
-        visible_area_m2=visible_area,
-        blocked_area_m2=blocked_area,
-        blocked_ratio=blocked_area / theoretical_area if theoretical_area else 0,
+        theoretical_area_m2=range_geom.area,
+        visible_area_m2=visible_clipped.area,
+        blocked_area_m2=blocked_geom.area,
+        blocked_ratio=blocked_geom.area / range_geom.area if range_geom.area > 0 else 0,
     )
     outputs = CoverageOutputs(
         viewshed_tif=f"/outputs/{task_id}/{viewshed.name}",
@@ -158,8 +310,12 @@ def _write_vector_outputs(
         range_geojson=f"/outputs/{task_id}/{range_geojson.name}",
         model_metadata_json=f"/outputs/{task_id}/{model_metadata_json.name}",
         output_manifest_json=f"/outputs/{task_id}/{output_manifest_json.name}",
+        min_visible_height_tif=f"/outputs/{task_id}/{min_visible_height.name}",
+        voxel_manifest_json=f"/outputs/{task_id}/voxel_manifest.json",
+        voxel_points_bin=f"/outputs/{task_id}/voxel_points.bin",
+        height_layers_manifest_json=f"/outputs/{task_id}/height_layers_manifest.json",
     )
-    warnings = _build_model_warnings(prepared, range_geom)
+    height_layers = payload.advanced.height_layers_m or [0, 100, 300, 500, 1000, 2000, 3000]
     model = CoverageModelMetadata(
         target_epsg=prepared.target_epsg,
         radar_projected_xy=[prepared.radar_x, prepared.radar_y],
@@ -176,7 +332,13 @@ def _write_vector_outputs(
         beam_width_deg=payload.coverage.beam_width_deg,
         simplify_tolerance_m=tolerance,
         gdal_viewshed_command=gdal_command,
+        voxel_grid_size=payload.advanced.voxel_grid_size,
+        voxel_vertical_levels=payload.advanced.voxel_vertical_levels,
+        voxel_max_height_m=payload.advanced.voxel_max_height_m,
+        max_elevation_deg=payload.advanced.max_elevation_deg,
+        height_layers_m=height_layers,
     )
+    warnings = _build_model_warnings(prepared, range_geom)
     _write_json_atomic(
         model_metadata_json,
         {
@@ -185,10 +347,7 @@ def _write_vector_outputs(
             "warnings": warnings,
         },
     )
-    output_paths = {
-        kind: staging_dir / filename
-        for kind, filename in OUTPUT_FILENAMES.items()
-    }
+    output_paths = {kind: staging_dir / filename for kind, filename in OUTPUT_FILENAMES.items()}
     _write_output_manifest(output_manifest_json, [], metrics, model, warnings)
     manifest_files = describe_output_files(task_id, output_paths)
     _write_output_manifest(output_manifest_json, manifest_files, metrics, model, warnings)
@@ -230,11 +389,14 @@ def _build_model_warnings(prepared: PreparedCoverageDem, range_geom) -> list[str
     return warnings
 
 
-def _write_feature_collection(path: Path, geometry, properties: dict[str, str]) -> None:
+def _write_feature_collection(path: Path, geometry, properties: dict | None = None) -> None:
     features = []
     if geometry is not None and not geometry.is_empty:
-        features.append({"type": "Feature", "properties": properties, "geometry": mapping(geometry)})
+        features.append({"type": "Feature", "properties": properties or {}, "geometry": mapping(geometry)})
+    _write_json_atomic(path, {"type": "FeatureCollection", "features": features})
 
+
+def _write_feature_collection_geojson(path: Path, features: list) -> None:
     _write_json_atomic(path, {"type": "FeatureCollection", "features": features})
 
 
@@ -268,6 +430,8 @@ def _commit_staged_outputs(staging_dir: Path, output_dir: Path) -> None:
         source = staging_dir / filename
         destination = output_dir / filename
         source.replace(destination)
+    for source in staging_dir.glob("visible_h_*.geojson"):
+        source.replace(output_dir / source.name)
     _fsync_directory(output_dir)
 
 

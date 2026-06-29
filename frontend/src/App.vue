@@ -40,6 +40,8 @@ import {
   deleteDem,
   deleteCoverageTask,
   defaultCoverageRequest,
+  demTerrainUrlTemplate,
+  demTileUrlTemplate,
   getCoverageTask,
   listCoverageTasks,
   listDems,
@@ -56,14 +58,20 @@ import LayerControlPanel from "./components/LayerControlPanel.vue";
 import ResultPanel from "./components/ResultPanel.vue";
 import {
   addOrUpdateGeoJsonLayer,
+  addOrUpdateDemRasterLayer,
+  addOrUpdateDemTerrain,
   addRadarMarker,
   getGeoJsonBounds,
   moveRadarMarkerToTop,
+  removeDemRasterLayer,
+  removeDemTerrain,
   removeResultLayers,
   setResultLayerOpacity,
   setResultLayerVisibility,
   type ResultLayerKey
 } from "./map/mapLayers";
+import { addOrUpdateRadarVolume, removeRadarVolume } from "./map/radarVolumeLayer";
+import { addOrUpdateVoxelLayer, loadVoxelData, removeVoxelLayer } from "./map/voxelLayer";
 
 interface ResultLayerControl {
   key: ResultLayerKey;
@@ -119,7 +127,7 @@ const layerControls = reactive<ResultLayerControl[]>([
     label: "理论范围",
     description: "最大探测半径",
     color: "#2563eb",
-    visible: true,
+    visible: false,
     opacity: 0.08,
     defaultOpacity: 0.08,
     available: false
@@ -147,14 +155,9 @@ onMounted(() => {
 
   map.value.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), "top-right");
   map.value.on("load", () => {
-    map.value?.addSource("terrain-dem", {
-      type: "raster-dem",
-      tiles: ["https://demotiles.maplibre.org/terrain-tiles/{z}/{x}/{y}.png"],
-      tileSize: 256,
-      encoding: "terrarium",
-      maxzoom: 12
-    });
-    map.value?.setTerrain({ source: "terrain-dem", exaggeration: 1.4 });
+    if (dem.value) {
+      applyDemMapLayers(dem.value);
+    }
   });
 });
 
@@ -168,6 +171,7 @@ async function handleUpload(file: File) {
       const [minLon, minLat, maxLon, maxLat] = dem.value.bounds;
       coverageRequest.radar.lon = Number(((minLon + maxLon) / 2).toFixed(6));
       coverageRequest.radar.lat = Number(((minLat + maxLat) / 2).toFixed(6));
+      applyDemMapLayers(dem.value);
       map.value?.flyTo({ center: [coverageRequest.radar.lon, coverageRequest.radar.lat], zoom: 9 });
     }
     ElMessage.success("DEM 上传成功");
@@ -216,8 +220,17 @@ function handleSelectDem(demId: string) {
     const [minLon, minLat, maxLon, maxLat] = selected.bounds;
     coverageRequest.radar.lon = Number(((minLon + maxLon) / 2).toFixed(6));
     coverageRequest.radar.lat = Number(((minLat + maxLat) / 2).toFixed(6));
+    applyDemMapLayers(selected);
     map.value?.flyTo({ center: [coverageRequest.radar.lon, coverageRequest.radar.lat], zoom: 9 });
   }
+}
+
+function applyDemMapLayers(selected: DemMetadata) {
+  if (!map.value || selected.bounds.length !== 4) {
+    return;
+  }
+  addOrUpdateDemRasterLayer(map.value, demTileUrlTemplate(selected.dem_id), selected.bounds);
+  addOrUpdateDemTerrain(map.value, demTerrainUrlTemplate(selected.dem_id), selected.bounds);
 }
 
 async function handleRun() {
@@ -271,6 +284,8 @@ async function pollTask(taskId: string, token: number) {
     if (latest.status === "failed") {
       if (map.value) {
         removeResultLayers(map.value);
+        removeDemRasterLayer(map.value);
+        removeDemTerrain(map.value);
       }
       clearLayerAvailability();
       throw new Error(latest.message || "计算失败");
@@ -426,6 +441,11 @@ function applyCoverageRequest(request: CoverageRequest) {
   coverageRequest.advanced.use_curvature = request.advanced.use_curvature;
   coverageRequest.advanced.curvature_coeff = request.advanced.curvature_coeff;
   coverageRequest.advanced.output_simplify_tolerance_m = request.advanced.output_simplify_tolerance_m;
+  coverageRequest.advanced.voxel_grid_size = request.advanced.voxel_grid_size;
+  coverageRequest.advanced.voxel_vertical_levels = request.advanced.voxel_vertical_levels;
+  coverageRequest.advanced.voxel_max_height_m = request.advanced.voxel_max_height_m;
+  coverageRequest.advanced.max_elevation_deg = request.advanced.max_elevation_deg;
+  coverageRequest.advanced.height_layers_m = [...(request.advanced.height_layers_m ?? [])];
   coverageRequest.reserved_radar_params = { ...(request.reserved_radar_params ?? {}) };
 }
 
@@ -434,6 +454,8 @@ function loadOutputs(result: CoverageTaskStatus) {
     return;
   }
   removeResultLayers(map.value);
+  removeRadarVolume(map.value);
+  removeVoxelLayer(map.value);
 
   const visible = resolveOutputUrl(result, "visible_geojson", result.outputs?.visible_geojson);
   const blocked = resolveOutputUrl(result, "blocked_geojson", result.outputs?.blocked_geojson);
@@ -479,6 +501,30 @@ function loadOutputs(result: CoverageTaskStatus) {
   moveRadarMarkerToTop(map.value);
   updateLayerAvailability({ range: !!range, blocked: !!blocked, visible: !!visible });
   applyAllLayerControls();
+
+  // Load voxel point cloud if available
+  if (result.request) {
+    void loadVoxelLayer(result);
+  }
+}
+
+async function loadVoxelLayer(result: CoverageTaskStatus) {
+  if (!map.value || !result.request) {
+    return;
+  }
+  const voxelUrl = resolveOutputUrl(result, "voxel_points_bin", result.outputs?.voxel_points_bin);
+  const manifestUrl = resolveOutputUrl(result, "voxel_manifest_json", result.outputs?.voxel_manifest_json);
+  if (!voxelUrl || !manifestUrl) {
+    return;
+  }
+  try {
+    const points = await loadVoxelData(voxelUrl, manifestUrl);
+    if (map.value && task.value?.task_id === result.task_id) {
+      addOrUpdateVoxelLayer(map.value, points);
+    }
+  } catch (error) {
+    console.error("Failed to load voxel data:", error);
+  }
 }
 
 function resolveOutputUrl(result: CoverageTaskStatus, kind: string, fallback?: string | null) {

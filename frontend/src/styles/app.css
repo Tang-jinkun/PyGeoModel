@@ -60,6 +60,38 @@ body {
   font-size: 13px;
 }
 
+.upload-progress {
+  display: grid;
+  gap: 6px;
+  margin: -4px 0 16px;
+  padding: 10px;
+  color: #4b5f78;
+  background: #f7fbff;
+  border: 1px solid #cfe0f5;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.upload-progress-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.upload-progress-header strong,
+.upload-progress-header span,
+.upload-progress > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.upload-progress-header strong {
+  color: #1f3d66;
+}
+
 .metadata {
   display: grid;
   gap: 8px;
