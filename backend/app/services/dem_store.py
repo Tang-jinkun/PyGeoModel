@@ -317,6 +317,25 @@ def create_dem_cog(dem_id: str, source_path: Path) -> Path:
 def create_dem_cog_for_dir(dem_dir: Path, source_path: Path) -> Path:
     cog_path = dem_dir / DEM_COG_FILENAME
     temp_path = dem_dir / f".{DEM_COG_FILENAME}.{uuid4().hex}.tmp.tif"
+    try:
+        if shutil.which("gdal_translate"):
+            create_dem_cog_with_gdal(source_path, temp_path)
+        else:
+            create_dem_cog_with_rasterio(source_path, temp_path)
+        temp_path.replace(cog_path)
+    except subprocess.CalledProcessError as exc:
+        if temp_path.exists():
+            temp_path.unlink()
+        message = (exc.stderr or exc.stdout or "").strip()
+        raise AppError("COG_GENERATION_FAILED", f"Unable to create COG DEM: {message}", status_code=500) from exc
+    except Exception as exc:
+        if temp_path.exists():
+            temp_path.unlink()
+        raise AppError("COG_GENERATION_FAILED", f"Unable to create COG DEM: {exc}", status_code=500) from exc
+    return cog_path
+
+
+def create_dem_cog_with_gdal(source_path: Path, destination_path: Path) -> None:
     command = [
         "gdal_translate",
         "-of",
@@ -332,17 +351,25 @@ def create_dem_cog_for_dir(dem_dir: Path, source_path: Path) -> Path:
         "-co",
         "OVERVIEWS=AUTO",
         str(source_path),
-        str(temp_path),
+        str(destination_path),
     ]
-    try:
-        subprocess.run(command, check=True, capture_output=True, text=True)
-        temp_path.replace(cog_path)
-    except subprocess.CalledProcessError as exc:
-        if temp_path.exists():
-            temp_path.unlink()
-        message = (exc.stderr or exc.stdout or "").strip()
-        raise AppError("COG_GENERATION_FAILED", f"Unable to create COG DEM: {message}", status_code=500) from exc
-    return cog_path
+    subprocess.run(command, check=True, capture_output=True, text=True)
+
+
+def create_dem_cog_with_rasterio(source_path: Path, destination_path: Path) -> None:
+    import rasterio.shutil as rio_shutil
+
+    rio_shutil.copy(
+        source_path,
+        destination_path,
+        driver="COG",
+        strict=False,
+        COMPRESS="DEFLATE",
+        PREDICTOR="2",
+        BLOCKSIZE="256",
+        RESAMPLING="BILINEAR",
+        OVERVIEWS="AUTO",
+    )
 
 
 def metadata_with_cog(metadata: DemMetadata, cog_path: Path) -> DemMetadata:

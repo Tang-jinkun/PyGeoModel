@@ -27,7 +27,7 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload
 ```
 
-The backend expects `gdal_viewshed` to be available on `PATH`. The Docker setup installs GDAL inside the backend container.
+The backend expects `gdal_viewshed` to be available on `PATH`. `gdal_translate` is used when present for COG generation; local Python environments without that command fall back to Rasterio's COG writer. The Docker setup installs GDAL inside the backend container.
 
 Health check:
 
@@ -117,7 +117,7 @@ npm run build
 - Use projected meter-based coordinates for calculation; the backend selects UTM from radar longitude/latitude.
 - Recommended max range for the first version is 50-100 km.
 - Large DEMs and huge GeoJSON outputs still need optimization.
-- The MapLibre terrain base layer currently uses public demo terrain tiles; uploaded DEMs are used for calculation, not yet for 3D terrain tile rendering.
+- Uploaded DEMs are served as raster and Terrarium terrain tiles for MapLibre display, while the same source DEM is used for calculation.
 
 ## Remote Repository
 
