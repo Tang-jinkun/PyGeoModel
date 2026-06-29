@@ -151,6 +151,15 @@
         </el-form-item>
       </div>
 
+      <el-form-item label="高度切片 m">
+        <el-input
+          v-model="heightLayerText"
+          placeholder="默认 0,100,300,500,1000,2000,3000"
+          clearable
+        />
+        <p class="field-hint">用于生成不同目标高度的可见图层，逗号或空格分隔。</p>
+      </el-form-item>
+
       <el-button type="primary" class="run-button" :loading="busy" :disabled="!dem" @click="$emit('run')">
         开始计算
       </el-button>
@@ -268,6 +277,14 @@ const canDeleteDem = computed(() => Boolean(props.dem && !props.busy && !props.d
 const verticalBeamWidth = computed(() =>
   Number(Math.max(0, props.model.advanced.max_elevation_deg - props.model.advanced.min_elevation_deg).toFixed(1))
 );
+const heightLayerText = computed({
+  get() {
+    return props.model.advanced.height_layers_m.join(", ");
+  },
+  set(value: string) {
+    props.model.advanced.height_layers_m = parseHeightLayers(value);
+  }
+});
 const deleteDemHint = computed(() => {
   if (!props.dem) {
     return "";
@@ -349,5 +366,13 @@ function formatRatio(value?: number | null) {
     return "-";
   }
   return `${(value * 100).toFixed(1)}%`;
+}
+
+function parseHeightLayers(value: string) {
+  const values = value
+    .split(/[\s,，;；]+/)
+    .map((item) => Number(item.trim()))
+    .filter((item) => Number.isFinite(item) && item >= 0 && item <= 10000);
+  return Array.from(new Set(values)).sort((a, b) => a - b).slice(0, 20);
 }
 </script>

@@ -158,6 +158,13 @@ body {
   width: 100%;
 }
 
+.field-hint {
+  margin: 5px 0 0;
+  color: #7b8798;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
 .run-button {
   width: 100%;
   margin-top: 6px;

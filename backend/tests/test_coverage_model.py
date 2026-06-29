@@ -37,6 +37,22 @@ def test_default_simplify_tolerance_uses_resolution_when_missing() -> None:
     assert default_simplify_tolerance((30, 25), 5) == 5
 
 
+def test_advanced_height_layers_are_sorted_deduplicated_and_limited() -> None:
+    request = make_request(lon=105.0, lat=35.0)
+    request.advanced.height_layers_m = [500, 0, 100, 100, 250]
+    normalized = CoverageRequest.model_validate(request.model_dump())
+
+    assert normalized.advanced.height_layers_m == [0, 100, 250, 500]
+
+
+def test_advanced_height_layers_rejects_too_many_values() -> None:
+    payload = make_request(lon=105.0, lat=35.0).model_dump()
+    payload["advanced"]["height_layers_m"] = list(range(21))
+
+    with pytest.raises(ValueError):
+        CoverageRequest.model_validate(payload)
+
+
 def test_prepare_coverage_dem_reprojects_crop(tmp_path: Path) -> None:
     source = tmp_path / "source.tif"
     destination = tmp_path / "projected.tif"

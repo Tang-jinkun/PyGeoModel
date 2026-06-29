@@ -1,3 +1,4 @@
+import math
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
@@ -52,6 +53,14 @@ class AdvancedInput(BaseModel):
         if self.max_elevation_deg < self.min_elevation_deg:
             raise ValueError("max_elevation_deg must be greater than or equal to min_elevation_deg")
         self.vertical_beam_width_deg = self.max_elevation_deg - self.min_elevation_deg
+        normalized_layers = sorted({
+            float(height)
+            for height in self.height_layers_m
+            if math.isfinite(float(height)) and 0 <= float(height) <= self.voxel_max_height_m
+        })
+        if len(normalized_layers) > 20:
+            raise ValueError("height_layers_m cannot contain more than 20 values")
+        self.height_layers_m = normalized_layers
         return self
 
 
