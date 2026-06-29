@@ -90,6 +90,24 @@ body {
   white-space: nowrap;
 }
 
+.dem-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: -4px 0 16px;
+  padding: 10px;
+  color: #627188;
+  background: #fff;
+  border: 1px solid #dfe7f1;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.dem-actions span {
+  min-width: 0;
+}
+
 .form-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);

@@ -10,12 +10,14 @@
       :loading-task-id="loadingTaskId"
       :restoring-task-id="restoringTaskId"
       :deleting-task-id="deletingTaskId"
+      :deleting-dem-id="deletingDemId"
       :busy="busy"
       @upload="handleUpload"
       @select-dem="handleSelectDem"
       @select-task="handleSelectTask"
       @restore-task="handleRestoreTask"
       @delete-task="handleDeleteTask"
+      @delete-dem="handleDeleteDem"
       @refresh-tasks="refreshTaskList"
       @run="handleRun"
     />
@@ -35,6 +37,7 @@ import { onMounted, reactive, ref, shallowRef } from "vue";
 
 import {
   createCoverageTask,
+  deleteDem,
   deleteCoverageTask,
   defaultCoverageRequest,
   getCoverageTask,
@@ -84,6 +87,7 @@ const taskListLoading = ref(false);
 const loadingTaskId = ref<string | null>(null);
 const restoringTaskId = ref<string | null>(null);
 const deletingTaskId = ref<string | null>(null);
+const deletingDemId = ref<string | null>(null);
 let pollToken = 0;
 let viewToken = 0;
 let taskListRequestToken = 0;
@@ -356,10 +360,41 @@ async function handleDeleteTask(taskId: string) {
   }
 }
 
+async function handleDeleteDem(demId: string) {
+  deletingDemId.value = demId;
+  try {
+    await deleteDem(demId);
+    if (coverageRequest.dem_id === demId) {
+      pollToken++;
+      viewToken++;
+      coverageRequest.dem_id = "";
+      dem.value = null;
+      selectedTaskId.value = null;
+      task.value = null;
+      if (map.value) {
+        removeResultLayers(map.value);
+      }
+      clearLayerAvailability();
+    }
+    await refreshDemList();
+    await refreshTaskList();
+    ElMessage.success("DEM 已删除");
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : "删除 DEM 失败");
+  } finally {
+    deletingDemId.value = null;
+  }
+}
+
 function restoreRequest(request: CoverageRequest) {
   const normalized = normalizeCoverageRequest(request, defaultCoverageRequest());
   if (!normalized || !normalized.dem_id) {
     ElMessage.warning("历史参数不完整，无法恢复");
+    return;
+  }
+  const restoredDem = demList.value.find((item) => item.dem_id === normalized.dem_id);
+  if (!restoredDem) {
+    ElMessage.warning("该任务引用的 DEM 已不存在，无法恢复参数");
     return;
   }
   pollToken++;
@@ -369,7 +404,7 @@ function restoreRequest(request: CoverageRequest) {
   task.value = null;
   clearLayerAvailability();
 
-  dem.value = demList.value.find((item) => item.dem_id === normalized.dem_id) ?? dem.value;
+  dem.value = restoredDem;
   if (map.value) {
     removeResultLayers(map.value);
     addRadarMarker(map.value, normalized.radar.lon, normalized.radar.lat);

@@ -35,6 +35,13 @@ export interface DemMetadata {
   nodata: number | null;
   file_size_bytes?: number | null;
   uploaded_at?: string | null;
+  task_count: number;
+  active_task_count: number;
+}
+
+export interface DemDeleteResult {
+  dem_id: string;
+  deleted: boolean;
 }
 
 export interface CoverageOutputFile {
@@ -140,6 +147,13 @@ export async function uploadDem(file: File): Promise<DemMetadata> {
 
 export async function listDems(): Promise<DemMetadata[]> {
   const response = await fetch(`${API_BASE}/api/dem`);
+  return handleResponse(response);
+}
+
+export async function deleteDem(demId: string): Promise<DemDeleteResult> {
+  const response = await fetch(`${API_BASE}/api/dem/${demId}`, {
+    method: "DELETE"
+  });
   return handleResponse(response);
 }
 

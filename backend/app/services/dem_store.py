@@ -1,4 +1,5 @@
 import json
+import re
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
@@ -8,15 +9,38 @@ from fastapi import UploadFile
 
 from app.core.config import settings
 from app.core.errors import AppError
-from app.schemas.dem import DemMetadata
+from app.schemas.dem import DemDeleteResult, DemMetadata
+
+DEM_ID_PATTERN = re.compile(r"^dem_[A-Za-z0-9_-]+$")
 
 
 def _metadata_path(dem_id: str) -> Path:
-    return settings.dem_dir / dem_id / "metadata.json"
+    return _dem_dir(dem_id) / "metadata.json"
 
 
 def _dem_path(dem_id: str, filename: str) -> Path:
-    return settings.dem_dir / dem_id / filename
+    dem_dir = _dem_dir(dem_id)
+    filename_path = Path(filename)
+    if filename_path.name != filename:
+        raise AppError("INVALID_DEM_PATH", "DEM filename contains unsupported path components.", status_code=400)
+    path = (dem_dir / filename).resolve()
+    if dem_dir not in path.parents:
+        raise AppError("INVALID_DEM_PATH", "Resolved DEM file path escapes DEM directory.", status_code=400)
+    return path
+
+
+def _dem_dir(dem_id: str) -> Path:
+    validate_dem_id(dem_id)
+    path = (settings.dem_dir / dem_id).resolve()
+    dem_dir = settings.dem_dir.resolve()
+    if dem_dir not in path.parents:
+        raise AppError("INVALID_DEM_PATH", "Resolved DEM path escapes DEM directory.", status_code=400)
+    return path
+
+
+def validate_dem_id(dem_id: str) -> None:
+    if not DEM_ID_PATTERN.fullmatch(dem_id):
+        raise AppError("INVALID_DEM_ID", "DEM id contains unsupported characters.", status_code=400)
 
 
 async def save_dem_upload(file: UploadFile) -> DemMetadata:
@@ -42,7 +66,10 @@ def read_dem_metadata(dem_id: str, path: Path | None = None) -> DemMetadata:
         metadata_file = _metadata_path(dem_id)
         if not metadata_file.exists():
             raise AppError("DEM_NOT_FOUND", f"DEM '{dem_id}' was not found.", status_code=404)
-        return DemMetadata.model_validate_json(metadata_file.read_text(encoding="utf-8"))
+        metadata = DemMetadata.model_validate_json(metadata_file.read_text(encoding="utf-8"))
+        if metadata.dem_id != dem_id:
+            raise AppError("DEM_METADATA_MISMATCH", f"DEM metadata for '{dem_id}' is inconsistent.", status_code=500)
+        return attach_dem_usage(metadata)
 
     try:
         import rasterio
@@ -87,5 +114,43 @@ def list_dem_metadata() -> list[DemMetadata]:
     results: list[DemMetadata] = []
     for metadata_file in settings.dem_dir.glob("dem_*/metadata.json"):
         data = json.loads(metadata_file.read_text(encoding="utf-8"))
-        results.append(DemMetadata.model_validate(data))
+        results.append(attach_dem_usage(DemMetadata.model_validate(data)))
     return sorted(results, key=lambda item: item.uploaded_at or "", reverse=True)
+
+
+def delete_dem(dem_id: str) -> DemDeleteResult:
+    metadata = read_dem_metadata(dem_id)
+    usage = dem_usage(dem_id)
+    if usage["task_count"] > 0:
+        raise AppError(
+            "DEM_IN_USE",
+            f"DEM '{dem_id}' is referenced by {usage['task_count']} task(s) and cannot be deleted.",
+            status_code=409,
+        )
+    path = _dem_dir(dem_id)
+    if not path.exists():
+        raise AppError("DEM_NOT_FOUND", f"DEM '{dem_id}' was not found.", status_code=404)
+    shutil.rmtree(path)
+    return DemDeleteResult(dem_id=dem_id, deleted=True)
+
+
+def attach_dem_usage(metadata: DemMetadata) -> DemMetadata:
+    usage = dem_usage(metadata.dem_id)
+    metadata.task_count = usage["task_count"]
+    metadata.active_task_count = usage["active_task_count"]
+    return metadata
+
+
+def dem_usage(dem_id: str) -> dict[str, int]:
+    validate_dem_id(dem_id)
+    from app.services.task_store import list_tasks
+
+    task_count = 0
+    active_task_count = 0
+    for task in list_tasks():
+        if task.dem_id != dem_id:
+            continue
+        task_count += 1
+        if task.status in {"pending", "running"}:
+            active_task_count += 1
+    return {"task_count": task_count, "active_task_count": active_task_count}

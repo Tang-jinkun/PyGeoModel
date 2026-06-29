@@ -1,8 +1,8 @@
 from fastapi import APIRouter, File, HTTPException, UploadFile, status
 
 from app.core.errors import AppError
-from app.schemas.dem import DemMetadata
-from app.services.dem_store import list_dem_metadata, read_dem_metadata, save_dem_upload
+from app.schemas.dem import DemDeleteResult, DemMetadata
+from app.services.dem_store import delete_dem, list_dem_metadata, read_dem_metadata, save_dem_upload
 
 router = APIRouter()
 
@@ -27,5 +27,13 @@ def list_dems() -> list[DemMetadata]:
 def get_dem(dem_id: str) -> DemMetadata:
     try:
         return read_dem_metadata(dem_id)
+    except AppError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.as_detail()) from exc
+
+
+@router.delete("/{dem_id}", response_model=DemDeleteResult)
+def remove_dem(dem_id: str) -> DemDeleteResult:
+    try:
+        return delete_dem(dem_id)
     except AppError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.as_detail()) from exc

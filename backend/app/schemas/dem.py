@@ -12,3 +12,10 @@ class DemMetadata(BaseModel):
     nodata: float | None = None
     file_size_bytes: int | None = None
     uploaded_at: str | None = None
+    task_count: int = 0
+    active_task_count: int = 0
+
+
+class DemDeleteResult(BaseModel):
+    dem_id: str
+    deleted: bool = False

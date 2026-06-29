@@ -23,6 +23,7 @@
         <div><strong>Size</strong><span>{{ dem.width }} × {{ dem.height }}</span></div>
         <div><strong>Resolution</strong><span>{{ dem.resolution.map((v) => v.toFixed(2)).join(" / ") }}</span></div>
         <div><strong>File</strong><span>{{ formatFileSize(dem.file_size_bytes) }}</span></div>
+        <div><strong>Tasks</strong><span>{{ dem.task_count }} 个关联任务</span></div>
       </div>
 
       <el-form-item v-if="demList.length" label="已上传 DEM">
@@ -35,6 +36,27 @@
           />
         </el-select>
       </el-form-item>
+
+      <div v-if="dem" class="dem-actions">
+        <span>{{ dem.active_task_count ? `${dem.active_task_count} 个任务正在使用` : deleteDemHint }}</span>
+        <el-popconfirm
+          title="删除该 DEM 文件？"
+          confirm-button-text="删除"
+          cancel-button-text="取消"
+          @confirm="$emit('deleteDem', dem.dem_id)"
+        >
+          <template #reference>
+            <el-button
+              size="small"
+              type="danger"
+              :loading="deletingDemId === dem.dem_id"
+              :disabled="!canDeleteDem"
+            >
+              删除 DEM
+            </el-button>
+          </template>
+        </el-popconfirm>
+      </div>
 
       <div class="form-grid">
         <el-form-item label="经度">
@@ -191,6 +213,7 @@ const props = defineProps<{
   loadingTaskId: string | null;
   restoringTaskId: string | null;
   deletingTaskId: string | null;
+  deletingDemId: string | null;
   busy: boolean;
 }>();
 
@@ -200,6 +223,7 @@ const emit = defineEmits<{
   selectTask: [taskId: string];
   restoreTask: [taskId: string];
   deleteTask: [taskId: string];
+  deleteDem: [demId: string];
   refreshTasks: [];
   run: [];
 }>();
@@ -210,6 +234,13 @@ const scanOptions = [
 ];
 
 const demLabel = computed(() => props.dem?.filename ?? "点击或拖拽上传 GeoTIFF DEM");
+const canDeleteDem = computed(() => Boolean(props.dem && !props.busy && !props.deletingDemId && props.dem.task_count === 0));
+const deleteDemHint = computed(() => {
+  if (!props.dem) {
+    return "";
+  }
+  return props.dem.task_count > 0 ? "存在历史任务引用，不能删除" : "未被任务引用，可删除";
+});
 
 function onFileChange(uploadFile: UploadFile) {
   const raw = uploadFile.raw;
