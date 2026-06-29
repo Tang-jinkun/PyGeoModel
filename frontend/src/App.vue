@@ -91,14 +91,17 @@ import {
   removeProfileLayer,
   removeFusionLayers,
   removeResultLayers,
+  setFusionLayerOpacity,
+  setFusionLayerVisibility,
   setResultLayerOpacity,
   setResultLayerVisibility,
+  type FusionLayerKey,
   type ResultLayerKey
 } from "./map/mapLayers";
 import { addOrUpdateRadarVolume, removeRadarVolume } from "./map/radarVolumeLayer";
 import { addOrUpdateVoxelLayer, loadVoxelData, removeVoxelLayer, type VoxelPoint } from "./map/voxelLayer";
 
-type LayerKey = ResultLayerKey | "radarVolume" | "voxel" | "heightLayer";
+type LayerKey = ResultLayerKey | FusionLayerKey | "radarVolume" | "voxel" | "heightLayer";
 
 interface ResultLayerControl {
   key: LayerKey;
@@ -210,6 +213,36 @@ const layerControls = reactive<ResultLayerControl[]>([
     visible: true,
     opacity: 0.8,
     defaultOpacity: 0.8,
+    available: false
+  },
+  {
+    key: "fusionVisible",
+    label: "融合总覆盖",
+    description: "多任务可探测并集",
+    color: "#059669",
+    visible: true,
+    opacity: 0.22,
+    defaultOpacity: 0.22,
+    available: false
+  },
+  {
+    key: "fusionOverlap",
+    label: "融合重叠",
+    description: "多任务冗余覆盖",
+    color: "#7c3aed",
+    visible: true,
+    opacity: 0.34,
+    defaultOpacity: 0.34,
+    available: false
+  },
+  {
+    key: "fusionBlind",
+    label: "融合盲区",
+    description: "理论范围内未覆盖",
+    color: "#ef4444",
+    visible: true,
+    opacity: 0.3,
+    defaultOpacity: 0.3,
     available: false
   }
 ]);
@@ -381,6 +414,7 @@ async function handleRunFusion(taskIds: string[]) {
       return;
     }
     fusionResult.value = result;
+    updateFusionLayerAvailability(true);
     drawFusionLayers(result);
     ElMessage.success("融合分析完成");
   } catch (error) {
@@ -403,23 +437,24 @@ function drawFusionLayers(result: FusionResult) {
     map.value,
     "fusion-visible-layer",
     result.visible_union_geojson,
-    { "fill-color": "#059669", "fill-opacity": 0.22 },
-    { "line-color": "#047857", "line-width": 2, "line-opacity": 0.72 }
+    { "fill-color": "#059669", "fill-opacity": getLayerControl("fusionVisible")?.opacity ?? 0.22 },
+    { "line-color": "#047857", "line-width": 2, "line-opacity": Math.max(getLayerControl("fusionVisible")?.opacity ?? 0.22, 0.35) }
   );
   addOrUpdateGeoJsonDataLayer(
     map.value,
     "fusion-overlap-layer",
     result.overlap_geojson,
-    { "fill-color": "#7c3aed", "fill-opacity": 0.34 },
-    { "line-color": "#6d28d9", "line-width": 2, "line-opacity": 0.78 }
+    { "fill-color": "#7c3aed", "fill-opacity": getLayerControl("fusionOverlap")?.opacity ?? 0.34 },
+    { "line-color": "#6d28d9", "line-width": 2, "line-opacity": Math.max(getLayerControl("fusionOverlap")?.opacity ?? 0.34, 0.35) }
   );
   addOrUpdateGeoJsonDataLayer(
     map.value,
     "fusion-blind-layer",
     result.blind_geojson,
-    { "fill-color": "#ef4444", "fill-opacity": 0.3 },
-    { "line-color": "#b91c1c", "line-width": 2, "line-opacity": 0.78 }
+    { "fill-color": "#ef4444", "fill-opacity": getLayerControl("fusionBlind")?.opacity ?? 0.3 },
+    { "line-color": "#b91c1c", "line-width": 2, "line-opacity": Math.max(getLayerControl("fusionBlind")?.opacity ?? 0.3, 0.35) }
   );
+  applyFusionLayerControls();
   moveRadarMarkerToTop(map.value);
 }
 
@@ -430,6 +465,7 @@ function clearFusion() {
   if (map.value) {
     removeFusionLayers(map.value);
   }
+  updateFusionLayerAvailability(false);
 }
 
 async function handleRun() {
@@ -833,12 +869,12 @@ function handleSelectHeightLayer(heightM: number) {
 }
 
 async function handleFocusResult() {
-  if (!map.value || !task.value || task.value.status !== "finished") {
+  if (!map.value || (!fusionResult.value && (!task.value || task.value.status !== "finished"))) {
     ElMessage.info("暂无可定位的结果");
     return;
   }
   const token = ++focusToken;
-  const taskId = task.value.task_id;
+  const taskId = task.value?.task_id;
   const currentViewToken = viewToken;
 
   const urls = layerControls
@@ -847,7 +883,7 @@ async function handleFocusResult() {
         const url = getSelectedHeightLayer()?.url;
         return url ? [url] : [];
       }
-      if (!control.available || !isResultLayerKey(control.key)) {
+      if (!task.value || task.value.status !== "finished" || !control.available || !isResultLayerKey(control.key)) {
         return [];
       }
       return [resolveLayerOutputUrl(task.value as CoverageTaskStatus, control.key)];
@@ -864,9 +900,17 @@ async function handleFocusResult() {
         }
         return response.json() as Promise<GeoJSON.GeoJSON>;
       });
-      if (token !== focusToken || currentViewToken !== viewToken || task.value?.task_id !== taskId) {
+      if (token !== focusToken || currentViewToken !== viewToken || (taskId && task.value?.task_id !== taskId)) {
         return;
       }
+      const layerBounds = getGeoJsonBounds(geojson);
+      if (layerBounds) {
+        bounds.extend(layerBounds.getSouthWest());
+        bounds.extend(layerBounds.getNorthEast());
+        hasBounds = true;
+      }
+    }
+    for (const geojson of getVisibleFusionGeoJsons()) {
       const layerBounds = getGeoJsonBounds(geojson);
       if (layerBounds) {
         bounds.extend(layerBounds.getSouthWest());
@@ -879,7 +923,7 @@ async function handleFocusResult() {
     return;
   }
 
-  if (token !== focusToken || currentViewToken !== viewToken || task.value?.task_id !== taskId) {
+  if (token !== focusToken || currentViewToken !== viewToken || (taskId && task.value?.task_id !== taskId)) {
     return;
   }
   if (!hasBounds) {
@@ -909,6 +953,10 @@ function applyLayerControl(control: ResultLayerControl) {
   }
   if (control.key === "heightLayer") {
     applyHeightLayerControl();
+    return;
+  }
+  if (isFusionLayerKey(control.key)) {
+    applyFusionLayerControl(control.key);
     return;
   }
   if (!isResultLayerKey(control.key)) {
@@ -942,6 +990,53 @@ function updateLayerAvailability(available: Partial<Record<LayerKey, boolean>>) 
   }
 }
 
+function updateFusionLayerAvailability(available: boolean) {
+  for (const key of ["fusionVisible", "fusionOverlap", "fusionBlind"] as FusionLayerKey[]) {
+    const control = getLayerControl(key);
+    if (control) {
+      control.available = available;
+      control.visible = true;
+      control.opacity = control.defaultOpacity;
+    }
+  }
+}
+
+function applyFusionLayerControls() {
+  for (const key of ["fusionVisible", "fusionOverlap", "fusionBlind"] as FusionLayerKey[]) {
+    applyFusionLayerControl(key);
+  }
+}
+
+function getVisibleFusionGeoJsons(): GeoJSON.GeoJSON[] {
+  if (!fusionResult.value) {
+    return [];
+  }
+  const entries: Array<[FusionLayerKey, GeoJSON.GeoJSON]> = [
+    ["fusionVisible", fusionResult.value.visible_union_geojson],
+    ["fusionOverlap", fusionResult.value.overlap_geojson],
+    ["fusionBlind", fusionResult.value.blind_geojson]
+  ];
+  return entries
+    .filter(([key]) => {
+      const control = getLayerControl(key);
+      return Boolean(control?.available && control.visible);
+    })
+    .map(([, geojson]) => geojson);
+}
+
+function applyFusionLayerControl(key: FusionLayerKey) {
+  if (!map.value) {
+    return;
+  }
+  const control = getLayerControl(key);
+  if (!control?.available || !fusionResult.value) {
+    setFusionLayerVisibility(map.value, key, false);
+    return;
+  }
+  setFusionLayerVisibility(map.value, key, control.visible);
+  setFusionLayerOpacity(map.value, key, control.opacity);
+}
+
 function resolveLayerOutputUrl(result: CoverageTaskStatus, key: ResultLayerKey) {
   const outputKind: Record<ResultLayerKey, keyof NonNullable<CoverageTaskStatus["outputs"]>> = {
     range: "range_geojson",
@@ -954,6 +1049,10 @@ function resolveLayerOutputUrl(result: CoverageTaskStatus, key: ResultLayerKey) 
 
 function getLayerControl(key: LayerKey) {
   return layerControls.find((item) => item.key === key);
+}
+
+function isFusionLayerKey(key: LayerKey): key is FusionLayerKey {
+  return key === "fusionVisible" || key === "fusionOverlap" || key === "fusionBlind";
 }
 
 function syncRadarVolumeLayer(request?: CoverageRequest) {

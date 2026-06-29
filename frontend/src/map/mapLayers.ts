@@ -1,6 +1,7 @@
 import maplibregl from "maplibre-gl";
 
 export type ResultLayerKey = "range" | "blocked" | "visible";
+export type FusionLayerKey = "fusionVisible" | "fusionOverlap" | "fusionBlind";
 
 const DEM_BOUNDS_SOURCE_ID = "dem-bounds-source";
 const DEM_BOUNDS_FILL_LAYER_ID = "dem-bounds-fill";
@@ -35,6 +36,21 @@ const RESULT_LAYER_IDS: Record<ResultLayerKey, { fill: string; outline: string }
   visible: {
     fill: "visible-layer",
     outline: "visible-layer-outline"
+  }
+};
+
+const FUSION_LAYER_MAP: Record<FusionLayerKey, { fill: string; outline: string }> = {
+  fusionVisible: {
+    fill: "fusion-visible-layer",
+    outline: "fusion-visible-layer-outline"
+  },
+  fusionOverlap: {
+    fill: "fusion-overlap-layer",
+    outline: "fusion-overlap-layer-outline"
+  },
+  fusionBlind: {
+    fill: "fusion-blind-layer",
+    outline: "fusion-blind-layer-outline"
   }
 };
 
@@ -533,6 +549,26 @@ export function setResultLayerOpacity(map: maplibregl.Map, key: ResultLayerKey, 
   }
   if (map.getLayer(ids.outline)) {
     map.setPaintProperty(ids.outline, "line-opacity", opacity > 0 ? Math.max(opacity, 0.28) : 0);
+  }
+}
+
+export function setFusionLayerVisibility(map: maplibregl.Map, key: FusionLayerKey, visible: boolean) {
+  const visibility = visible ? "visible" : "none";
+  const ids = FUSION_LAYER_MAP[key];
+  for (const layerId of [ids.fill, ids.outline]) {
+    if (map.getLayer(layerId)) {
+      map.setLayoutProperty(layerId, "visibility", visibility);
+    }
+  }
+}
+
+export function setFusionLayerOpacity(map: maplibregl.Map, key: FusionLayerKey, opacity: number) {
+  const ids = FUSION_LAYER_MAP[key];
+  if (map.getLayer(ids.fill)) {
+    map.setPaintProperty(ids.fill, "fill-opacity", opacity);
+  }
+  if (map.getLayer(ids.outline)) {
+    map.setPaintProperty(ids.outline, "line-opacity", opacity > 0 ? Math.max(opacity, 0.35) : 0);
   }
 }
 
