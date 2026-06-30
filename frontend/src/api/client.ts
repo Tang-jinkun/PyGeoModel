@@ -3,8 +3,8 @@ const API_BASE = import.meta.env.VITE_API_BASE ?? "";
 const DEFAULT_COVERAGE_REQUEST: CoverageRequest = {
   dem_id: "",
   radar: {
-    lon: 105.123456,
-    lat: 35.123456,
+    lon: 79.80513693057287,
+    lat: 31.4827708959419,
     height_m: 10
   },
   target: {
