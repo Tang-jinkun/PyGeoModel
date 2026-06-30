@@ -14,6 +14,7 @@ type RadarVolumeCustomLayer = maplibregl.CustomLayerInterface & {
 
 interface RadarVolumeRenderOptions {
   opacity: number;
+  showScanPlane: boolean;
 }
 
 interface RadarVolumeState {
@@ -167,7 +168,9 @@ function buildRadarVolume(request: CoverageRequest, options: RadarVolumeRenderOp
   group.add(buildRayLines(shape, request.coverage.scan_mode === "sector" ? 18 : 36, options));
   group.add(buildBoundaryLines(shape, options));
   group.add(buildGroundConnectionLines(shape, request.coverage.scan_mode === "sector" ? 9 : 16, options));
-  group.add(buildScanPlane(shape, options));
+  if (options.showScanPlane) {
+    group.add(buildScanPlane(shape, options));
+  }
   return group;
 }
 
@@ -384,7 +387,7 @@ function buildSupplementaryLobes(
         })
       )
     );
-    group.add(buildRadarGrid(lobeShape, { opacity: options.opacity * 0.62 }));
+    group.add(buildRadarGrid(lobeShape, { ...options, opacity: options.opacity * 0.62 }));
   }
   return group;
 }
@@ -609,7 +612,8 @@ function getRadarAnchorAltitudeM(request: CoverageRequest, map: maplibregl.Map |
 
 function normalizeOptions(options?: Partial<RadarVolumeRenderOptions>): RadarVolumeRenderOptions {
   return {
-    opacity: Math.min(1, Math.max(0, options?.opacity ?? 0.62))
+    opacity: Math.min(1, Math.max(0, options?.opacity ?? 0.62)),
+    showScanPlane: options?.showScanPlane ?? true
   };
 }
 

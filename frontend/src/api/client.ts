@@ -73,6 +73,8 @@ export type CoverageOutputKind =
   | "min_visible_height_tif"
   | "voxel_manifest_json"
   | "voxel_points_bin"
+  | "clipped_volume_manifest_json"
+  | "clipped_volume_cells_bin"
   | "height_layers_manifest_json";
 
 export interface CoverageTaskSummary {
@@ -102,6 +104,8 @@ export interface CoverageTaskSummary {
     min_visible_height_tif?: string | null;
     voxel_manifest_json?: string | null;
     voxel_points_bin?: string | null;
+    clipped_volume_manifest_json?: string | null;
+    clipped_volume_cells_bin?: string | null;
     height_layers_manifest_json?: string | null;
   } | null;
   output_files: CoverageOutputFile[];
@@ -470,6 +474,8 @@ function normalizeOutputs(payload: unknown): CoverageTaskSummary["outputs"] {
     min_visible_height_tif: nullableString(payload.min_visible_height_tif),
     voxel_manifest_json: nullableString(payload.voxel_manifest_json),
     voxel_points_bin: nullableString(payload.voxel_points_bin),
+    clipped_volume_manifest_json: nullableString(payload.clipped_volume_manifest_json),
+    clipped_volume_cells_bin: nullableString(payload.clipped_volume_cells_bin),
     height_layers_manifest_json: nullableString(payload.height_layers_manifest_json)
   };
 }
@@ -546,6 +552,18 @@ function deriveOutputFilesFromOutputs(outputs: CoverageTaskSummary["outputs"]): 
       label: "体素点云",
       media_type: "application/octet-stream",
       filename: "voxel_points.bin"
+    },
+    {
+      kind: "clipped_volume_manifest_json",
+      label: "裁切波束清单",
+      media_type: "application/json",
+      filename: "clipped_volume_manifest.json"
+    },
+    {
+      kind: "clipped_volume_cells_bin",
+      label: "裁切波束体",
+      media_type: "application/octet-stream",
+      filename: "clipped_volume_cells.bin"
     },
     {
       kind: "height_layers_manifest_json",
@@ -649,6 +667,8 @@ function normalizeOutputKind(value: unknown): CoverageOutputKind | undefined {
     "min_visible_height_tif",
     "voxel_manifest_json",
     "voxel_points_bin",
+    "clipped_volume_manifest_json",
+    "clipped_volume_cells_bin",
     "height_layers_manifest_json"
   ];
   return kinds.find((kind) => kind === value);

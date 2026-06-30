@@ -99,9 +99,15 @@ import {
   type ResultLayerKey
 } from "./map/mapLayers";
 import { addOrUpdateRadarVolume, removeRadarVolume } from "./map/radarVolumeLayer";
+import {
+  addOrUpdateClippedVolumeLayer,
+  loadClippedVolumeData,
+  removeClippedVolumeLayer,
+  type ClippedVolumeCell
+} from "./map/clippedVolumeLayer";
 import { addOrUpdateVoxelLayer, loadVoxelData, removeVoxelLayer, type VoxelPoint } from "./map/voxelLayer";
 
-type LayerKey = ResultLayerKey | FusionLayerKey | "radarVolume" | "voxel" | "heightLayer";
+type LayerKey = ResultLayerKey | FusionLayerKey | "radarVolume" | "clippedVolume" | "voxel" | "heightLayer";
 
 interface ResultLayerControl {
   key: LayerKey;
@@ -152,6 +158,9 @@ let taskListRequestToken = 0;
 const busy = ref(false);
 let focusToken = 0;
 const voxelPoints = shallowRef<VoxelPoint[]>([]);
+const voxelTaskId = ref<string | null>(null);
+const clippedVolumeCells = shallowRef<ClippedVolumeCell[]>([]);
+const clippedVolumeManifest = shallowRef<{ cell_size_m: number; cell_count: number; fields: string[]; bytes_per_cell: number } | null>(null);
 const radarVolumeRequest = shallowRef<CoverageRequest | null>(null);
 const heightLayerOptions = ref<HeightLayerOption[]>([]);
 const selectedHeightLayerM = ref<number | null>(null);
@@ -170,7 +179,17 @@ const layerControls = reactive<ResultLayerControl[]>([
     visible: true,
     opacity: 0.62,
     defaultOpacity: 0.62,
-    available: true
+    available: false
+  },
+  {
+    key: "clippedVolume",
+    label: "地形裁切波束",
+    description: "被地形遮挡后的三维波束体",
+    color: "#ef4444",
+    visible: true,
+    opacity: 0.66,
+    defaultOpacity: 0.66,
+    available: false
   },
   {
     key: "visible",
@@ -217,7 +236,7 @@ const layerControls = reactive<ResultLayerControl[]>([
     label: "体素点云",
     description: "按最低可见高度生成的 3D 点云",
     color: "#22d3ee",
-    visible: true,
+    visible: false,
     opacity: 0.8,
     defaultOpacity: 0.8,
     available: false
@@ -533,6 +552,7 @@ async function pollTask(taskId: string, token: number) {
       if (map.value) {
         removeResultLayers(map.value);
         removeRadarVolume(map.value);
+        removeClippedVolumeLayer(map.value);
         removeVoxelLayer(map.value);
         removeDemRasterLayer(map.value);
         removeDemTerrain(map.value);
@@ -564,6 +584,7 @@ async function handleSelectTask(taskId: string) {
     if (map.value) {
       removeResultLayers(map.value);
       removeRadarVolume(map.value);
+      removeClippedVolumeLayer(map.value);
       removeVoxelLayer(map.value);
     }
     clearLayerAvailability();
@@ -621,6 +642,7 @@ async function handleDeleteTask(taskId: string) {
       if (map.value) {
         removeResultLayers(map.value);
         removeRadarVolume(map.value);
+        removeClippedVolumeLayer(map.value);
         removeVoxelLayer(map.value);
       }
       clearLayerAvailability();
@@ -724,8 +746,12 @@ function loadOutputs(result: CoverageTaskStatus) {
   clearProfile();
   removeResultLayers(map.value);
   removeRadarVolume(map.value);
+  removeClippedVolumeLayer(map.value);
   removeVoxelLayer(map.value);
   voxelPoints.value = [];
+  voxelTaskId.value = null;
+  clippedVolumeCells.value = [];
+  clippedVolumeManifest.value = null;
   heightLayerOptions.value = [];
   selectedHeightLayerM.value = null;
   radarVolumeRequest.value = result.request ?? coverageRequest;
@@ -733,11 +759,40 @@ function loadOutputs(result: CoverageTaskStatus) {
   const visible = resolveOutputUrl(result, "visible_geojson", result.outputs?.visible_geojson);
   const blocked = resolveOutputUrl(result, "blocked_geojson", result.outputs?.blocked_geojson);
   const range = resolveOutputUrl(result, "range_geojson", result.outputs?.range_geojson);
+  const clippedCells = resolveOutputUrl(result, "clipped_volume_cells_bin", result.outputs?.clipped_volume_cells_bin);
+  const clippedManifest = resolveOutputUrl(
+    result,
+    "clipped_volume_manifest_json",
+    result.outputs?.clipped_volume_manifest_json
+  );
+  const voxelUrl = resolveOutputUrl(result, "voxel_points_bin", result.outputs?.voxel_points_bin);
+  const voxelManifest = resolveOutputUrl(result, "voxel_manifest_json", result.outputs?.voxel_manifest_json);
   if (!range && !blocked && !visible) {
-    clearLayerAvailability();
-    syncRadarVolumeLayer(result.request ?? coverageRequest);
+    updateLayerAvailability({
+      radarVolume: !!result.request,
+      clippedVolume: Boolean(clippedCells && clippedManifest),
+      voxel: Boolean(voxelUrl && voxelManifest),
+      heightLayer: false
+    });
+    if (result.request) {
+      addRadarMarker(map.value, result.request.radar.lon, result.request.radar.lat, result.request.radar.height_m);
+    }
+    tuneVolumeLayerDefaults(Boolean(clippedCells && clippedManifest));
+    applyAllLayerControls();
+    void loadClippedVolumeLayer(result);
     return;
   }
+
+  updateLayerAvailability({
+    range: !!range,
+    blocked: !!blocked,
+    visible: !!visible,
+    radarVolume: !!result.request,
+    clippedVolume: Boolean(clippedCells && clippedManifest),
+    voxel: Boolean(voxelUrl && voxelManifest),
+    heightLayer: false
+  });
+  tuneVolumeLayerDefaults(Boolean(clippedCells && clippedManifest));
 
   if (result.request) {
     addRadarMarker(map.value, result.request.radar.lon, result.request.radar.lat, result.request.radar.height_m);
@@ -776,17 +831,11 @@ function loadOutputs(result: CoverageTaskStatus) {
       { "line-color": "#dc2626", "line-opacity": 0.38, "line-width": 1 }
     );
   }
-  moveRadarMarkerToTop(map.value);
-  syncRadarVolumeLayer(result.request ?? coverageRequest);
-  updateLayerAvailability({ range: !!range, blocked: !!blocked, visible: !!visible, radarVolume: true, voxel: false, heightLayer: false });
   applyAllLayerControls();
+  moveRadarMarkerToTop(map.value);
 
   void loadHeightLayers(result);
-
-  // Load voxel point cloud if available
-  if (result.request) {
-    void loadVoxelLayer(result);
-  }
+  void loadClippedVolumeLayer(result);
 }
 
 async function loadHeightLayers(result: CoverageTaskStatus) {
@@ -836,6 +885,7 @@ async function loadVoxelLayer(result: CoverageTaskStatus) {
     const points = await loadVoxelData(voxelUrl, manifestUrl);
     if (map.value && task.value?.task_id === result.task_id) {
       voxelPoints.value = points;
+      voxelTaskId.value = result.task_id;
       const control = getLayerControl("voxel");
       if (control) {
         control.available = points.length > 0;
@@ -844,6 +894,36 @@ async function loadVoxelLayer(result: CoverageTaskStatus) {
     }
   } catch (error) {
     console.error("Failed to load voxel data:", error);
+  }
+}
+
+async function loadClippedVolumeLayer(result: CoverageTaskStatus) {
+  if (!map.value) {
+    return;
+  }
+  const cellsUrl = resolveOutputUrl(result, "clipped_volume_cells_bin", result.outputs?.clipped_volume_cells_bin);
+  const manifestUrl = resolveOutputUrl(
+    result,
+    "clipped_volume_manifest_json",
+    result.outputs?.clipped_volume_manifest_json
+  );
+  if (!cellsUrl || !manifestUrl) {
+    return;
+  }
+  try {
+    const { cells, manifest } = await loadClippedVolumeData(cellsUrl, manifestUrl);
+    if (map.value && task.value?.task_id === result.task_id) {
+      clippedVolumeCells.value = cells;
+      clippedVolumeManifest.value = manifest;
+      const control = getLayerControl("clippedVolume");
+      if (control) {
+        control.available = cells.length > 0;
+      }
+      syncRadarVolumeLayer();
+      applyClippedVolumeLayerControl();
+    }
+  } catch (error) {
+    console.error("Failed to load clipped volume data:", error);
   }
 }
 
@@ -958,6 +1038,10 @@ function applyLayerControl(control: ResultLayerControl) {
     applyVoxelLayerControl();
     return;
   }
+  if (control.key === "clippedVolume") {
+    applyClippedVolumeLayerControl();
+    return;
+  }
   if (control.key === "heightLayer") {
     applyHeightLayerControl();
     return;
@@ -976,14 +1060,19 @@ function applyLayerControl(control: ResultLayerControl) {
 function clearLayerAvailability() {
   focusToken++;
   for (const control of layerControls) {
-    control.available = control.key === "radarVolume";
+    control.available = false;
     control.visible = true;
     control.opacity = control.defaultOpacity;
   }
   voxelPoints.value = [];
+  voxelTaskId.value = null;
+  clippedVolumeCells.value = [];
+  clippedVolumeManifest.value = null;
   heightLayerOptions.value = [];
   selectedHeightLayerM.value = null;
   if (map.value) {
+    removeRadarVolume(map.value);
+    removeClippedVolumeLayer(map.value);
     removeVoxelLayer(map.value);
     removeFusionLayers(map.value);
   }
@@ -992,8 +1081,15 @@ function clearLayerAvailability() {
 function updateLayerAvailability(available: Partial<Record<LayerKey, boolean>>) {
   for (const control of layerControls) {
     control.available = available[control.key] ?? false;
-    control.visible = true;
+    control.visible = control.key !== "voxel";
     control.opacity = control.defaultOpacity;
+  }
+}
+
+function tuneVolumeLayerDefaults(hasClippedVolume: boolean) {
+  const radarControl = getLayerControl("radarVolume");
+  if (radarControl?.available && hasClippedVolume) {
+    radarControl.opacity = 0.22;
   }
 }
 
@@ -1071,7 +1167,10 @@ function syncRadarVolumeLayer(request?: CoverageRequest) {
     removeRadarVolume(map.value);
     return;
   }
-  addOrUpdateRadarVolume(map.value, request ?? radarVolumeRequest.value ?? coverageRequest, { opacity: control.opacity });
+  addOrUpdateRadarVolume(map.value, request ?? radarVolumeRequest.value ?? coverageRequest, {
+    opacity: control.opacity,
+    showScanPlane: !(getLayerControl("clippedVolume")?.available && clippedVolumeCells.value.length)
+  });
   moveRadarMarkerToTop(map.value);
 }
 
@@ -1080,11 +1179,37 @@ function applyVoxelLayerControl() {
     return;
   }
   const control = getLayerControl("voxel");
-  if (!control?.available || !control.visible || !voxelPoints.value.length) {
+  if (!control?.available || !control.visible) {
     removeVoxelLayer(map.value);
     return;
   }
+  if (!voxelPoints.value.length || voxelTaskId.value !== task.value?.task_id) {
+    if (task.value?.status === "finished") {
+      void loadVoxelLayer(task.value);
+    }
+    return;
+  }
   addOrUpdateVoxelLayer(map.value, voxelPoints.value, { opacity: control.opacity });
+}
+
+function applyClippedVolumeLayerControl() {
+  if (!map.value) {
+    return;
+  }
+  const control = getLayerControl("clippedVolume");
+  if (!control?.available || !control.visible || !clippedVolumeCells.value.length || !clippedVolumeManifest.value) {
+    removeClippedVolumeLayer(map.value);
+    return;
+  }
+  const request = radarVolumeRequest.value ?? task.value?.request ?? coverageRequest;
+  addOrUpdateClippedVolumeLayer(map.value, clippedVolumeCells.value, clippedVolumeManifest.value, {
+    opacity: control.opacity,
+    scanMode: request.coverage.scan_mode,
+    azimuthDeg: request.coverage.azimuth_deg,
+    beamWidthDeg: request.coverage.beam_width_deg,
+    radarLon: request.radar.lon,
+    radarLat: request.radar.lat
+  });
 }
 
 function applyHeightLayerControl() {

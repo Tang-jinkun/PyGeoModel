@@ -16,6 +16,8 @@ OUTPUT_FILENAMES: dict[CoverageOutputKind, str] = {
     "min_visible_height_tif": "min_visible_height.tif",
     "voxel_manifest_json": "voxel_manifest.json",
     "voxel_points_bin": "voxel_points.bin",
+    "clipped_volume_manifest_json": "clipped_volume_manifest.json",
+    "clipped_volume_cells_bin": "clipped_volume_cells.bin",
     "height_layers_manifest_json": "height_layers_manifest.json",
 }
 
@@ -29,6 +31,8 @@ OUTPUT_MEDIA_TYPES: dict[CoverageOutputKind, str] = {
     "min_visible_height_tif": "image/tiff",
     "voxel_manifest_json": "application/json",
     "voxel_points_bin": "application/octet-stream",
+    "clipped_volume_manifest_json": "application/json",
+    "clipped_volume_cells_bin": "application/octet-stream",
     "height_layers_manifest_json": "application/json",
 }
 
@@ -42,6 +46,8 @@ OUTPUT_LABELS: dict[CoverageOutputKind, str] = {
     "min_visible_height_tif": "Min Visible Height GeoTIFF",
     "voxel_manifest_json": "Voxel Manifest JSON",
     "voxel_points_bin": "Voxel Points Binary",
+    "clipped_volume_manifest_json": "Clipped Volume Manifest JSON",
+    "clipped_volume_cells_bin": "Clipped Volume Cells Binary",
     "height_layers_manifest_json": "Height Layers Manifest JSON",
 }
 

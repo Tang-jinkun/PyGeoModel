@@ -77,6 +77,19 @@ def test_read_coverage_task_includes_request(tmp_path: Path) -> None:
     assert payload["request"]["radar"]["lon"] == 105
 
 
+def test_read_coverage_metrics_returns_json(tmp_path: Path) -> None:
+    settings.data_dir = tmp_path
+    settings.ensure_directories()
+    write_task(tmp_path, "task_a", "finished", metrics={"theoretical_area_m2": 100, "visible_area_m2": 60})
+
+    response = TestClient(app).get("/api/radar/coverage/task_a/metrics")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["theoretical_area_m2"] == 100
+    assert payload["visible_area_m2"] == 60
+
+
 def test_list_coverage_tasks_omits_request(tmp_path: Path) -> None:
     settings.data_dir = tmp_path
     settings.ensure_directories()
@@ -212,24 +225,20 @@ def test_create_coverage_task_rejects_range_mostly_outside_dem(tmp_path: Path) -
     assert response.json()["detail"]["code"] == "RANGE_OUTSIDE_DEM"
 
 
-def write_task(root: Path, task_id: str, status: str) -> None:
+def write_task(root: Path, task_id: str, status: str, metrics: dict | None = None) -> None:
     task_dir = root / "tasks"
     task_dir.mkdir(parents=True, exist_ok=True)
-    (task_dir / f"{task_id}.json").write_text(
-        json.dumps(
-            {
-                "task": {
-                    "task_id": task_id,
-                    "dem_id": "dem_a",
-                    "status": status,
-                    "progress": 100 if status == "finished" else 50,
-                    "message": status,
-                    "warnings": [],
-                }
-            }
-        ),
-        encoding="utf-8",
-    )
+    task = {
+        "task_id": task_id,
+        "dem_id": "dem_a",
+        "status": status,
+        "progress": 100 if status == "finished" else 50,
+        "message": status,
+        "warnings": [],
+    }
+    if metrics is not None:
+        task["metrics"] = metrics
+    (task_dir / f"{task_id}.json").write_text(json.dumps({"task": task}), encoding="utf-8")
 
 
 def write_task_with_payload(root: Path, task_id: str, status: str) -> None:

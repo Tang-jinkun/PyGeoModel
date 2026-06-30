@@ -14,6 +14,8 @@ CoverageOutputKind = Literal[
     "min_visible_height_tif",
     "voxel_manifest_json",
     "voxel_points_bin",
+    "clipped_volume_manifest_json",
+    "clipped_volume_cells_bin",
     "height_layers_manifest_json",
 ]
 
@@ -117,6 +119,8 @@ class CoverageOutputs(BaseModel):
     min_visible_height_tif: str | None = None
     voxel_manifest_json: str | None = None
     voxel_points_bin: str | None = None
+    clipped_volume_manifest_json: str | None = None
+    clipped_volume_cells_bin: str | None = None
     height_layers_manifest_json: str | None = None
 
 

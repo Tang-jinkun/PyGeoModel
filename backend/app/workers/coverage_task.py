@@ -61,6 +61,7 @@ def run_coverage_task(task_id: str, payload: CoverageRequest) -> None:
             mark_running(task_id, "Generating height layers and voxels.", 70)
             _generate_height_layers(staging_dir, min_visible_height, prepared, payload)
             _generate_voxels(staging_dir, min_visible_height, prepared, payload)
+            _generate_clipped_volume(staging_dir, min_visible_height, prepared, payload)
 
             mark_running(task_id, "Vectorizing viewshed outputs.", 85)
             outputs, output_files, metrics, model, diagnostics, warnings = _write_vector_outputs(
@@ -402,6 +403,106 @@ def _generate_voxels(
     _write_json_atomic(staging_dir / "voxel_manifest.json", manifest)
 
 
+def _generate_clipped_volume(
+    staging_dir: Path,
+    min_visible_height: Path,
+    prepared: PreparedCoverageDem,
+    payload: CoverageRequest,
+) -> None:
+    import rasterio
+
+    grid_size = min(payload.advanced.voxel_grid_size, 160)
+    min_elevation = payload.advanced.min_elevation_deg
+    max_elevation = payload.advanced.max_elevation_deg
+    effective_range, radar_equation_range = _effective_max_range(payload)
+
+    with rasterio.open(min_visible_height) as src:
+        data = src.read(1)
+        transform = src.transform
+        height, width = data.shape
+
+    x_indices = numpy.linspace(0, width - 1, grid_size, dtype=numpy.int32)
+    y_indices = numpy.linspace(0, height - 1, grid_size, dtype=numpy.int32)
+    transformer = Transformer.from_crs(f"EPSG:{prepared.target_epsg}", "EPSG:4326", always_xy=True)
+
+    cells = []
+    blocked_count = 0
+    visible_count = 0
+    max_visible_top = 0.0
+    max_blocked_top = 0.0
+    for yi in y_indices:
+        for xi in x_indices:
+            yi_int = int(round(yi))
+            xi_int = int(round(xi))
+            if not (0 <= yi_int < height and 0 <= xi_int < width):
+                continue
+            min_visible_h = data[yi_int, xi_int]
+            if not numpy.isfinite(min_visible_h) or min_visible_h < 0:
+                continue
+
+            x_proj = transform.c + (xi_int + 0.5) * transform.a
+            y_proj = transform.f + (yi_int + 0.5) * transform.e
+            dx = x_proj - prepared.radar_x
+            dy = y_proj - prepared.radar_y
+            dist = math.hypot(dx, dy)
+            if dist <= 0 or dist > effective_range:
+                continue
+
+            if payload.coverage.scan_mode == "sector":
+                az = (math.degrees(math.atan2(dx, dy)) + 360) % 360
+                half = payload.coverage.beam_width_deg / 2
+                center = payload.coverage.azimuth_deg % 360
+                delta = abs((az - center + 180) % 360 - 180)
+                if delta > half:
+                    continue
+
+            beam_bottom = max(0.0, dist * math.tan(math.radians(min_elevation)))
+            beam_top = payload.advanced.voxel_max_height_m
+            if max_elevation > 0:
+                beam_top = min(beam_top, dist * math.tan(math.radians(max_elevation)))
+            if beam_top <= beam_bottom:
+                continue
+
+            blocked_top = min(max(min_visible_h, beam_bottom), beam_top)
+            visible_top = beam_top if min_visible_h < beam_top else beam_bottom
+            if blocked_top > beam_bottom + 0.01:
+                blocked_count += 1
+                max_blocked_top = max(max_blocked_top, blocked_top)
+            if visible_top > max(blocked_top, beam_bottom) + 0.01:
+                visible_count += 1
+                max_visible_top = max(max_visible_top, visible_top)
+
+            lon, lat = transformer.transform(x_proj, y_proj)
+            cells.append((lon, lat, beam_bottom, blocked_top, visible_top))
+
+    cells_path = staging_dir / "clipped_volume_cells.bin"
+    array = numpy.array(cells, dtype=numpy.float32).flatten()
+    with open(cells_path, "wb") as file:
+        file.write(array.tobytes())
+
+    manifest = {
+        "grid_size": grid_size,
+        "source_width": int(width),
+        "source_height": int(height),
+        "cell_size_m": max(abs(float(transform.a)), abs(float(transform.e))) * max(1, math.ceil(max(width, height) / grid_size)),
+        "min_elevation_deg": min_elevation,
+        "max_elevation_deg": max_elevation,
+        "max_height_m": payload.advanced.voxel_max_height_m,
+        "radar_equation_active": radar_equation_range is not None,
+        "radar_equation_max_range_m": radar_equation_range,
+        "effective_max_range_m": effective_range,
+        "cell_count": len(cells),
+        "blocked_cell_count": blocked_count,
+        "visible_cell_count": visible_count,
+        "max_blocked_top_m": max_blocked_top,
+        "max_visible_top_m": max_visible_top,
+        "point_format": "float32",
+        "fields": ["lon", "lat", "beam_bottom_m", "blocked_top_m", "visible_top_m"],
+        "bytes_per_cell": 20,
+    }
+    _write_json_atomic(staging_dir / "clipped_volume_manifest.json", manifest)
+
+
 def _write_vector_outputs(
     task_id: str,
     staging_dir: Path,
@@ -517,6 +618,8 @@ def _write_vector_outputs(
         min_visible_height_tif=f"/outputs/{task_id}/{min_visible_height.name}",
         voxel_manifest_json=f"/outputs/{task_id}/voxel_manifest.json",
         voxel_points_bin=f"/outputs/{task_id}/voxel_points.bin",
+        clipped_volume_manifest_json=f"/outputs/{task_id}/clipped_volume_manifest.json",
+        clipped_volume_cells_bin=f"/outputs/{task_id}/clipped_volume_cells.bin",
         height_layers_manifest_json=f"/outputs/{task_id}/height_layers_manifest.json",
     )
     height_layers = payload.advanced.height_layers_m or [0, 100, 300, 500, 1000, 2000, 3000]

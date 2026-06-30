@@ -188,18 +188,7 @@ def test_commit_staged_outputs_replaces_public_outputs(tmp_path: Path) -> None:
     staging_dir = tmp_path / ".staging"
     output_dir = tmp_path / "task_a"
     staging_dir.mkdir()
-    for filename in [
-        "min_visible_height.tif",
-        "voxel_manifest.json",
-        "voxel_points.bin",
-        "height_layers_manifest.json",
-        "viewshed.tif",
-        "visible.geojson",
-        "blocked.geojson",
-        "radar_range.geojson",
-        "model_metadata.json",
-        "output_manifest.json",
-    ]:
+    for filename in OUTPUT_FILENAMES.values():
         (staging_dir / filename).write_text(filename, encoding="utf-8")
     (staging_dir / "visible_h_0.geojson").write_text("height-layer", encoding="utf-8")
 

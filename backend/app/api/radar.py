@@ -3,6 +3,7 @@ from fastapi.responses import FileResponse
 
 from app.core.errors import AppError
 from app.schemas.radar import (
+    CoverageMetrics,
     CoverageOutputFile,
     CoverageOutputKind,
     CoverageProfileResult,
@@ -53,6 +54,17 @@ def create_fusion_analysis(payload: FusionRequest) -> FusionResult:
 def read_coverage_task(task_id: str) -> CoverageTaskStatus:
     try:
         return get_task(task_id)
+    except AppError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.as_detail()) from exc
+
+
+@router.get("/coverage/{task_id}/metrics", response_model=CoverageMetrics)
+def read_coverage_metrics(task_id: str) -> CoverageMetrics:
+    try:
+        task = get_task(task_id)
+        if task.status != "finished" or task.metrics is None:
+            raise AppError("TASK_METRICS_NOT_READY", "Coverage metrics are available only after the task is finished.", status_code=409)
+        return task.metrics
     except AppError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.as_detail()) from exc
 
