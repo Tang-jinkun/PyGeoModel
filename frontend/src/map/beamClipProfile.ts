@@ -27,6 +27,17 @@ export function radiusAtAzimuth(
   return lower + (upper - lower) * fraction;
 }
 
+export function createRadiusResolver(
+  maxRangeM: number,
+  profile: BeamClipProfile | null | undefined
+) {
+  const maximum = Math.max(0, maxRangeM);
+  return (azimuthRadians: number) => Math.min(
+    maximum,
+    radiusAtAzimuth(profile, azimuthRadians * 180 / Math.PI, maximum)
+  );
+}
+
 export function clipProfileFromBounds(
   bounds: number[],
   radar: RadarPosition,

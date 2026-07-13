@@ -99,6 +99,7 @@ import {
   type ResultLayerKey
 } from "./map/mapLayers";
 import { addOrUpdateRadarVolume, removeRadarVolume } from "./map/radarVolumeLayer";
+import { clipProfileFromBounds } from "./map/beamClipProfile";
 import {
   addOrUpdateClippedVolumeLayer,
   loadClippedVolumeData,
@@ -107,7 +108,7 @@ import {
 } from "./map/clippedVolumeLayer";
 import { addOrUpdateVoxelLayer, loadVoxelData, removeVoxelLayer, type VoxelPoint } from "./map/voxelLayer";
 
-type LayerKey = ResultLayerKey | FusionLayerKey | "radarVolume" | "clippedVolume" | "voxel" | "heightLayer";
+type LayerKey = ResultLayerKey | FusionLayerKey | "radarVolume" | "radarRequestBoundary" | "clippedVolume" | "voxel" | "heightLayer";
 
 interface ResultLayerControl {
   key: LayerKey;
@@ -162,6 +163,7 @@ const voxelTaskId = ref<string | null>(null);
 const clippedVolumeCells = shallowRef<ClippedVolumeCell[]>([]);
 const clippedVolumeManifest = shallowRef<{ cell_size_m: number; cell_count: number; fields: string[]; bytes_per_cell: number } | null>(null);
 const radarVolumeRequest = shallowRef<CoverageRequest | null>(null);
+const radarVolumeTaskId = ref<string | null>(null);
 const heightLayerOptions = ref<HeightLayerOption[]>([]);
 const selectedHeightLayerM = ref<number | null>(null);
 const profile = shallowRef<CoverageProfileResult | null>(null);
@@ -173,12 +175,22 @@ let fusionRequestToken = 0;
 const layerControls = reactive<ResultLayerControl[]>([
   {
     key: "radarVolume",
-    label: "理论波束",
-    description: "透明雷达包络与扫描扇束",
+    label: "可分析理论波束",
+    description: "限制在 DEM 有效分析域内",
     color: "#34d399",
     visible: true,
     opacity: 0.62,
     defaultOpacity: 0.62,
+    available: false
+  },
+  {
+    key: "radarRequestBoundary",
+    label: "完整请求边界",
+    description: "DEM 裁剪前的理论波束参考线",
+    color: "#94a3b8",
+    visible: false,
+    opacity: 0.45,
+    defaultOpacity: 0.45,
     available: false
   },
   {
@@ -213,8 +225,8 @@ const layerControls = reactive<ResultLayerControl[]>([
   },
   {
     key: "range",
-    label: "理论范围",
-    description: "最大探测半径",
+    label: "可分析理论范围",
+    description: "理论波束与 DEM 分析域的交集",
     color: "#2563eb",
     visible: false,
     opacity: 0.08,
@@ -306,6 +318,7 @@ watch(
   coverageRequest,
   () => {
     radarVolumeRequest.value = coverageRequest;
+    radarVolumeTaskId.value = null;
     syncRadarVolumeLayer(coverageRequest);
   },
   { deep: true }
@@ -512,6 +525,7 @@ async function handleRun() {
     removeResultLayers(map.value);
     clearLayerAvailability();
     radarVolumeRequest.value = coverageRequest;
+    radarVolumeTaskId.value = null;
     addRadarMarker(map.value, coverageRequest.radar.lon, coverageRequest.radar.lat);
     syncRadarVolumeLayer();
     const created = await createCoverageTask(coverageRequest);
@@ -755,6 +769,7 @@ function loadOutputs(result: CoverageTaskStatus) {
   heightLayerOptions.value = [];
   selectedHeightLayerM.value = null;
   radarVolumeRequest.value = result.request ?? coverageRequest;
+  radarVolumeTaskId.value = result.request ? result.task_id : null;
 
   const visible = resolveOutputUrl(result, "visible_geojson", result.outputs?.visible_geojson);
   const blocked = resolveOutputUrl(result, "blocked_geojson", result.outputs?.blocked_geojson);
@@ -770,6 +785,7 @@ function loadOutputs(result: CoverageTaskStatus) {
   if (!range && !blocked && !visible) {
     updateLayerAvailability({
       radarVolume: !!result.request,
+      radarRequestBoundary: !!result.request,
       clippedVolume: Boolean(clippedCells && clippedManifest),
       voxel: Boolean(voxelUrl && voxelManifest),
       heightLayer: false
@@ -788,6 +804,7 @@ function loadOutputs(result: CoverageTaskStatus) {
     blocked: !!blocked,
     visible: !!visible,
     radarVolume: !!result.request,
+    radarRequestBoundary: !!result.request,
     clippedVolume: Boolean(clippedCells && clippedManifest),
     voxel: Boolean(voxelUrl && voxelManifest),
     heightLayer: false
@@ -1030,7 +1047,7 @@ function applyLayerControl(control: ResultLayerControl) {
   if (!map.value || !control.available) {
     return;
   }
-  if (control.key === "radarVolume") {
+  if (control.key === "radarVolume" || control.key === "radarRequestBoundary") {
     syncRadarVolumeLayer();
     return;
   }
@@ -1059,9 +1076,10 @@ function applyLayerControl(control: ResultLayerControl) {
 
 function clearLayerAvailability() {
   focusToken++;
+  radarVolumeTaskId.value = null;
   for (const control of layerControls) {
     control.available = false;
-    control.visible = true;
+    control.visible = defaultLayerVisibility(control.key);
     control.opacity = control.defaultOpacity;
   }
   voxelPoints.value = [];
@@ -1081,7 +1099,7 @@ function clearLayerAvailability() {
 function updateLayerAvailability(available: Partial<Record<LayerKey, boolean>>) {
   for (const control of layerControls) {
     control.available = available[control.key] ?? false;
-    control.visible = control.key !== "voxel";
+    control.visible = defaultLayerVisibility(control.key);
     control.opacity = control.defaultOpacity;
   }
 }
@@ -1154,6 +1172,10 @@ function getLayerControl(key: LayerKey) {
   return layerControls.find((item) => item.key === key);
 }
 
+function defaultLayerVisibility(key: LayerKey) {
+  return key !== "voxel" && key !== "radarRequestBoundary";
+}
+
 function isFusionLayerKey(key: LayerKey): key is FusionLayerKey {
   return key === "fusionVisible" || key === "fusionOverlap" || key === "fusionBlind";
 }
@@ -1163,13 +1185,29 @@ function syncRadarVolumeLayer(request?: CoverageRequest) {
     return;
   }
   const control = getLayerControl("radarVolume");
-  if (!control?.available || !control.visible) {
+  const boundaryControl = getLayerControl("radarRequestBoundary");
+  const showSolid = Boolean(control?.available && control.visible);
+  const showBoundary = Boolean(boundaryControl?.available && boundaryControl.visible);
+  if (!showSolid && !showBoundary) {
     removeRadarVolume(map.value);
     return;
   }
-  addOrUpdateRadarVolume(map.value, request ?? radarVolumeRequest.value ?? coverageRequest, {
-    opacity: control.opacity,
-    showScanPlane: !(getLayerControl("clippedVolume")?.available && clippedVolumeCells.value.length)
+  const renderRequest = request ?? radarVolumeRequest.value ?? coverageRequest;
+  const exactProfile = radarVolumeTaskId.value === task.value?.task_id
+    ? task.value?.model?.beam_clip_profile ?? null
+    : null;
+  const requestDem = demList.value.find((item) => item.dem_id === renderRequest.dem_id) ?? dem.value;
+  const clipProfile = exactProfile ?? clipProfileFromBounds(
+    requestDem?.bounds ?? [],
+    renderRequest.radar,
+    renderRequest.coverage.max_range_m
+  );
+  addOrUpdateRadarVolume(map.value, renderRequest, {
+    opacity: showSolid ? control?.opacity ?? 0.62 : 0,
+    showScanPlane: showSolid && !(getLayerControl("clippedVolume")?.available && clippedVolumeCells.value.length),
+    clipProfile,
+    showFullRequestOutline: showBoundary,
+    referenceOpacity: boundaryControl?.opacity ?? 0.45
   });
   moveRadarMarkerToTop(map.value);
 }

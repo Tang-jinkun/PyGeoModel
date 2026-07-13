@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { clipProfileFromBounds, radiusAtAzimuth } from "./beamClipProfile";
+import { clipProfileFromBounds, createRadiusResolver, radiusAtAzimuth } from "./beamClipProfile";
 
 
 describe("beam clip profiles", () => {
@@ -26,5 +26,16 @@ describe("beam clip profiles", () => {
 
   it("returns the fallback for missing legacy profiles", () => {
     expect(radiusAtAzimuth(null, 30, 5000)).toBe(5000);
+  });
+
+  it("never resolves a clipped radius beyond the requested range", () => {
+    const radius = createRadiusResolver(
+      1000,
+      { azimuth_step_deg: 90, radius_m: [800, 1200, 500, 900] }
+    );
+
+    expect(radius(0)).toBe(800);
+    expect(radius(Math.PI / 2)).toBe(1000);
+    expect(radius(Math.PI)).toBe(500);
   });
 });

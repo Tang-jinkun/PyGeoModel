@@ -143,8 +143,16 @@ const warningItems = computed(() => (Array.isArray(props.task?.warnings) ? props
 
 const metricItems = computed(() => [
   {
-    label: "理论面积",
+    label: "请求理论面积",
+    value: formatArea(props.task?.metrics?.requested_theoretical_area_m2)
+  },
+  {
+    label: "可分析理论面积",
     value: formatArea(props.task?.metrics?.theoretical_area_m2)
+  },
+  {
+    label: "DEM 外未知面积",
+    value: formatArea(props.task?.metrics?.unknown_area_m2)
   },
   {
     label: "可探测面积",
