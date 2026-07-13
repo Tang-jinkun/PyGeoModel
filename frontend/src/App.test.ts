@@ -121,7 +121,7 @@ describe("App workspace wiring", () => {
     await flushPromises();
 
     await wrapper.get('[data-action="open-history"]').trigger("click");
-    await nextTick();
+    await flushPromises();
     await wrapper.getComponent(TaskHistoryDrawer).get('[data-action="restore"]').trigger("click");
     await flushPromises();
 
@@ -190,12 +190,37 @@ describe("App workspace wiring", () => {
     await nextTick();
     expect(profileButton.classes()).not.toContain("el-button--primary");
   });
+
+  it("clears old radar layers before a replacement task finishes loading outputs", async () => {
+    const wrapper = mountApp();
+    await flushPromises();
+    const radarClient = clients.get(getModelDefinition("radar").taskBasePath)!;
+    radarClient.create
+      .mockImplementationOnce(async (request) => finishedTask(request, "radar-old"))
+      .mockImplementationOnce(async (request) => finishedTask(request, "radar-new"));
+    const panel = wrapper.getComponent(ModelParameterPanel);
+    panel.vm.$emit("submit", structuredClone(toRaw(panel.props("modelValue"))));
+    await flushPromises();
+    const clearCount = radarLayerAdapter.clear.mock.calls.length;
+    const pendingMetrics = deferred<Record<string, unknown>>();
+    radarClient.metrics.mockReturnValueOnce(pendingMetrics.promise);
+
+    panel.vm.$emit("submit", structuredClone(toRaw(panel.props("modelValue"))));
+    await flushPromises();
+
+    expect(radarLayerAdapter.clear.mock.calls.length).toBeGreaterThan(clearCount);
+    pendingMetrics.resolve({});
+    await flushPromises();
+  });
 });
 
 function mountApp() {
   return mount(App, {
     global: {
-      stubs: { MapWorkspace: MapWorkspaceStub },
+      stubs: {
+        MapWorkspace: MapWorkspaceStub,
+        FusionPanel: defineComponent({ name: "FusionPanel", template: "<div>融合分析</div>" })
+      },
       directives: { loading: () => undefined }
     }
   });

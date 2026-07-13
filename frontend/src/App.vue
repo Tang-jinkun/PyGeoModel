@@ -49,6 +49,14 @@
           @spatial-edit="applyMapEdit"
           @finish="mapEditing = false"
         />
+        <RadarLayerControls
+          v-if="workspace.selectedModel.value === 'radar'"
+          :layers="radarControlLayers"
+          :height-options="heightOptions"
+          :selected-height-m="selectedHeightM"
+          @update-layer="updateRadarControl"
+          @select-height="selectHeightLayer"
+        />
         <ProfilePanel
           v-if="workspace.selectedModel.value === 'radar'"
           :profile="radarAnalysis.profile.value?.result ?? null"
@@ -135,7 +143,7 @@
 import type maplibregl from "maplibre-gl";
 import { Aim } from "@element-plus/icons-vue";
 import { ElButton, ElMessage, ElTooltip } from "element-plus";
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, toRaw, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, shallowRef, toRaw, watch } from "vue";
 
 import DemSelector from "./components/dem/DemSelector.vue";
 import FusionPanel from "./components/FusionPanel.vue";
@@ -144,6 +152,11 @@ import WorkspaceShell from "./components/layout/WorkspaceShell.vue";
 import MapWorkspace from "./components/map/MapWorkspace.vue";
 import ProfilePanel from "./components/ProfilePanel.vue";
 import TaskHistoryDrawer from "./components/tasks/TaskHistoryDrawer.vue";
+import RadarLayerControls, {
+  type RadarControlKind,
+  type RadarControlLayer,
+  type RadarHeightOption
+} from "./components/tasks/RadarLayerControls.vue";
 import TaskResultPanel from "./components/tasks/TaskResultPanel.vue";
 import { useDemManager } from "./composables/useDemManager";
 import { useMapWorkspace } from "./composables/useMapWorkspace";
@@ -175,13 +188,20 @@ import {
 import type { BaseModelRequest, OutputLayerDefinition, TaskSummary } from "./models/shared";
 import { applySpatialDraftToRequest, spatialDraftFromRequest } from "./models/spatialAdapter";
 import { useRadarAnalysis } from "./models/radar/useRadarAnalysis";
+import { createHeightLayerLoader } from "./models/radar/heightLayerLoader";
 
 type MapEditTarget = "auto" | "point" | "route" | "start" | "end" | "threat";
 type GenericTask = TaskSummary<BaseModelRequest, unknown, unknown, unknown>;
 interface SelectedTaskContext { modelId: ModelId; task: GenericTask }
-interface HeightLayerData { visible: GeoJSON.GeoJSON; blocked: GeoJSON.GeoJSON | null }
+interface HeightLayerData extends RadarHeightOption { visibleUrl: string; blockedUrl: string | null }
 interface HeightManifest {
-  height_layers?: Array<{ height_m?: number; visible_filename?: string; blocked_filename?: string }>;
+  height_layers?: Array<{
+    height_m?: number;
+    visible_filename?: string;
+    blocked_filename?: string;
+    visible_area_m2?: number;
+    blocked_area_m2?: number;
+  }>;
 }
 
 const workspace = useModelWorkspace();
@@ -201,6 +221,19 @@ const mapEditTarget = ref<MapEditTarget>("auto");
 const renderedTaskLayers = new Map<string, string>();
 const renderedHeightLayers = new Map<string, string>();
 const radarLayerErrors = ref<string[]>([]);
+const heightOptions = ref<RadarHeightOption[]>([]);
+const selectedHeightM = ref<number | null>(null);
+const activeHeightData = shallowRef<HeightLayerData[]>([]);
+const heightLayerLoader = createHeightLayerLoader(fetchJson);
+let heightRenderToken = 0;
+let lastRadarTaskId: string | null = null;
+const radarControlLayers = reactive<RadarControlLayer[]>([
+  { kind: "volume", label: "Radar volume", color: "#22c55e", visible: true, opacity: 0.62, available: true },
+  { kind: "boundary", label: "Request boundary", color: "#94a3b8", visible: false, opacity: 0.45, available: true },
+  { kind: "clipped", label: "Terrain-clipped beam", color: "#ef4444", visible: true, opacity: 0.66, available: false },
+  { kind: "voxel", label: "Voxel cloud", color: "#06b6d4", visible: false, opacity: 0.8, available: false },
+  { kind: "height", label: "Height coverage", color: "#f59e0b", visible: true, opacity: 0.24, available: false }
+]);
 
 const activeDefinition = computed(() => getModelDefinition(workspace.selectedModel.value));
 const selectedDem = computed(() => demManager.dems.value.find(
@@ -224,10 +257,17 @@ const selectedTaskContext = computed<SelectedTaskContext | null>(() => {
 const radarLayers = createRadarLayerAdapter({
   renderVolume(plan) {
     if (!map.value || !mapReady(map.value)) return;
+    const control = radarControl("volume");
+    const boundary = radarControl("boundary");
+    control.available = true;
+    boundary.available = true;
+    if (!control.visible && !boundary.visible) return;
     addOrUpdateRadarVolume(map.value, plan.request, {
-      opacity: 0.62,
+      opacity: control.visible ? control.opacity : 0,
       clipProfile: plan.clipProfile,
-      showFullRequestOutline: false
+      showScanPlane: control.visible,
+      showFullRequestOutline: boundary.visible,
+      referenceOpacity: boundary.opacity
     });
   },
   removeVolume() {
@@ -237,7 +277,11 @@ const radarLayers = createRadarLayerAdapter({
     return loadVoxelData(plan.outputUrls.voxel_points_bin, plan.outputUrls.voxel_manifest_json);
   },
   renderVoxel(data) {
-    if (map.value && mapReady(map.value)) addOrUpdateVoxelLayer(map.value, data, { opacity: 0.58 });
+    const control = radarControl("voxel");
+    control.available = true;
+    if (control.visible && map.value && mapReady(map.value)) {
+      addOrUpdateVoxelLayer(map.value, data, { opacity: control.opacity });
+    }
   },
   removeVoxel() {
     if (map.value) removeVoxelLayer(map.value);
@@ -250,8 +294,11 @@ const radarLayers = createRadarLayerAdapter({
   },
   renderClipped(data, plan) {
     if (!map.value || !mapReady(map.value)) return;
+    const control = radarControl("clipped");
+    control.available = true;
+    if (!control.visible) return;
     addOrUpdateClippedVolumeLayer(map.value, data.cells, data.manifest, {
-      opacity: 0.66,
+      opacity: control.opacity,
       scanMode: plan.request.coverage.scan_mode,
       azimuthDeg: plan.request.coverage.azimuth_deg,
       beamWidthDeg: plan.request.coverage.beam_width_deg,
@@ -264,26 +311,18 @@ const radarLayers = createRadarLayerAdapter({
   },
   loadHeightLayers: loadHeightLayers,
   renderHeightLayers(data) {
-    if (!map.value || !mapReady(map.value)) return;
-    removeHeightLayers();
-    for (const [index, layer] of data.entries()) {
-      renderGeoJsonLayer(map.value, `radar-height-visible-${index}`, layer.visible, {
-        kind: "height-visible",
-        label: "Height visible",
-        color: "#22c55e",
-        geometry: "fill",
-        defaultOpacity: 0.2
-      }, true, 0.2, renderedHeightLayers);
-      if (layer.blocked) {
-        renderGeoJsonLayer(map.value, `radar-height-blocked-${index}`, layer.blocked, {
-          kind: "height-blocked",
-          label: "Height blocked",
-          color: "#ef4444",
-          geometry: "fill",
-          defaultOpacity: 0.14
-        }, true, 0.14, renderedHeightLayers);
-      }
+    activeHeightData.value = data;
+    heightOptions.value = data.map(({ heightM, label }) => ({ heightM, label }));
+    if (!data.some(({ heightM }) => heightM === selectedHeightM.value)) {
+      const targetHeight = selectedTaskContext.value?.task.request
+        ? (selectedTaskContext.value.task as RadarTask).request?.target.height_m ?? 0
+        : 0;
+      selectedHeightM.value = data.find(({ heightM }) => heightM >= targetHeight)?.heightM
+        ?? data.at(-1)?.heightM
+        ?? null;
     }
+    radarControl("height").available = data.length > 0;
+    void renderSelectedHeightLayer();
   },
   removeHeightLayers
 });
@@ -313,6 +352,13 @@ onBeforeUnmount(() => {
 });
 
 watch(selectedTaskContext, async (context) => {
+  const nextRadarTaskId = context?.modelId === "radar" ? context.task.task_id : null;
+  if (nextRadarTaskId !== lastRadarTaskId) {
+    radarLayers.clear();
+    heightLayerLoader.setTask(nextRadarTaskId);
+    lastRadarTaskId = nextRadarTaskId;
+    resetRadarOutputControls();
+  }
   if (!context || context.modelId !== "radar"
     || radarAnalysis.profile.value?.task.task_id !== context.task.task_id) {
     clearProfile();
@@ -522,18 +568,22 @@ function syncRadarPreview() {
   const instance = map.value;
   if (!instance || !mapReady(instance) || workspace.selectedModel.value !== "radar") return;
   const request = workspace.drafts.radar;
+  const volumeControl = radarControl("volume");
+  const boundaryControl = radarControl("boundary");
+  volumeControl.available = true;
+  boundaryControl.available = true;
   addRadarMarker(instance, request.radar.lon, request.radar.lat, request.radar.height_m);
   const dem = demManager.dems.value.find(({ dem_id }) => dem_id === request.dem_id) ?? selectedDem.value;
-  if (!dem || dem.bounds.length !== 4) {
+  if ((!volumeControl.visible && !boundaryControl.visible) || !dem || dem.bounds.length !== 4) {
     removeRadarVolume(instance);
     return;
   }
   addOrUpdateRadarVolume(instance, request, {
-    opacity: 0.42,
-    showScanPlane: true,
+    opacity: volumeControl.visible ? volumeControl.opacity : 0,
+    showScanPlane: volumeControl.visible,
     clipProfile: clipProfileFromBounds(dem.bounds, request.radar, request.coverage.max_range_m),
-    showFullRequestOutline: true,
-    referenceOpacity: 0.4
+    showFullRequestOutline: boundaryControl.visible,
+    referenceOpacity: boundaryControl.opacity
   });
 }
 
@@ -623,25 +673,87 @@ function renderRadarAnalysisLayers() {
 async function loadHeightLayers(plan: RadarLayerPlan): Promise<HeightLayerData[]> {
   const manifestUrl = plan.outputUrls.height_layers_manifest_json;
   const manifest = await fetchJson<HeightManifest>(manifestUrl);
-  const layers = [...(manifest.height_layers ?? [])].sort(
-    (left, right) => (left.height_m ?? 0) - (right.height_m ?? 0)
-  );
-  const targetHeight = plan.request.target.height_m;
-  const selected = layers.find(({ height_m }) => (height_m ?? 0) >= targetHeight) ?? layers.at(-1);
-  if (!selected?.visible_filename) return [];
-  return Promise.all([selected].map(async (layer) => ({
-    visible: await fetchJson<GeoJSON.GeoJSON>(resolveRelativeUrl(manifestUrl, layer.visible_filename ?? "")),
-    blocked: layer.blocked_filename
-      ? await fetchJson<GeoJSON.GeoJSON>(resolveRelativeUrl(manifestUrl, layer.blocked_filename))
-      : null
-  })));
+  return (manifest.height_layers ?? []).flatMap((layer) => {
+    if (layer.height_m == null || !layer.visible_filename) return [];
+    const visibleArea = formatArea(layer.visible_area_m2);
+    const blockedArea = formatArea(layer.blocked_area_m2);
+    return [{
+      heightM: layer.height_m,
+      label: `${formatHeight(layer.height_m)} | visible ${visibleArea} | blocked ${blockedArea}`,
+      visibleUrl: resolveRelativeUrl(manifestUrl, layer.visible_filename),
+      blockedUrl: layer.blocked_filename ? resolveRelativeUrl(manifestUrl, layer.blocked_filename) : null
+    }];
+  }).sort((left, right) => left.heightM - right.heightM);
 }
 
 function removeHeightLayers() {
+  heightRenderToken++;
   if (!map.value) return;
   for (const id of [...renderedHeightLayers.keys()]) {
     removeGeoJsonLayer(map.value, id, renderedHeightLayers);
   }
+}
+
+async function renderSelectedHeightLayer() {
+  removeHeightLayers();
+  const instance = map.value;
+  const control = radarControl("height");
+  const selected = activeHeightData.value.find(({ heightM }) => heightM === selectedHeightM.value);
+  if (!instance || !mapReady(instance) || !control.visible || !selected) return;
+  const token = ++heightRenderToken;
+  const taskId = selectedTaskContext.value?.task.task_id;
+  try {
+    const loaded = await heightLayerLoader.load(selected.heightM, selected.visibleUrl, selected.blockedUrl);
+    if (!loaded || token !== heightRenderToken || selectedTaskContext.value?.task.task_id !== taskId) return;
+    renderGeoJsonLayer(instance, "radar-height-visible", loaded.visible, {
+      kind: "height-visible", label: "Height visible", color: "#22c55e", geometry: "fill", defaultOpacity: 0.2
+    }, true, control.opacity, renderedHeightLayers);
+    if (loaded.blocked) {
+      renderGeoJsonLayer(instance, "radar-height-blocked", loaded.blocked, {
+        kind: "height-blocked", label: "Height blocked", color: "#ef4444", geometry: "fill", defaultOpacity: 0.14
+      }, true, Math.max(0.1, control.opacity * 0.7), renderedHeightLayers);
+    }
+  } catch (error) {
+    if (token === heightRenderToken) radarLayerErrors.value = [...radarLayerErrors.value, errorMessage(error)];
+  }
+}
+
+function updateRadarControl(kind: RadarControlKind, patch: { visible?: boolean; opacity?: number }) {
+  Object.assign(radarControl(kind), patch);
+  if (kind === "height") {
+    void renderSelectedHeightLayer();
+    return;
+  }
+  refreshRadarLayerRendering();
+}
+
+function selectHeightLayer(heightM: number) {
+  selectedHeightM.value = heightM;
+  void renderSelectedHeightLayer();
+}
+
+function refreshRadarLayerRendering() {
+  if (workspace.selectedModel.value !== "radar") return;
+  const context = selectedTaskContext.value;
+  if (context?.modelId === "radar" && context.task.status === "finished") {
+    radarLayers.setRadarVisible(false);
+    radarLayers.setRadarVisible(true);
+  } else {
+    syncRadarPreview();
+  }
+}
+
+function radarControl(kind: RadarControlKind) {
+  return radarControlLayers.find((layer) => layer.kind === kind)!;
+}
+
+function resetRadarOutputControls() {
+  for (const kind of ["clipped", "voxel", "height"] as const) radarControl(kind).available = false;
+  heightOptions.value = [];
+  activeHeightData.value = [];
+  selectedHeightM.value = null;
+  removeHeightLayers();
+  radarLayerErrors.value = [];
 }
 
 function renderGeoJsonLayer(
@@ -695,7 +807,20 @@ async function runCommand<T extends unknown[]>(command: (...args: T) => unknown,
 }
 
 function showError(error: unknown) {
-  ElMessage.error(error instanceof Error ? error.message : String(error));
+  ElMessage.error(errorMessage(error));
+}
+
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function formatHeight(heightM: number) {
+  return heightM >= 1000 ? `${heightM / 1000} km` : `${heightM} m`;
+}
+
+function formatArea(areaM2?: number) {
+  if (!areaM2) return "0 km²";
+  return `${(areaM2 / 1_000_000).toFixed(areaM2 >= 10_000_000 ? 1 : 2)} km²`;
 }
 
 function sanitizeId(value: string) {
