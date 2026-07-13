@@ -168,11 +168,32 @@ def test_prepare_coverage_dem_reprojects_crop(tmp_path: Path) -> None:
     assert prepared.radar_x > 0
     assert prepared.radar_y > 0
     assert prepared.resolution_m[0] > 0
+    assert prepared.resolution_adjusted is False
 
     with rasterio.open(destination) as dataset:
         assert dataset.crs.to_epsg() == 32648
         assert dataset.width < 100
         assert dataset.height < 100
+
+
+def test_prepare_coverage_dem_reports_adjusted_resolution(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    source = tmp_path / "source.tif"
+    destination = tmp_path / "projected.tif"
+    write_test_dem(source)
+    monkeypatch.setattr("app.services.coverage_model.MAX_COVERAGE_CELLS", 100)
+
+    prepared = prepare_coverage_dem(
+        source,
+        destination,
+        make_request(lon=105.0, lat=35.0, max_range_m=2000),
+    )
+
+    assert prepared.resolution_adjusted is True
+    with rasterio.open(destination) as dataset:
+        assert dataset.width * dataset.height <= 100
 
 
 def test_prepare_coverage_dem_rejects_outside_radar(tmp_path: Path) -> None:

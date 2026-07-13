@@ -110,8 +110,9 @@ def prepare_coverage_dem(source: Path, destination: Path, payload: CoverageReque
             target_bounds,
             native_x_resolution,
             native_y_resolution,
+            max_cells=MAX_COVERAGE_CELLS,
         )
-        resolution_adjusted = (
+        resolution_adjusted = bool(
             x_resolution > native_x_resolution or y_resolution > native_y_resolution
         )
         dst_transform = from_origin(
