@@ -292,6 +292,36 @@ describe("createRadarLayerAdapter", () => {
     expect(deps.renderHeightLayers).toHaveBeenCalledTimes(1);
   });
 
+  it("re-renders a changed same-task plan without reloading unchanged outputs", async () => {
+    const deps = runtimeDependencies();
+    const adapter = createRadarLayerAdapter(deps);
+    const task = makeLayerTask();
+
+    await adapter.showTask(task, [79.7, 31.4, 79.9, 31.6]);
+    await adapter.showTask(task, [79.6, 31.3, 80, 31.7]);
+
+    expect(deps.renderVolume).toHaveBeenCalledTimes(2);
+    expect(deps.loadVoxel).toHaveBeenCalledTimes(1);
+    expect(deps.loadClipped).toHaveBeenCalledTimes(1);
+    expect(deps.loadHeightLayers).toHaveBeenCalledTimes(1);
+  });
+
+  it("treats reordered output files as the same layer plan", async () => {
+    const deps = runtimeDependencies();
+    const adapter = createRadarLayerAdapter(deps);
+    const task = makeLayerTask();
+    const reordered = makeLayerTask();
+    reordered.output_files.reverse();
+
+    await adapter.showTask(task, []);
+    await adapter.showTask(reordered, []);
+
+    expect(deps.renderVolume).toHaveBeenCalledTimes(1);
+    expect(deps.loadVoxel).toHaveBeenCalledTimes(1);
+    expect(deps.loadClipped).toHaveBeenCalledTimes(1);
+    expect(deps.loadHeightLayers).toHaveBeenCalledTimes(1);
+  });
+
   it("isolates loader errors without blocking successful layers", async () => {
     const deps = runtimeDependencies();
     const voxelError = new Error("voxel failed");

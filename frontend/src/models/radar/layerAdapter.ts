@@ -133,7 +133,7 @@ export function createRadarLayerAdapter<VoxelData, ClippedData, HeightData>(
         const data = await dependencies.loadVoxel(plan);
         if (!isCurrent("voxel", version, plan.taskId)) return;
         entry.voxel = data;
-        if (visible) dependencies.renderVoxel(data, plan);
+        if (visible && activePlan) dependencies.renderVoxel(data, activePlan);
       } catch (error) {
         if (isCurrent("voxel", version, plan.taskId)) layerErrors.voxel = asError(error);
       } finally {
@@ -156,7 +156,7 @@ export function createRadarLayerAdapter<VoxelData, ClippedData, HeightData>(
         const data = await dependencies.loadClipped(plan);
         if (!isCurrent("clipped", version, plan.taskId)) return;
         entry.clipped = data;
-        if (visible) dependencies.renderClipped(data, plan);
+        if (visible && activePlan) dependencies.renderClipped(data, activePlan);
       } catch (error) {
         if (isCurrent("clipped", version, plan.taskId)) layerErrors.clipped = asError(error);
       } finally {
@@ -179,7 +179,7 @@ export function createRadarLayerAdapter<VoxelData, ClippedData, HeightData>(
         const data = await dependencies.loadHeightLayers(plan);
         if (!isCurrent("height", version, plan.taskId)) return;
         entry.height = data;
-        if (visible) dependencies.renderHeightLayers(data, plan);
+        if (visible && activePlan) dependencies.renderHeightLayers(data, activePlan);
       } catch (error) {
         if (isCurrent("height", version, plan.taskId)) layerErrors.height = asError(error);
       } finally {
@@ -201,10 +201,16 @@ export function createRadarLayerAdapter<VoxelData, ClippedData, HeightData>(
     const previousPlan = activePlan;
     const planChanged = !previousPlan || !areRadarLayerPlansEqual(previousPlan, plan);
     if (planChanged) {
-      invalidateLoads();
+      const taskChanged = previousPlan?.taskId !== plan.taskId;
+      const outputsChanged = Boolean(
+        previousPlan
+        && !taskChanged
+        && !areOutputUrlsEqual(previousPlan.outputUrls, plan.outputUrls)
+      );
+      if (taskChanged || outputsChanged) invalidateLoads();
       removeVisibleLayers();
       layerErrors = {};
-      if (previousPlan?.taskId === plan.taskId) cache.delete(plan.taskId);
+      if (outputsChanged) cache.delete(plan.taskId);
     }
     activePlan = plan;
     const entry = cache.get(plan.taskId) ?? {};
@@ -265,7 +271,13 @@ function areRadarLayerPlansEqual(left: RadarLayerPlan, right: RadarLayerPlan) {
     && left.coverageContractVersion === right.coverageContractVersion
     && JSON.stringify(left.request) === JSON.stringify(right.request)
     && JSON.stringify(left.clipProfile) === JSON.stringify(right.clipProfile)
-    && JSON.stringify(left.outputUrls) === JSON.stringify(right.outputUrls);
+    && areOutputUrlsEqual(left.outputUrls, right.outputUrls);
+}
+
+function areOutputUrlsEqual(left: Record<string, string>, right: Record<string, string>) {
+  const leftEntries = Object.entries(left).sort(([leftKey], [rightKey]) => leftKey.localeCompare(rightKey));
+  const rightEntries = Object.entries(right).sort(([leftKey], [rightKey]) => leftKey.localeCompare(rightKey));
+  return JSON.stringify(leftEntries) === JSON.stringify(rightEntries);
 }
 
 function cloneRadarRequest(source: RadarRequest, maxRangeM: number): RadarRequest {
