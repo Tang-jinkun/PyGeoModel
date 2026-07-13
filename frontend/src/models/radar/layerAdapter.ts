@@ -53,9 +53,14 @@ interface LayerCache<VoxelData, ClippedData, HeightData> {
   voxel?: VoxelData;
   clipped?: ClippedData;
   height?: HeightData;
-  voxelPending?: Promise<void>;
-  clippedPending?: Promise<void>;
-  heightPending?: Promise<void>;
+  voxelPending?: PendingLoad;
+  clippedPending?: PendingLoad;
+  heightPending?: PendingLoad;
+}
+
+interface PendingLoad {
+  version: number;
+  promise: Promise<void>;
 }
 
 export function resolveRadarLayerPlan(
@@ -117,9 +122,10 @@ export function createRadarLayerAdapter<VoxelData, ClippedData, HeightData>(
   }
 
   function loadVoxel(plan: RadarLayerPlan, entry: LayerCache<VoxelData, ClippedData, HeightData>) {
-    if (entry.voxel !== undefined || entry.voxelPending) return entry.voxelPending;
-    if (!plan.outputUrls.voxel_manifest_json || !plan.outputUrls.voxel_points_bin) return undefined;
+    if (entry.voxel !== undefined) return undefined;
     const version = versions.voxel;
+    if (entry.voxelPending?.version === version) return entry.voxelPending.promise;
+    if (!plan.outputUrls.voxel_manifest_json || !plan.outputUrls.voxel_points_bin) return undefined;
     delete layerErrors.voxel;
     let pending!: Promise<void>;
     pending = (async () => {
@@ -131,17 +137,18 @@ export function createRadarLayerAdapter<VoxelData, ClippedData, HeightData>(
       } catch (error) {
         if (isCurrent("voxel", version, plan.taskId)) layerErrors.voxel = asError(error);
       } finally {
-        if (entry.voxelPending === pending) delete entry.voxelPending;
+        if (entry.voxelPending?.promise === pending) delete entry.voxelPending;
       }
     })();
-    entry.voxelPending = pending;
+    entry.voxelPending = { version, promise: pending };
     return pending;
   }
 
   function loadClipped(plan: RadarLayerPlan, entry: LayerCache<VoxelData, ClippedData, HeightData>) {
-    if (entry.clipped !== undefined || entry.clippedPending) return entry.clippedPending;
-    if (!plan.outputUrls.clipped_volume_manifest_json || !plan.outputUrls.clipped_volume_cells_bin) return undefined;
+    if (entry.clipped !== undefined) return undefined;
     const version = versions.clipped;
+    if (entry.clippedPending?.version === version) return entry.clippedPending.promise;
+    if (!plan.outputUrls.clipped_volume_manifest_json || !plan.outputUrls.clipped_volume_cells_bin) return undefined;
     delete layerErrors.clipped;
     let pending!: Promise<void>;
     pending = (async () => {
@@ -153,17 +160,18 @@ export function createRadarLayerAdapter<VoxelData, ClippedData, HeightData>(
       } catch (error) {
         if (isCurrent("clipped", version, plan.taskId)) layerErrors.clipped = asError(error);
       } finally {
-        if (entry.clippedPending === pending) delete entry.clippedPending;
+        if (entry.clippedPending?.promise === pending) delete entry.clippedPending;
       }
     })();
-    entry.clippedPending = pending;
+    entry.clippedPending = { version, promise: pending };
     return pending;
   }
 
   function loadHeight(plan: RadarLayerPlan, entry: LayerCache<VoxelData, ClippedData, HeightData>) {
-    if (entry.height !== undefined || entry.heightPending) return entry.heightPending;
-    if (!plan.outputUrls.height_layers_manifest_json) return undefined;
+    if (entry.height !== undefined) return undefined;
     const version = versions.height;
+    if (entry.heightPending?.version === version) return entry.heightPending.promise;
+    if (!plan.outputUrls.height_layers_manifest_json) return undefined;
     delete layerErrors.height;
     let pending!: Promise<void>;
     pending = (async () => {
@@ -175,10 +183,10 @@ export function createRadarLayerAdapter<VoxelData, ClippedData, HeightData>(
       } catch (error) {
         if (isCurrent("height", version, plan.taskId)) layerErrors.height = asError(error);
       } finally {
-        if (entry.heightPending === pending) delete entry.heightPending;
+        if (entry.heightPending?.promise === pending) delete entry.heightPending;
       }
     })();
-    entry.heightPending = pending;
+    entry.heightPending = { version, promise: pending };
     return pending;
   }
 
@@ -190,17 +198,19 @@ export function createRadarLayerAdapter<VoxelData, ClippedData, HeightData>(
       return;
     }
 
-    const taskChanged = activePlan?.taskId !== plan.taskId;
-    if (taskChanged) {
+    const previousPlan = activePlan;
+    const planChanged = !previousPlan || !areRadarLayerPlansEqual(previousPlan, plan);
+    if (planChanged) {
       invalidateLoads();
       removeVisibleLayers();
       layerErrors = {};
+      if (previousPlan?.taskId === plan.taskId) cache.delete(plan.taskId);
     }
     activePlan = plan;
     const entry = cache.get(plan.taskId) ?? {};
     cache.set(plan.taskId, entry);
 
-    if (visible) renderCached(plan);
+    if (visible && planChanged) renderCached(plan);
     await Promise.all([
       loadVoxel(plan, entry),
       loadClipped(plan, entry),
@@ -248,6 +258,14 @@ export function createRadarLayerAdapter<VoxelData, ClippedData, HeightData>(
     clear,
     dispose
   };
+}
+
+function areRadarLayerPlansEqual(left: RadarLayerPlan, right: RadarLayerPlan) {
+  return left.taskId === right.taskId
+    && left.coverageContractVersion === right.coverageContractVersion
+    && JSON.stringify(left.request) === JSON.stringify(right.request)
+    && JSON.stringify(left.clipProfile) === JSON.stringify(right.clipProfile)
+    && JSON.stringify(left.outputUrls) === JSON.stringify(right.outputUrls);
 }
 
 function cloneRadarRequest(source: RadarRequest, maxRangeM: number): RadarRequest {

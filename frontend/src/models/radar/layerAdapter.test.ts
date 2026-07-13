@@ -225,6 +225,73 @@ describe("createRadarLayerAdapter", () => {
     expect(deps.renderVoxel).not.toHaveBeenCalledWith("old-voxel", expect.anything());
   });
 
+  it("starts a fresh load when the same task is shown after clear", async () => {
+    const deps = runtimeDependencies();
+    const staleVoxel = deferred<string>();
+    const freshVoxel = deferred<string>();
+    deps.loadVoxel
+      .mockReturnValueOnce(staleVoxel.promise)
+      .mockReturnValueOnce(freshVoxel.promise);
+    const adapter = createRadarLayerAdapter(deps);
+
+    const staleLoad = adapter.showTask(makeLayerTask(), []);
+    adapter.clear();
+    const freshLoad = adapter.showTask(makeLayerTask(), []);
+
+    expect(deps.loadVoxel).toHaveBeenCalledTimes(2);
+    freshVoxel.resolve("fresh-voxel");
+    staleVoxel.resolve("stale-voxel");
+    await Promise.all([staleLoad, freshLoad]);
+
+    expect(deps.renderVoxel).toHaveBeenCalledWith(
+      "fresh-voxel",
+      expect.objectContaining({ taskId: "radar-1" })
+    );
+    expect(deps.renderVoxel).not.toHaveBeenCalledWith("stale-voxel", expect.anything());
+  });
+
+  it("starts a fresh load when switching back before the old task load resolves", async () => {
+    const deps = runtimeDependencies();
+    const staleVoxel = deferred<string>();
+    const freshVoxel = deferred<string>();
+    deps.loadVoxel.mockImplementation((plan) => {
+      if (plan.taskId !== "radar-a") return Promise.resolve("voxel-b");
+      return deps.loadVoxel.mock.calls.filter(([calledPlan]) => calledPlan.taskId === "radar-a").length === 1
+        ? staleVoxel.promise
+        : freshVoxel.promise;
+    });
+    const adapter = createRadarLayerAdapter(deps);
+
+    const staleLoad = adapter.showTask(makeLayerTask("radar-a"), []);
+    await adapter.showTask(makeLayerTask("radar-b"), []);
+    const freshLoad = adapter.showTask(makeLayerTask("radar-a"), []);
+
+    expect(deps.loadVoxel).toHaveBeenCalledTimes(3);
+    freshVoxel.resolve("fresh-voxel-a");
+    staleVoxel.resolve("stale-voxel-a");
+    await Promise.all([staleLoad, freshLoad]);
+
+    expect(deps.renderVoxel).toHaveBeenCalledWith(
+      "fresh-voxel-a",
+      expect.objectContaining({ taskId: "radar-a" })
+    );
+    expect(deps.renderVoxel).not.toHaveBeenCalledWith("stale-voxel-a", expect.anything());
+  });
+
+  it("does not render duplicate layers when the active task is shown again", async () => {
+    const deps = runtimeDependencies();
+    const adapter = createRadarLayerAdapter(deps);
+    const task = makeLayerTask();
+
+    await adapter.showTask(task, []);
+    await adapter.showTask(task, []);
+
+    expect(deps.renderVolume).toHaveBeenCalledTimes(1);
+    expect(deps.renderVoxel).toHaveBeenCalledTimes(1);
+    expect(deps.renderClipped).toHaveBeenCalledTimes(1);
+    expect(deps.renderHeightLayers).toHaveBeenCalledTimes(1);
+  });
+
   it("isolates loader errors without blocking successful layers", async () => {
     const deps = runtimeDependencies();
     const voxelError = new Error("voxel failed");
