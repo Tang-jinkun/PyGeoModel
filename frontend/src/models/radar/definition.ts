@@ -22,7 +22,7 @@ export const radarDefinition = {
     return issues;
   },
   metrics: [
-    { key: "theoretical_area_m2", label: "Theoretical area", format: "area" }, { key: "visible_area_m2", label: "Visible area", format: "area" }, { key: "blocked_area_m2", label: "Blocked area", format: "area" }, { key: "blocked_ratio", label: "Blocked ratio", format: "percent" }, { key: "terrain_visible_area_m2", label: "Terrain visible area", format: "area" }, { key: "beam_eligible_area_m2", label: "Beam eligible area", format: "area" }, { key: "radar_equation_limited_area_m2", label: "Radar equation limited area", format: "area" }
+    { key: "requested_theoretical_area_m2", label: "Requested theoretical area", format: "area" }, { key: "theoretical_area_m2", label: "Analyzed theoretical area", format: "area" }, { key: "unknown_area_m2", label: "Unknown DEM area", format: "area" }, { key: "visible_area_m2", label: "Visible area", format: "area" }, { key: "blocked_area_m2", label: "Blocked area", format: "area" }, { key: "blocked_ratio", label: "Blocked ratio", format: "percent" }, { key: "terrain_visible_area_m2", label: "Terrain visible area", format: "area" }, { key: "beam_eligible_area_m2", label: "Beam eligible area", format: "area" }, { key: "radar_equation_limited_area_m2", label: "Radar equation limited area", format: "area" }
   ],
   outputLayers: [
     { kind: "range_geojson", label: "Detection range", color: "#2563eb", geometry: "fill", defaultOpacity: 0.12 }, { kind: "blocked_geojson", label: "Blocked terrain", color: "#dc2626", geometry: "fill", defaultOpacity: 0.28 }, { kind: "visible_geojson", label: "Visible coverage", color: "#16a34a", geometry: "fill", defaultOpacity: 0.35, primary: true }

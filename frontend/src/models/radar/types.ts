@@ -18,6 +18,7 @@ export interface RadarRequest {
   advanced: RadarAdvancedInput; reserved_radar_params: ReservedRadarParams;
 }
 export interface RadarMetrics {
-  theoretical_area_m2: number; visible_area_m2: number; blocked_area_m2: number; blocked_ratio: number;
+  requested_theoretical_area_m2: number; theoretical_area_m2: number; unknown_area_m2: number;
+  visible_area_m2: number; blocked_area_m2: number; blocked_ratio: number;
   terrain_visible_area_m2: number; beam_eligible_area_m2: number; radar_equation_limited_area_m2: number;
 }

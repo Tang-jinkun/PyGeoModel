@@ -57,6 +57,11 @@ export type CoverageOutputKind =
   | "clipped_volume_cells_bin"
   | "height_layers_manifest_json";
 
+export interface BeamClipProfile {
+  azimuth_step_deg: number;
+  radius_m: number[];
+}
+
 export interface CoverageTaskSummary {
   task_id: string;
   dem_id?: string | null;
@@ -66,7 +71,9 @@ export interface CoverageTaskSummary {
   created_at?: string | null;
   updated_at?: string | null;
   metrics?: {
+    requested_theoretical_area_m2: number;
     theoretical_area_m2: number;
+    unknown_area_m2: number;
     visible_area_m2: number;
     blocked_area_m2: number;
     blocked_ratio: number;
@@ -112,6 +119,7 @@ export interface CoverageTaskSummary {
     radar_equation_active: boolean;
     radar_equation_max_range_m?: number | null;
     effective_max_range_m: number;
+    beam_clip_profile: BeamClipProfile | null;
   } | null;
   diagnostics?: {
     radar_equation_active: boolean;
@@ -310,7 +318,7 @@ export function normalizeCoverageRequest(payload: unknown, fallback: CoverageReq
   };
 }
 
-function normalizeCoverageTaskStatus(payload: unknown): CoverageTaskStatus {
+export function normalizeCoverageTaskStatus(payload: unknown): CoverageTaskStatus {
   const summary = normalizeCoverageTaskSummary(payload);
   const requestFallback = {
     ...DEFAULT_COVERAGE_REQUEST,
@@ -350,7 +358,9 @@ function normalizeMetrics(payload: unknown): CoverageTaskSummary["metrics"] {
     return null;
   }
   return {
+    requested_theoretical_area_m2: numberOr(payload.requested_theoretical_area_m2, 0),
     theoretical_area_m2: numberOr(payload.theoretical_area_m2, 0),
+    unknown_area_m2: numberOr(payload.unknown_area_m2, 0),
     visible_area_m2: numberOr(payload.visible_area_m2, 0),
     blocked_area_m2: numberOr(payload.blocked_area_m2, 0),
     blocked_ratio: numberOr(payload.blocked_ratio, 0),
@@ -537,10 +547,23 @@ function normalizeModel(payload: unknown): CoverageTaskSummary["model"] {
     radar_equation_active: booleanOr(payload.radar_equation_active, false),
     radar_equation_max_range_m: typeof payload.radar_equation_max_range_m === "number" ? payload.radar_equation_max_range_m : null,
     effective_max_range_m: numberOr(payload.effective_max_range_m, numberOr(payload.max_range_m, 0)),
+    beam_clip_profile: normalizeBeamClipProfile(payload.beam_clip_profile),
     gdal_viewshed_command: Array.isArray(payload.gdal_viewshed_command)
       ? payload.gdal_viewshed_command.filter((item): item is string => typeof item === "string")
       : []
   };
+}
+
+function normalizeBeamClipProfile(payload: unknown): BeamClipProfile | null {
+  if (!isRecord(payload)) {
+    return null;
+  }
+  const azimuthStepDeg = numberOr(payload.azimuth_step_deg, 0);
+  const radiusM = numberArray(payload.radius_m);
+  if (azimuthStepDeg <= 0 || !radiusM.length) {
+    return null;
+  }
+  return { azimuth_step_deg: azimuthStepDeg, radius_m: radiusM };
 }
 
 function normalizeReservedRadarParams(payload: unknown): Record<string, number | null> {

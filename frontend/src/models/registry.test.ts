@@ -68,4 +68,11 @@ describe("model registry", () => {
       message: "height_layers_m cannot contain more than 20 values"
     });
   });
+
+  it("registers requested and unknown radar coverage metrics", () => {
+    const metricKeys = MODEL_REGISTRY.radar.metrics.map((metric) => metric.key);
+
+    expect(metricKeys).toContain("requested_theoretical_area_m2");
+    expect(metricKeys).toContain("unknown_area_m2");
+  });
 });
