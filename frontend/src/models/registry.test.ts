@@ -58,4 +58,14 @@ describe("model registry", () => {
       aircraft: { ...MODEL_REGISTRY.airCorridor.createDefaultRequest().aircraft, min_agl_m: 3000, max_agl_m: 100 }
     })).toContainEqual({ path: "aircraft.max_agl_m", message: "min_agl_m must be less than max_agl_m" });
   });
+
+  it("accepts duplicate radar height layers after backend normalization", () => {
+    const request = MODEL_REGISTRY.radar.createDefaultRequest();
+    request.advanced.height_layers_m = Array.from({ length: 21 }, () => 300);
+
+    expect(MODEL_REGISTRY.radar.validate(request)).not.toContainEqual({
+      path: "advanced.height_layers_m",
+      message: "height_layers_m cannot contain more than 20 values"
+    });
+  });
 });

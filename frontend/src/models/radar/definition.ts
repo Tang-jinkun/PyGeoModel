@@ -17,8 +17,8 @@ export const radarDefinition = {
   validate: (request: RadarRequest): ValidationIssue[] => {
     const issues: ValidationIssue[] = [];
     if (request.advanced.max_elevation_deg < request.advanced.min_elevation_deg) issues.push({ path: "advanced.max_elevation_deg", message: "max_elevation_deg must be greater than or equal to min_elevation_deg" });
-    const validLayers = request.advanced.height_layers_m.filter((height) => Number.isFinite(height) && height >= 0 && height <= request.advanced.voxel_max_height_m);
-    if (validLayers.length > 20) issues.push({ path: "advanced.height_layers_m", message: "height_layers_m cannot contain more than 20 values" });
+    const validLayers = new Set(request.advanced.height_layers_m.filter((height) => Number.isFinite(height) && height >= 0 && height <= request.advanced.voxel_max_height_m));
+    if (validLayers.size > 20) issues.push({ path: "advanced.height_layers_m", message: "height_layers_m cannot contain more than 20 values" });
     return issues;
   },
   metrics: [
