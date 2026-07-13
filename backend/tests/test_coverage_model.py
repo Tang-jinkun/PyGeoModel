@@ -10,8 +10,10 @@ from app.schemas.radar import CoverageRequest
 from app.services.coverage_domain import build_coverage_domain
 from app.services.coverage_model import (
     _coverage_ratio_for_domain,
+    bounded_canvas,
     default_simplify_tolerance,
     prepare_coverage_dem,
+    project_lonlat_to_crs,
     validate_coverage_extent,
     vectorize_visible_viewshed,
 )
@@ -37,6 +39,20 @@ def test_sector_geometry_uses_north_clockwise_azimuth() -> None:
 def test_default_simplify_tolerance_uses_resolution_when_missing() -> None:
     assert default_simplify_tolerance((30, 25), None) == 30
     assert default_simplify_tolerance((30, 25), 5) == 5
+
+
+def test_bounded_canvas_scales_resolution_to_fit_cell_budget() -> None:
+    width, height, x_resolution, y_resolution = bounded_canvas(
+        (0, 0, 200_000, 200_000),
+        10,
+        10,
+        max_cells=10_000,
+    )
+
+    assert width * height <= 10_000
+    assert width * x_resolution >= 200_000
+    assert height * y_resolution >= 200_000
+    assert x_resolution / 10 == pytest.approx(y_resolution / 10)
 
 
 def test_build_coverage_domain_stops_at_first_nodata_gap() -> None:
@@ -251,6 +267,27 @@ def test_prepare_coverage_dem_keeps_negative_elevations_valid(tmp_path: Path) ->
     assert prepared.analysis_domain.any()
 
 
+def test_prepare_coverage_dem_marks_nan_without_nodata_as_invalid(tmp_path: Path) -> None:
+    source = tmp_path / "source.tif"
+    destination = tmp_path / "projected.tif"
+    write_test_dem(source, nan_cell=(50, 53), nodata=None)
+
+    prepared = prepare_coverage_dem(
+        source,
+        destination,
+        make_request(lon=105.0, lat=35.0),
+    )
+
+    nan_lon = 104.95 + (53.5 * 0.001)
+    nan_lat = 35.05 - (50.5 * 0.001)
+    nan_x, nan_y = project_lonlat_to_crs(nan_lon, nan_lat, f"EPSG:{prepared.target_epsg}")
+    with rasterio.open(destination) as dataset:
+        nan_row, nan_col = dataset.index(nan_x, nan_y)
+
+    assert prepared.analysis_domain is not None
+    assert not prepared.analysis_domain[nan_row, nan_col]
+
+
 def test_vectorize_visible_viewshed(tmp_path: Path) -> None:
     viewshed = tmp_path / "viewshed.tif"
     transform = from_origin(0, 40, 10, 10)
@@ -282,7 +319,14 @@ def test_vectorize_visible_viewshed(tmp_path: Path) -> None:
     assert geom.bounds == pytest.approx((10, 20, 30, 40))
 
 
-def write_test_dem(path: Path, *, nodata_center: bool = False, elevation: float | None = None) -> None:
+def write_test_dem(
+    path: Path,
+    *,
+    nodata_center: bool = False,
+    elevation: float | None = None,
+    nan_cell: tuple[int, int] | None = None,
+    nodata: float | None = -9999,
+) -> None:
     data = (
         numpy.full((100, 100), elevation, dtype=numpy.float32)
         if elevation is not None
@@ -290,6 +334,8 @@ def write_test_dem(path: Path, *, nodata_center: bool = False, elevation: float 
     )
     if nodata_center:
         data[50, 50] = -9999
+    if nan_cell is not None:
+        data[nan_cell] = numpy.nan
     transform = from_origin(104.95, 35.05, 0.001, 0.001)
     with rasterio.open(
         path,
@@ -301,7 +347,7 @@ def write_test_dem(path: Path, *, nodata_center: bool = False, elevation: float 
         dtype=data.dtype,
         crs="EPSG:4326",
         transform=transform,
-        nodata=-9999,
+        nodata=nodata,
     ) as dataset:
         dataset.write(data, 1)
 

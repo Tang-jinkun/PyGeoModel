@@ -22,6 +22,7 @@ MIN_DEM_COVERAGE_RATIO = 0.5
 WARN_DEM_COVERAGE_RATIO = 0.98
 PROJECTED_DEM_NODATA = -3.4028235e38
 COVERAGE_RATIO_ROW_CHUNK_SIZE = 256
+MAX_COVERAGE_CELLS = 16_777_216
 
 
 @dataclass(frozen=True)
@@ -34,6 +35,7 @@ class PreparedCoverageDem:
     projected_bounds: BoundingBox
     resolution_m: tuple[float, float]
     dem_coverage_ratio: float
+    resolution_adjusted: bool = False
     analysis_domain: numpy.ndarray | None = None
     beam_clip_profile_m: tuple[float, ...] = ()
     beam_clip_azimuth_step_deg: float = 2.0
@@ -102,10 +104,16 @@ def prepare_coverage_dem(source: Path, destination: Path, payload: CoverageReque
             int(window.height),
             *crop_bounds_exact,
         )
-        x_resolution = abs(float(resolution_transform.a))
-        y_resolution = abs(float(resolution_transform.e))
-        dst_width = int(numpy.ceil((target_bounds[2] - target_bounds[0]) / x_resolution))
-        dst_height = int(numpy.ceil((target_bounds[3] - target_bounds[1]) / y_resolution))
+        native_x_resolution = abs(float(resolution_transform.a))
+        native_y_resolution = abs(float(resolution_transform.e))
+        dst_width, dst_height, x_resolution, y_resolution = bounded_canvas(
+            target_bounds,
+            native_x_resolution,
+            native_y_resolution,
+        )
+        resolution_adjusted = (
+            x_resolution > native_x_resolution or y_resolution > native_y_resolution
+        )
         dst_transform = from_origin(
             target_bounds[0],
             target_bounds[3],
@@ -130,10 +138,16 @@ def prepare_coverage_dem(source: Path, destination: Path, payload: CoverageReque
             }
         )
 
-        source_data = src.read(1, window=window, masked=True).astype(numpy.float32)
-        source_mask = numpy.ma.getmaskarray(source_data)
-        source_array = source_data.filled(PROJECTED_DEM_NODATA)
-        source_valid = (~source_mask).astype(numpy.uint8)
+        source_data = src.read(1, window=window, masked=True)
+        source_values = numpy.asarray(source_data)
+        source_valid = (
+            ~numpy.ma.getmaskarray(source_data) & numpy.isfinite(source_values)
+        ).astype(numpy.uint8)
+        source_array = numpy.where(
+            source_valid,
+            source_values,
+            PROJECTED_DEM_NODATA,
+        ).astype(numpy.float32)
         destination_array = numpy.full(
             (dst_height, dst_width),
             PROJECTED_DEM_NODATA,
@@ -224,6 +238,7 @@ def prepare_coverage_dem(source: Path, destination: Path, payload: CoverageReque
         projected_bounds=projected_bounds,
         resolution_m=resolution_m,
         dem_coverage_ratio=dem_coverage_ratio,
+        resolution_adjusted=resolution_adjusted,
         analysis_domain=domain.analysis_mask,
         beam_clip_profile_m=domain.radius_m,
         beam_clip_azimuth_step_deg=domain.azimuth_step_deg,
@@ -327,6 +342,33 @@ def default_simplify_tolerance(resolution_m: tuple[float, float], requested_tole
     if requested_tolerance is not None:
         return requested_tolerance
     return max(resolution_m)
+
+
+def bounded_canvas(
+    bounds: tuple[float, float, float, float],
+    x_resolution: float,
+    y_resolution: float,
+    max_cells: int = MAX_COVERAGE_CELLS,
+) -> tuple[int, int, float, float]:
+    left, bottom, right, top = bounds
+    width_m = right - left
+    height_m = top - bottom
+    width = int(numpy.ceil(width_m / x_resolution))
+    height = int(numpy.ceil(height_m / y_resolution))
+    native_cells = width * height
+    if native_cells <= max_cells:
+        return width, height, x_resolution, y_resolution
+
+    scale = numpy.sqrt(native_cells / max_cells)
+    while True:
+        adjusted_x_resolution = x_resolution * scale
+        adjusted_y_resolution = y_resolution * scale
+        width = int(numpy.ceil(width_m / adjusted_x_resolution))
+        height = int(numpy.ceil(height_m / adjusted_y_resolution))
+        cells = width * height
+        if cells <= max_cells:
+            return width, height, adjusted_x_resolution, adjusted_y_resolution
+        scale *= numpy.sqrt(cells / max_cells)
 
 
 def project_lonlat_to_crs(lon: float, lat: float, crs) -> tuple[float, float]:
