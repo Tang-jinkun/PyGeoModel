@@ -88,6 +88,24 @@ def test_build_coverage_domain_preserves_other_azimuths() -> None:
     assert domain.radius_m[45] >= 40
 
 
+def test_build_coverage_domain_clips_off_ray_nodata_gap() -> None:
+    valid = numpy.ones((200, 200), dtype=bool)
+    valid[14, 101] = False
+
+    domain = build_coverage_domain(
+        valid,
+        from_origin(-1000, 1000, 10, 10),
+        radar_x=0,
+        radar_y=0,
+        max_range_m=950,
+        azimuth_step_deg=2,
+    )
+
+    assert not domain.analysis_mask[14, 101]
+    assert not domain.analysis_mask[5, 101]
+    assert domain.analysis_mask[14, 106]
+
+
 def test_build_coverage_domain_rasterizes_profile_in_row_chunks(monkeypatch) -> None:
     valid = numpy.ones((1025, 4), dtype=bool)
     transform = from_origin(-20, 5125, 10, 10)

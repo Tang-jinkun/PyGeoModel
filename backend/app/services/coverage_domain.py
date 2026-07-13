@@ -1,5 +1,4 @@
 from dataclasses import dataclass
-import math
 
 import numpy
 from rasterio.transform import rowcol
@@ -36,17 +35,14 @@ def build_coverage_domain(
     sample_count = max(1, round(360 / azimuth_step_deg))
     actual_step_deg = 360 / sample_count
     sample_step_m = max(0.01, min(abs(float(transform.a)), abs(float(transform.e))) / 2)
-    radius_m = tuple(
-        _continuous_valid_radius(
-            valid_pixels,
-            transform,
-            radar_x,
-            radar_y,
-            azimuth_deg=index * actual_step_deg,
-            max_range_m=max_range_m,
-            sample_step_m=sample_step_m,
-        )
-        for index in range(sample_count)
+    radius_m = _conservative_radius_profile(
+        valid_pixels,
+        transform,
+        radar_x,
+        radar_y,
+        max_range_m,
+        actual_step_deg,
+        sample_step_m,
     )
     analysis_mask = _profile_to_mask(
         valid_pixels,
@@ -64,35 +60,43 @@ def build_coverage_domain(
     )
 
 
-def _continuous_valid_radius(
+def _conservative_radius_profile(
     valid_pixels: numpy.ndarray,
     transform,
     radar_x: float,
     radar_y: float,
-    azimuth_deg: float,
     max_range_m: float,
+    azimuth_step_deg: float,
     sample_step_m: float,
-) -> float:
-    azimuth_rad = math.radians(azimuth_deg)
-    distances = numpy.arange(0, max_range_m + sample_step_m, sample_step_m)
-    xs = radar_x + math.sin(azimuth_rad) * distances
-    ys = radar_y + math.cos(azimuth_rad) * distances
-    rows, cols = rowcol(transform, xs, ys)
-    rows = numpy.asarray(rows, dtype=numpy.int64)
-    cols = numpy.asarray(cols, dtype=numpy.int64)
-    inside = (
-        (rows >= 0)
-        & (rows < valid_pixels.shape[0])
-        & (cols >= 0)
-        & (cols < valid_pixels.shape[1])
-    )
-    samples_valid = numpy.zeros(distances.shape, dtype=bool)
-    samples_valid[inside] = valid_pixels[rows[inside], cols[inside]]
-    invalid_indices = numpy.flatnonzero(~samples_valid)
-    if invalid_indices.size:
-        first_invalid_distance = float(distances[int(invalid_indices[0])])
-        return max(0.0, min(max_range_m, first_invalid_distance - sample_step_m))
-    return float(max_range_m)
+) -> tuple[float, ...]:
+    height, width = valid_pixels.shape
+    sample_count = round(360 / azimuth_step_deg)
+    profile = numpy.full(sample_count, max_range_m, dtype=numpy.float64)
+    column_centers = numpy.arange(width, dtype=numpy.float64) + 0.5
+    valid = valid_pixels.astype(bool, copy=False)
+
+    for row_start in range(0, height, PROFILE_MASK_ROW_CHUNK_SIZE):
+        row_stop = min(height, row_start + PROFILE_MASK_ROW_CHUNK_SIZE)
+        row_centers = numpy.arange(row_start, row_stop, dtype=numpy.float64) + 0.5
+        rows, cols = numpy.meshgrid(row_centers, column_centers, indexing="ij")
+        xs = transform.c + cols * transform.a + rows * transform.b
+        ys = transform.f + cols * transform.d + rows * transform.e
+        dx = xs - radar_x
+        dy = ys - radar_y
+        distances = numpy.hypot(dx, dy)
+        invalid = ~valid[row_start:row_stop] & (distances <= max_range_m)
+        if not invalid.any():
+            continue
+
+        azimuths = (numpy.degrees(numpy.arctan2(dx, dy)) + 360) % 360
+        fractional_indices = azimuths / azimuth_step_deg
+        lower_indices = numpy.floor(fractional_indices).astype(numpy.int64) % sample_count
+        upper_indices = (lower_indices + 1) % sample_count
+        cutoffs = numpy.maximum(0, distances - sample_step_m)
+        numpy.minimum.at(profile, lower_indices[invalid], cutoffs[invalid])
+        numpy.minimum.at(profile, upper_indices[invalid], cutoffs[invalid])
+
+    return tuple(float(radius) for radius in profile)
 
 
 def _profile_to_mask(
