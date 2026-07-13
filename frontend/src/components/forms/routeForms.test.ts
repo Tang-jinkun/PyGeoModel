@@ -1,15 +1,20 @@
 import { mount } from "@vue/test-utils";
 import { describe, expect, it, vi } from "vitest";
+import type { Component } from "vue";
 
 import { airCorridorDefinition } from "../../models/airCorridor/definition";
 import { mobilityDefinition } from "../../models/mobility/definition";
 import { reconVehicleDefinition } from "../../models/reconVehicle/definition";
+import { MODEL_IDS, MODEL_REGISTRY } from "../../models/registry";
 import { uavDefinition } from "../../models/uav/definition";
 import AirCorridorForm from "./AirCorridorForm.vue";
+import ArtilleryForm from "./ArtilleryForm.vue";
 import MobilityForm from "./MobilityForm.vue";
 import ModelParameterPanel from "./ModelParameterPanel.vue";
+import RadarForm from "./RadarForm.vue";
 import ReconVehicleForm from "./ReconVehicleForm.vue";
 import UavForm from "./UavForm.vue";
+import WatchpostForm from "./WatchpostForm.vue";
 
 const uavFields = [
   "dem-id", "uav-altitude", "uav-altitude-mode",
@@ -154,6 +159,17 @@ describe("route and multi-point model forms", () => {
     uuid.mockRestore();
   });
 
+  it("parses altitude layers from commas, spaces, and Chinese commas", async () => {
+    const request = airCorridorDefinition.createDefaultRequest();
+    const wrapper = mount(AirCorridorForm, { props: { modelValue: request } });
+
+    await wrapper.get('[data-field="altitude-layers"]').setValue("300, 600，900 1200");
+
+    expect(wrapper.emitted("update:modelValue")?.at(-1)?.[0]).toMatchObject({
+      altitude_layers_m: [300, 600, 900, 1200]
+    });
+  });
+
   it("reports non-unique, non-ascending altitude layers and invalid threat bounds in Chinese", async () => {
     const request = airCorridorDefinition.createDefaultRequest();
     request.altitude_layers_m = [600, 300, 300];
@@ -164,7 +180,7 @@ describe("route and multi-point model forms", () => {
     }];
     const wrapper = mount(AirCorridorForm, { props: { modelValue: request } });
 
-    expect(wrapper.text()).toContain("高度层必须唯一并按升序排列");
+    expect(wrapper.text()).toContain("高度层不能为空、不得重复且必须严格升序排列");
     expect(wrapper.text()).toContain("威胁最小射程必须小于最大射程");
     expect(wrapper.text()).toContain("威胁最低高度必须小于最高高度");
     expect(wrapper.text()).toContain("杀伤半径不能大于预警半径");
@@ -188,6 +204,26 @@ describe("route and multi-point model forms", () => {
 });
 
 describe("ModelParameterPanel route models", () => {
+  it("switches through all registered model IDs and renders the explicit form", async () => {
+    const forms: Record<(typeof MODEL_IDS)[number], Component> = {
+      radar: RadarForm,
+      uav: UavForm,
+      watchpost: WatchpostForm,
+      artillery: ArtilleryForm,
+      reconVehicle: ReconVehicleForm,
+      mobility: MobilityForm,
+      airCorridor: AirCorridorForm
+    };
+    const wrapper = mount(ModelParameterPanel, {
+      props: { modelId: "radar", modelValue: MODEL_REGISTRY.radar.createDefaultRequest() }
+    });
+
+    for (const modelId of MODEL_IDS) {
+      await wrapper.setProps({ modelId, modelValue: MODEL_REGISTRY[modelId].createDefaultRequest() });
+      expect(wrapper.findComponent(forms[modelId]).exists(), `missing form for ${modelId}`).toBe(true);
+    }
+  });
+
   it("registers all route forms, owns one footer, and forwards the intended map operation", async () => {
     const wrapper = mount(ModelParameterPanel, {
       props: { modelId: "mobility", modelValue: mobilityDefinition.createDefaultRequest() }
@@ -195,8 +231,22 @@ describe("ModelParameterPanel route models", () => {
 
     expect(wrapper.findComponent(MobilityForm).exists()).toBe(true);
     expect(wrapper.findAll('[data-action="submit"]')).toHaveLength(1);
+    expect(wrapper.text()).toContain("运行分析");
     await wrapper.get('[data-action="activate-end-tool"]').trigger("click");
     expect(wrapper.emitted("activate-map-tool")).toEqual([["end"]]);
+  });
+
+  it("shows localized panel footer copy for validation summaries", async () => {
+    const request = uavDefinition.createDefaultRequest();
+    request.route = { sample_interval_m: 50, waypoints: [{ ...request.uav }] };
+    const wrapper = mount(ModelParameterPanel, {
+      props: { modelId: "uav", modelValue: request }
+    });
+
+    await wrapper.get('[data-action="submit"]').trigger("click");
+
+    expect(wrapper.text()).toContain("请检查以下参数");
+    expect(wrapper.text()).toContain("航线至少包含两个航点");
   });
 
   it("uses each active model validator, localizes issues, and blocks invalid submissions", async () => {
@@ -255,7 +305,7 @@ describe("ModelParameterPanel route models", () => {
     invalid.altitude_layers_m = [900, 600, 600];
     const invalidWrapper = mount(ModelParameterPanel, { props: { modelId: "airCorridor", modelValue: invalid } });
     await invalidWrapper.get('[data-action="submit"]').trigger("click");
-    expect(invalidWrapper.text()).toContain("高度层必须唯一并按升序排列");
+    expect(invalidWrapper.text()).toContain("高度层不能为空、不得重复且必须严格升序排列");
     expect(invalidWrapper.emitted("submit")).toBeUndefined();
 
     const request = airCorridorDefinition.createDefaultRequest();

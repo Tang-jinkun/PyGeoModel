@@ -84,23 +84,10 @@ function validateActiveRequest(): ValidationIssue[] {
   if (props.modelId === "radar") return localizeIssues(radarDefinition.validate(props.modelValue as RadarRequest));
   if (props.modelId === "artillery") return localizeIssues(artilleryDefinition.validate(props.modelValue as ArtilleryRequest));
   if (props.modelId === "watchpost") return localizeIssues(watchpostDefinition.validate(props.modelValue as WatchpostRequest));
-  if (props.modelId === "uav") return localizeIssues(withRouteCardinality(uavDefinition.validate(props.modelValue as UavRequest), (props.modelValue as UavRequest).route?.waypoints.length));
-  if (props.modelId === "reconVehicle") return localizeIssues(withRouteCardinality(reconVehicleDefinition.validate(props.modelValue as ReconVehicleRequest), (props.modelValue as ReconVehicleRequest).route?.waypoints.length));
+  if (props.modelId === "uav") return localizeIssues(uavDefinition.validate(props.modelValue as UavRequest));
+  if (props.modelId === "reconVehicle") return localizeIssues(reconVehicleDefinition.validate(props.modelValue as ReconVehicleRequest));
   if (props.modelId === "mobility") return localizeIssues(mobilityDefinition.validate(props.modelValue as MobilityRequest));
-
-  const request = props.modelValue as AirCorridorRequest;
-  const corridorIssues = airCorridorDefinition.validate(request);
-  if (!request.altitude_layers_m.every((layer, index) => index === 0 || layer > request.altitude_layers_m[index - 1])) {
-    corridorIssues.push({ path: "altitude_layers_m", message: "altitude_layers_m must be unique and ascending" });
-  }
-  return localizeIssues(corridorIssues);
-}
-
-function withRouteCardinality(source: ValidationIssue[], waypointCount: number | undefined): ValidationIssue[] {
-  if (waypointCount !== undefined && waypointCount < 2 && !source.some(({ path }) => path === "route.waypoints")) {
-    return [...source, { path: "route.waypoints", message: "route.waypoints must contain at least two points when provided" }];
-  }
-  return source;
+  return localizeIssues(airCorridorDefinition.validate(props.modelValue as AirCorridorRequest));
 }
 
 function localizeIssues(source: ValidationIssue[]): ValidationIssue[] {
@@ -113,7 +100,7 @@ function localizeIssues(source: ValidationIssue[]): ValidationIssue[] {
     if (issue.path === "sensor.max_range_m") return { ...issue, message: "最小探测距离必须小于最大探测距离" };
     if (issue.path === "vehicles") return { ...issue, message: "至少启用一种车辆" };
     if (issue.path === "aircraft.max_agl_m") return { ...issue, message: "最低离地高度必须小于最高离地高度" };
-    if (issue.path === "altitude_layers_m") return { ...issue, message: "高度层必须唯一并按升序排列" };
+    if (issue.path === "altitude_layers_m") return { ...issue, message: "高度层不能为空、不得重复且必须严格升序排列" };
     if (issue.path.endsWith(".max_range_m")) return { ...issue, message: "威胁最小射程必须小于最大射程" };
     if (issue.path.endsWith(".max_altitude_m")) return { ...issue, message: "威胁最低高度必须小于最高高度" };
     if (issue.path.endsWith(".kill_zone_radius_m")) return { ...issue, message: "杀伤半径不能大于预警半径" };

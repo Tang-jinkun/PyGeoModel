@@ -69,11 +69,7 @@ const NumberRow = defineComponent({
 });
 
 const routePoints = computed<SpatialCoordinate[]>(() => props.modelValue.route?.waypoints.map(({ lon, lat }) => [lon, lat]) ?? []);
-const localizedIssues = computed(() => {
-  const issues = uavDefinition.validate(props.modelValue);
-  if (props.modelValue.route && props.modelValue.route.waypoints.length < 2 && !issues.some(({ path }) => path === "route.waypoints")) issues.push({ path: "route.waypoints", message: "route.waypoints must contain at least two points when provided" });
-  return issues.map((issue) => issue.path === "route.waypoints" ? { ...issue, message: "航线至少包含两个航点" } : issue.path === "sensor.max_range_m" ? { ...issue, message: "最小探测距离必须小于最大探测距离" } : issue);
-});
+const localizedIssues = computed(() => uavDefinition.validate(props.modelValue).map((issue) => issue.path === "route.waypoints" ? { ...issue, message: "航线至少包含两个航点" } : issue.path === "sensor.max_range_m" ? { ...issue, message: "最小探测距离必须小于最大探测距离" } : issue));
 
 function updateRequest(mutator: (request: UavRequest) => void) { const request = structuredClone(toRaw(props.modelValue)); mutator(request); emit("update:modelValue", request); }
 function updateDemId(dem_id: string) { updateRequest((request) => { request.dem_id = dem_id; }); }

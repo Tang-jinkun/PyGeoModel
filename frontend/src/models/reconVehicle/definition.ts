@@ -17,7 +17,7 @@ export const reconVehicleDefinition = {
   validate: (request: ReconVehicleRequest): ValidationIssue[] => {
     const issues: ValidationIssue[] = [];
     if (request.sensor.min_range_m >= request.sensor.max_range_m) issues.push({ path: "sensor.max_range_m", message: "min_range_m must be less than max_range_m" });
-    if (request.route?.waypoints.length === 1) issues.push({ path: "route.waypoints", message: "route.waypoints must contain at least two points when provided" });
+    if (request.route !== null && request.route.waypoints.length < 2) issues.push({ path: "route.waypoints", message: "route.waypoints must contain at least two points when provided" });
     return issues;
   },
   metrics: [

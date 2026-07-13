@@ -54,11 +54,7 @@ const emit = defineEmits<{ "update:modelValue": [request: ReconVehicleRequest]; 
 const NumberRow = defineComponent({ props: { label: { type: String, required: true }, unit: { type: String, default: "" }, field: { type: String, required: true }, value: { type: Number as PropType<number | null>, default: null }, nullable: Boolean }, emits: ["update"], setup(componentProps, { emit: componentEmit }) { return () => h("label", { class: "field-row" }, [h("span", componentProps.label), h("div", { class: "input-with-unit" }, [h(ElInputNumber, { "data-field": componentProps.field, modelValue: componentProps.value ?? undefined, controlsPosition: "right", "onUpdate:modelValue": (value: number | undefined) => componentEmit("update", componentProps.nullable ? value ?? null : value ?? 0) }), componentProps.unit ? h("span", { class: "unit" }, componentProps.unit) : null])]); } });
 
 const routePoints = computed<SpatialCoordinate[]>(() => props.modelValue.route?.waypoints.map(({ lon, lat }) => [lon, lat]) ?? []);
-const localizedIssues = computed(() => {
-  const issues = reconVehicleDefinition.validate(props.modelValue);
-  if (props.modelValue.route && props.modelValue.route.waypoints.length < 2 && !issues.some(({ path }) => path === "route.waypoints")) issues.push({ path: "route.waypoints", message: "route.waypoints must contain at least two points when provided" });
-  return issues.map((issue) => issue.path === "route.waypoints" ? { ...issue, message: "航线至少包含两个航点" } : issue.path === "sensor.max_range_m" ? { ...issue, message: "最小探测距离必须小于最大探测距离" } : issue);
-});
+const localizedIssues = computed(() => reconVehicleDefinition.validate(props.modelValue).map((issue) => issue.path === "route.waypoints" ? { ...issue, message: "航线至少包含两个航点" } : issue.path === "sensor.max_range_m" ? { ...issue, message: "最小探测距离必须小于最大探测距离" } : issue));
 
 function updateRequest(mutator: (request: ReconVehicleRequest) => void) { const request = structuredClone(toRaw(props.modelValue)); mutator(request); emit("update:modelValue", request); }
 function updateDemId(dem_id: string) { updateRequest((request) => { request.dem_id = dem_id; }); }

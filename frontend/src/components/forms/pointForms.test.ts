@@ -72,6 +72,17 @@ describe("point model parameter forms", () => {
     expect(wrapper.get('[data-field="beam-width"]').isVisible()).toBe(true);
   });
 
+  it("parses radar height layers from commas, spaces, and Chinese commas", async () => {
+    const request = radarDefinition.createDefaultRequest();
+    const wrapper = mount(RadarForm, { props: { modelValue: request } });
+
+    await wrapper.get('[data-field="height-layers"]').setValue("100, 500，900 1200");
+
+    expect(wrapper.emitted("update:modelValue")?.at(-1)?.[0]).toMatchObject({
+      advanced: expect.objectContaining({ height_layers_m: [100, 500, 900, 1200] })
+    });
+  });
+
   it("renders every watchpost field and owns controlled edits and map activation", async () => {
     const request = watchpostDefinition.createDefaultRequest();
     const wrapper = mount(WatchpostForm, { props: { modelValue: request } });

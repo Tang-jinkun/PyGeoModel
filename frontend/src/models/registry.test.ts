@@ -60,6 +60,46 @@ describe("model registry", () => {
     })).toContainEqual({ path: "aircraft.max_agl_m", message: "min_agl_m must be less than max_agl_m" });
   });
 
+  it.each([0, 1])("rejects a provided UAV route with %s waypoints", (waypointCount) => {
+    const request = MODEL_REGISTRY.uav.createDefaultRequest();
+    request.route = {
+      waypoints: Array.from({ length: waypointCount }, () => ({ ...request.uav })),
+      sample_interval_m: 50
+    };
+
+    expect(MODEL_REGISTRY.uav.validate(request)).toContainEqual({
+      path: "route.waypoints",
+      message: "route.waypoints must contain at least two points when provided"
+    });
+  });
+
+  it.each([0, 1])("rejects a provided recon-vehicle route with %s waypoints", (waypointCount) => {
+    const request = MODEL_REGISTRY.reconVehicle.createDefaultRequest();
+    request.route = {
+      waypoints: Array.from({ length: waypointCount }, () => ({ ...request.vehicle })),
+      sample_interval_m: 50
+    };
+
+    expect(MODEL_REGISTRY.reconVehicle.validate(request)).toContainEqual({
+      path: "route.waypoints",
+      message: "route.waypoints must contain at least two points when provided"
+    });
+  });
+
+  it.each([
+    { label: "empty", layers: [] },
+    { label: "duplicated", layers: [300, 300, 600] },
+    { label: "not strictly ascending", layers: [600, 300, 900] }
+  ])("rejects $label air-corridor altitude layers", ({ layers }) => {
+    const request = MODEL_REGISTRY.airCorridor.createDefaultRequest();
+    request.altitude_layers_m = layers;
+
+    expect(MODEL_REGISTRY.airCorridor.validate(request)).toContainEqual({
+      path: "altitude_layers_m",
+      message: "altitude_layers_m must be non-empty, unique, and strictly ascending"
+    });
+  });
+
   it("accepts duplicate radar height layers after backend normalization", () => {
     const request = MODEL_REGISTRY.radar.createDefaultRequest();
     request.advanced.height_layers_m = Array.from({ length: 21 }, () => 300);

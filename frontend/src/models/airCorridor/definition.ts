@@ -24,6 +24,7 @@ export const airCorridorDefinition = {
   validate: (request: AirCorridorRequest): ValidationIssue[] => {
     const issues: ValidationIssue[] = [];
     if (request.aircraft.min_agl_m >= request.aircraft.max_agl_m) issues.push({ path: "aircraft.max_agl_m", message: "min_agl_m must be less than max_agl_m" });
+    if (request.altitude_layers_m.length === 0 || request.altitude_layers_m.some((layer, index) => index > 0 && layer <= request.altitude_layers_m[index - 1])) issues.push({ path: "altitude_layers_m", message: "altitude_layers_m must be non-empty, unique, and strictly ascending" });
     request.threats.forEach((threat, index) => issues.push(...validateThreat(threat, index)));
     return issues;
   },

@@ -69,11 +69,7 @@ const AltitudeModeRow = defineComponent({ props: { label: { type: String, requir
 
 const altitudeLayersText = computed(() => props.modelValue.altitude_layers_m.join(", "));
 const spatialThreats = computed<SpatialThreat[]>(() => props.modelValue.threats.map((threat) => ({ id: threat.id, coordinate: [threat.lon, threat.lat], properties: { name: threat.name } })));
-const localizedIssues = computed(() => {
-  const issues = airCorridorDefinition.validate(props.modelValue);
-  if (!hasUniqueAscendingLayers(props.modelValue.altitude_layers_m)) issues.push({ path: "altitude_layers_m", message: "altitude_layers_m must be unique and ascending" });
-  return issues.map(localizeIssue);
-});
+const localizedIssues = computed(() => airCorridorDefinition.validate(props.modelValue).map(localizeIssue));
 
 function updateRequest(mutator: (request: AirCorridorRequest) => void) { const request = structuredClone(toRaw(props.modelValue)); mutator(request); emit("update:modelValue", request); }
 function updateDemId(dem_id: string) { updateRequest((request) => { request.dem_id = dem_id; }); }
@@ -87,8 +83,7 @@ function updateThreat<K extends keyof AirDefenseThreatInput>(id: string, key: K,
 function updateThreatName(id: string, value: string) { updateThreat(id, "name", value.trim() === "" ? null : value); }
 function updatePlanning<K extends keyof AirCorridorRequest["planning"]>(key: K, value: AirCorridorRequest["planning"][K]) { updateRequest((request) => { request.planning[key] = value; }); }
 function updateAllowAltitudeChange(value: string | number | boolean) { updatePlanning("allow_altitude_change", Boolean(value)); }
-function hasUniqueAscendingLayers(layers: number[]) { return layers.every((layer, index) => index === 0 || layer > layers[index - 1]); }
-function localizeIssue(issue: { path: string; message: string }) { if (issue.path === "aircraft.max_agl_m") return { ...issue, message: "最低离地高度必须小于最高离地高度" }; if (issue.path === "altitude_layers_m") return { ...issue, message: "高度层必须唯一并按升序排列" }; if (issue.path.endsWith(".max_range_m")) return { ...issue, message: "威胁最小射程必须小于最大射程" }; if (issue.path.endsWith(".max_altitude_m")) return { ...issue, message: "威胁最低高度必须小于最高高度" }; if (issue.path.endsWith(".kill_zone_radius_m")) return { ...issue, message: "杀伤半径不能大于预警半径" }; return issue; }
+function localizeIssue(issue: { path: string; message: string }) { if (issue.path === "aircraft.max_agl_m") return { ...issue, message: "最低离地高度必须小于最高离地高度" }; if (issue.path === "altitude_layers_m") return { ...issue, message: "高度层不能为空、不得重复且必须严格升序排列" }; if (issue.path.endsWith(".max_range_m")) return { ...issue, message: "威胁最小射程必须小于最大射程" }; if (issue.path.endsWith(".max_altitude_m")) return { ...issue, message: "威胁最低高度必须小于最高高度" }; if (issue.path.endsWith(".kill_zone_radius_m")) return { ...issue, message: "杀伤半径不能大于预警半径" }; return issue; }
 </script>
 
 <style scoped>
