@@ -22,41 +22,47 @@
 
     <div class="app-header__actions" aria-label="Workspace controls">
       <ElTooltip content="Toggle parameters" placement="bottom" :show-after="300">
-        <button
-          type="button"
-          class="icon-button"
-          aria-label="Toggle parameters"
-          aria-controls="workspace-parameters"
-          :aria-expanded="parametersOpen"
-          data-action="toggle-parameters"
-          @click="emit('toggle-parameters')"
-        >
-          <ElIcon><Operation /></ElIcon>
-        </button>
+        <span class="app-header__tooltip-trigger">
+          <button
+            type="button"
+            class="icon-button"
+            aria-label="Toggle parameters"
+            aria-controls="workspace-parameters"
+            :aria-expanded="parametersOpen ? 'true' : 'false'"
+            data-action="toggle-parameters"
+            @click="emit('toggle-parameters')"
+          >
+            <ElIcon><Operation /></ElIcon>
+          </button>
+        </span>
       </ElTooltip>
       <ElTooltip content="Task history" placement="bottom" :show-after="300">
-        <button
-          type="button"
-          class="icon-button"
-          aria-label="Open task history"
-          data-action="open-history"
-          @click="emit('open-history')"
-        >
-          <ElIcon><Clock /></ElIcon>
-        </button>
+        <span class="app-header__tooltip-trigger">
+          <button
+            type="button"
+            class="icon-button"
+            aria-label="Open task history"
+            data-action="open-history"
+            @click="emit('open-history')"
+          >
+            <ElIcon><Clock /></ElIcon>
+          </button>
+        </span>
       </ElTooltip>
       <ElTooltip content="Toggle results" placement="bottom" :show-after="300">
-        <button
-          type="button"
-          class="icon-button"
-          aria-label="Toggle results"
-          aria-controls="workspace-results"
-          :aria-expanded="resultsOpen"
-          data-action="toggle-results"
-          @click="emit('toggle-results')"
-        >
-          <ElIcon><DataAnalysis /></ElIcon>
-        </button>
+        <span class="app-header__tooltip-trigger">
+          <button
+            type="button"
+            class="icon-button"
+            aria-label="Toggle results"
+            aria-controls="workspace-results"
+            :aria-expanded="resultsOpen ? 'true' : 'false'"
+            data-action="toggle-results"
+            @click="emit('toggle-results')"
+          >
+            <ElIcon><DataAnalysis /></ElIcon>
+          </button>
+        </span>
       </ElTooltip>
     </div>
   </header>

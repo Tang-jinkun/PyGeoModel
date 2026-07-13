@@ -64,6 +64,18 @@ textarea {
   background: var(--workspace);
 }
 
+.workspace-shell[data-parameters-open="false"] {
+  grid-template-columns: var(--model-nav-width) 0 minmax(320px, 1fr) var(--result-width);
+}
+
+.workspace-shell[data-results-open="false"] {
+  grid-template-columns: var(--model-nav-width) var(--parameter-width) minmax(320px, 1fr) 0;
+}
+
+.workspace-shell[data-parameters-open="false"][data-results-open="false"] {
+  grid-template-columns: var(--model-nav-width) 0 minmax(320px, 1fr) 0;
+}
+
 .workspace-shell__header {
   z-index: 30;
   grid-area: header;
@@ -101,6 +113,13 @@ textarea {
 .workspace-shell__results {
   grid-area: results;
   border-left: 1px solid var(--border);
+}
+
+.workspace-shell__parameters[data-open="false"],
+.workspace-shell__results[data-open="false"] {
+  visibility: hidden;
+  overflow: hidden;
+  border: 0;
 }
 
 .workspace-shell__scrim {
@@ -182,6 +201,10 @@ textarea {
 
 .app-header__actions {
   gap: 4px;
+}
+
+.app-header__tooltip-trigger {
+  display: inline-flex;
 }
 
 .icon-button {
@@ -1244,6 +1267,25 @@ textarea {
 
   .model-navigation__label {
     display: none;
+  }
+
+  .workspace-shell {
+    --workspace-parameter-track: minmax(180px, var(--parameter-width));
+    --workspace-map-track: minmax(240px, 1fr);
+    --workspace-result-track: minmax(200px, var(--result-width));
+    grid-template-columns:
+      var(--model-nav-width)
+      var(--workspace-parameter-track)
+      var(--workspace-map-track)
+      var(--workspace-result-track);
+  }
+
+  .workspace-shell[data-parameters-open="false"] {
+    --workspace-parameter-track: 0;
+  }
+
+  .workspace-shell[data-results-open="false"] {
+    --workspace-result-track: 0;
   }
 }
 

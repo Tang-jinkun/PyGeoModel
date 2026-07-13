@@ -1,10 +1,14 @@
 <template>
-  <main class="workspace-shell">
+  <main
+    class="workspace-shell"
+    :data-parameters-open="effectiveParametersOpen"
+    :data-results-open="effectiveResultsOpen"
+  >
     <div class="workspace-shell__header">
       <slot
         name="header"
-        :parameters-open="openDrawer === 'parameters'"
-        :results-open="openDrawer === 'results'"
+        :parameters-open="effectiveParametersOpen"
+        :results-open="effectiveResultsOpen"
         :open-history="openHistory"
         :toggle-parameters="toggleParameters"
         :toggle-results="toggleResults"
@@ -12,8 +16,8 @@
         <AppHeader
           :dem-label="demLabel"
           :connected="connected"
-          :parameters-open="openDrawer === 'parameters'"
-          :results-open="openDrawer === 'results'"
+          :parameters-open="effectiveParametersOpen"
+          :results-open="effectiveResultsOpen"
           @open-history="openHistory"
           @toggle-parameters="toggleParameters"
           @toggle-results="toggleResults"
@@ -31,7 +35,7 @@
       id="workspace-parameters"
       class="workspace-shell__parameters"
       data-region="parameters"
-      :data-open="openDrawer === 'parameters'"
+      :data-open="effectiveParametersOpen"
       aria-label="Model parameters"
     >
       <slot name="parameters"></slot>
@@ -45,24 +49,24 @@
       id="workspace-results"
       class="workspace-shell__results"
       data-region="results"
-      :data-open="openDrawer === 'results'"
+      :data-open="effectiveResultsOpen"
       aria-label="Task results"
     >
       <slot name="results"></slot>
     </aside>
 
     <button
-      v-if="openDrawer"
+      v-if="isNarrow && activeDrawer"
       type="button"
       class="workspace-shell__scrim"
       aria-label="Close open panel"
-      @click="closeDrawers"
+      @click="closeActiveDrawer"
     ></button>
   </main>
 </template>
 
 <script setup lang="ts">
-import { ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 
 import type { ModelId } from "../../models/registry";
 import AppHeader from "./AppHeader.vue";
@@ -85,7 +89,46 @@ const emit = defineEmits<{
   "toggle-results": [];
 }>();
 
-const openDrawer = ref<"parameters" | "results" | null>(null);
+defineSlots<{
+  header(props: {
+    parametersOpen: boolean;
+    resultsOpen: boolean;
+    openHistory: () => void;
+    toggleParameters: () => void;
+    toggleResults: () => void;
+  }): unknown;
+  navigation(props: {
+    modelId: ModelId;
+    selectModel: (modelId: ModelId) => void;
+  }): unknown;
+  parameters(): unknown;
+  map(): unknown;
+  results(): unknown;
+}>();
+
+const parametersOpen = ref(true);
+const resultsOpen = ref(true);
+const activeDrawer = ref<"parameters" | "results" | null>(null);
+const isNarrow = ref(false);
+const effectiveParametersOpen = computed(() => (
+  isNarrow.value ? activeDrawer.value === "parameters" : parametersOpen.value
+));
+const effectiveResultsOpen = computed(() => (
+  isNarrow.value ? activeDrawer.value === "results" : resultsOpen.value
+));
+let narrowMediaQuery: MediaQueryList | null = null;
+
+onMounted(() => {
+  if (typeof window === "undefined" || !window.matchMedia) return;
+
+  narrowMediaQuery = window.matchMedia("(max-width: 800px)");
+  isNarrow.value = narrowMediaQuery.matches;
+  narrowMediaQuery.addEventListener("change", handleNarrowChange);
+});
+
+onBeforeUnmount(() => {
+  narrowMediaQuery?.removeEventListener("change", handleNarrowChange);
+});
 
 function selectModel(modelId: ModelId) {
   emit("select-model", modelId);
@@ -96,16 +139,29 @@ function openHistory() {
 }
 
 function toggleParameters() {
-  openDrawer.value = openDrawer.value === "parameters" ? null : "parameters";
+  if (isNarrow.value) {
+    activeDrawer.value = activeDrawer.value === "parameters" ? null : "parameters";
+  } else {
+    parametersOpen.value = !parametersOpen.value;
+  }
   emit("toggle-parameters");
 }
 
 function toggleResults() {
-  openDrawer.value = openDrawer.value === "results" ? null : "results";
+  if (isNarrow.value) {
+    activeDrawer.value = activeDrawer.value === "results" ? null : "results";
+  } else {
+    resultsOpen.value = !resultsOpen.value;
+  }
   emit("toggle-results");
 }
 
-function closeDrawers() {
-  openDrawer.value = null;
+function closeActiveDrawer() {
+  activeDrawer.value = null;
+}
+
+function handleNarrowChange(event: MediaQueryListEvent) {
+  isNarrow.value = event.matches;
+  if (!event.matches) activeDrawer.value = null;
 }
 </script>
