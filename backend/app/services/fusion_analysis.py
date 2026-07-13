@@ -19,15 +19,25 @@ def analyze_fusion(payload: FusionRequest) -> FusionResult:
     if len(task_ids) < 2:
         raise AppError("FUSION_TASK_COUNT", "At least two unique tasks are required for fusion.", status_code=400)
 
+    contract_versions: set[int] = set()
+    for task_id in task_ids:
+        task = get_task(task_id)
+        if task.status != "finished":
+            raise AppError("TASK_NOT_FINISHED", f"Task '{task_id}' is not finished.", status_code=409)
+        contract_versions.add(task.model.coverage_contract_version if task.model is not None else 1)
+
+    if len(contract_versions) > 1:
+        raise AppError(
+            "FUSION_CONTRACT_MISMATCH",
+            "Coverage tasks use incompatible fusion contract versions.",
+            status_code=409,
+        )
+
     visible_geometries = []
     range_geometries = []
     warnings: list[str] = []
 
     for task_id in task_ids:
-        task = get_task(task_id)
-        if task.status != "finished":
-            raise AppError("TASK_NOT_FINISHED", f"Task '{task_id}' is not finished.", status_code=409)
-
         visible = _read_task_geometry(task_id, "visible_geojson")
         theoretical = _read_task_geometry(task_id, "range_geojson")
         if visible.is_empty:

@@ -699,6 +699,7 @@ def _write_vector_outputs(
     )
     height_layers = payload.advanced.height_layers_m or [0, 100, 300, 500, 1000, 2000, 3000]
     model = CoverageModelMetadata(
+        coverage_contract_version=2,
         target_epsg=prepared.target_epsg,
         radar_projected_xy=[prepared.radar_x, prepared.radar_y],
         projected_dem_bounds=[

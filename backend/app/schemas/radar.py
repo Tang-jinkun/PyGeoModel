@@ -153,6 +153,7 @@ class BeamClipProfile(BaseModel):
 
 
 class CoverageModelMetadata(BaseModel):
+    coverage_contract_version: int = 1
     target_epsg: int
     radar_projected_xy: list[float]
     projected_dem_bounds: list[float]

@@ -105,6 +105,7 @@ def test_read_coverage_task_returns_dem_clip_contract(tmp_path: Path) -> None:
             "unknown_area_m2": 200,
         },
         model={
+            "coverage_contract_version": 2,
             "target_epsg": 32648,
             "radar_projected_xy": [0, 0],
             "projected_dem_bounds": [0, 0, 10, 10],
@@ -123,7 +124,34 @@ def test_read_coverage_task_returns_dem_clip_contract(tmp_path: Path) -> None:
     assert response.status_code == 200
     payload = response.json()
     assert payload["metrics"]["unknown_area_m2"] == 200
+    assert payload["model"]["coverage_contract_version"] == 2
     assert payload["model"]["beam_clip_profile"]["radius_m"] == [1000, 900]
+
+
+def test_read_legacy_coverage_task_defaults_contract_version(tmp_path: Path) -> None:
+    settings.data_dir = tmp_path
+    settings.ensure_directories()
+    write_task(
+        tmp_path,
+        "task_legacy",
+        "finished",
+        model={
+            "target_epsg": 32648,
+            "radar_projected_xy": [0, 0],
+            "projected_dem_bounds": [0, 0, 10, 10],
+            "projected_dem_resolution_m": [10, 10],
+            "max_range_m": 1000,
+            "scan_mode": "omni",
+            "azimuth_deg": 0,
+            "beam_width_deg": 360,
+            "simplify_tolerance_m": 10,
+        },
+    )
+
+    response = TestClient(app).get("/api/radar/coverage/task_legacy")
+
+    assert response.status_code == 200
+    assert response.json()["model"]["coverage_contract_version"] == 1
 
 
 def test_list_coverage_tasks_omits_request(tmp_path: Path) -> None:
