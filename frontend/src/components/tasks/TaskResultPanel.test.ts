@@ -9,6 +9,7 @@ import MetricGrid from "./MetricGrid.vue";
 import OutputFileList from "./OutputFileList.vue";
 import TaskHistoryDrawer from "./TaskHistoryDrawer.vue";
 import TaskResultPanel from "./TaskResultPanel.vue";
+import TaskStatusView from "./TaskStatusView.vue";
 
 const finishedUavTask: TaskSummary<UavRequest, UavMetrics> = {
   task_id: "uav-finished-1",
@@ -59,9 +60,23 @@ describe("TaskResultPanel", () => {
     });
 
     expect(wrapper.text()).toContain("任务已完成");
+    expect(wrapper.findAll('[role="tab"]').map((tab) => tab.text())).toEqual(["任务", "指标", "图层", "文件"]);
     await wrapper.get('[data-tab="layers"]').trigger("click");
     expect(wrapper.text()).toContain("可见区加载失败");
     expect(wrapper.text()).toContain("传感器足迹");
+  });
+
+  it.each([
+    ["pending", "任务等待中"],
+    ["running", "任务运行中"],
+    ["finished", "任务已完成"],
+    ["failed", "任务失败"]
+  ] as const)("renders the %s task status in readable Chinese", (status, label) => {
+    const wrapper = mount(TaskStatusView, {
+      props: { task: { ...finishedUavTask, status } }
+    });
+
+    expect(wrapper.text()).toContain(label);
   });
 
   it("formats registered metric values at the required thresholds", () => {
@@ -107,6 +122,7 @@ describe("TaskResultPanel", () => {
     const links = wrapper.findAll("a");
     expect(links[0].attributes("href")).toBe("/download-visible");
     expect(links[1].attributes("href")).toBe("/view-blocked");
+    expect(wrapper.text()).toContain("下载visible_geojson");
   });
 
   it("fetches result metadata in parallel and isolates each registered GeoJSON layer", async () => {
@@ -200,6 +216,10 @@ describe("TaskResultPanel", () => {
       }
     });
 
+    expect(wrapper.text()).toContain("任务历史");
+    expect(wrapper.text()).toContain("无人机侦察");
+    expect(wrapper.text()).toContain("已完成");
+
     await wrapper.get('[data-action="restore"]').trigger("click");
     expect(wrapper.emitted("restore")).toBeUndefined();
     restorePending.resolve(finishedUavTask.request ?? null);
@@ -208,7 +228,7 @@ describe("TaskResultPanel", () => {
 
     await wrapper.get('[data-action="delete"]').trigger("click");
     await flushPromises();
-    expect(confirmDelete).toHaveBeenCalledWith(expect.stringContaining("后端任务记录和输出文件"));
+    expect(confirmDelete).toHaveBeenCalledWith("删除后，后端任务记录和输出文件将被移除，且无法恢复。确定删除吗？");
     expect(remove).toHaveBeenCalledWith("uav", finishedUavTask.task_id);
   });
 });

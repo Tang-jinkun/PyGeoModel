@@ -250,7 +250,7 @@ function createLayerState(
 
 function resolveLayerUrl(kind: string, files: readonly OutputFile[], legacyOutputs?: Record<string, string | null> | null) {
   const file = files.find((candidate) => candidate.kind === kind && candidate.exists);
-  return file?.url || file?.download_url || legacyOutputs?.[kind] || null;
+  return file?.download_url || file?.url || legacyOutputs?.[kind] || null;
 }
 
 function toMetricRecord(value: unknown) {
