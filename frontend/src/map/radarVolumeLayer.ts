@@ -1,7 +1,7 @@
 import maplibregl from "maplibre-gl";
 import * as THREE from "three";
 
-import type { CoverageRequest } from "../api/client";
+import type { RadarRequest as CoverageRequest } from "../models/radar/types";
 import { createRadiusResolver, type BeamClipProfile } from "./beamClipProfile";
 
 const RADAR_VOLUME_LAYER_ID = "radar-volume-layer";

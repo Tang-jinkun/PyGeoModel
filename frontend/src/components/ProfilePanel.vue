@@ -68,12 +68,12 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, type DeepReadonly } from "vue";
 
-import type { CoverageProfileResult } from "../api/client";
+import type { CoverageProfileResult } from "../api/radar";
 
 const props = defineProps<{
-  profile: CoverageProfileResult | null;
+  profile: DeepReadonly<CoverageProfileResult> | null;
   loading: boolean;
 }>();
 

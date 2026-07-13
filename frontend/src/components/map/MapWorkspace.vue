@@ -146,7 +146,7 @@ function actionForCoordinate(coordinate: SpatialCoordinate): SpatialDraftAction 
   if (target === "threat") {
     return props.activeThreatId
       ? { type: "update-threat", id: props.activeThreatId, coordinate }
-      : null;
+      : { type: "add-threat", threat: { id: crypto.randomUUID(), coordinate } };
   }
   if (props.kind === "point") return { type: "set-point", coordinate };
   if (props.kind === "point-or-route") return { type: "append", coordinate };

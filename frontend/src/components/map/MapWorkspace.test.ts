@@ -85,6 +85,26 @@ describe("MapWorkspace", () => {
     expect(wrapper.emitted("spatial-edit")?.[1]).toEqual([{ type: "set-end", coordinate: [30, 40] }]);
   });
 
+  it("adds a threat from the map when no existing threat is active", () => {
+    vi.stubGlobal("crypto", { randomUUID: vi.fn(() => "threat-map-1") });
+    const wrapper = mount(MapWorkspace, {
+      props: {
+        kind: "start-end-threats",
+        draft: createSpatialDraft("start-end-threats"),
+        editing: true,
+        editTarget: "threat"
+      }
+    });
+    const map = mapHarness.instances[0];
+
+    map.emit("click", { lngLat: { lng: 80.25, lat: 32.5 } });
+
+    expect(wrapper.emitted("spatial-edit")?.[0]).toEqual([{
+      type: "add-threat",
+      threat: { id: "threat-map-1", coordinate: [80.25, 32.5] }
+    }]);
+  });
+
   it("always renders finish, undo, and clear commands while editing", () => {
     const wrapper = mount(MapWorkspace, {
       props: {

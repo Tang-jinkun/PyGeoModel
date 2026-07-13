@@ -1,6 +1,6 @@
-import type { BeamClipProfile } from "../api/client";
+import type { BeamClipProfile } from "../models/radar/types";
 
-export type { BeamClipProfile } from "../api/client";
+export type { BeamClipProfile } from "../models/radar/types";
 
 interface RadarPosition {
   lon: number;

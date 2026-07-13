@@ -602,6 +602,15 @@ export function getGeoJsonBounds(data: GeoJSON.GeoJSON): maplibregl.LngLatBounds
   return hasCoordinate ? bounds : null;
 }
 
+export function removeRadarMarker(map: maplibregl.Map) {
+  for (const layerId of ["radar-point", "radar-point-halo", "radar-tower"]) {
+    if (map.getLayer(layerId)) map.removeLayer(layerId);
+  }
+  for (const sourceId of ["radar-point-source", "radar-tower-source"]) {
+    if (map.getSource(sourceId)) map.removeSource(sourceId);
+  }
+}
+
 export function fitGeoJsonBounds(
   map: maplibregl.Map,
   data: GeoJSON.GeoJSON,

@@ -52,13 +52,14 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, ref, watch, type DeepReadonly } from "vue";
 
-import type { CoverageTaskSummary, FusionResult } from "../api/client";
+import type { FusionResult } from "../api/radar";
+import type { RadarAnalysisTask } from "../models/radar/useRadarAnalysis";
 
 const props = defineProps<{
-  tasks: CoverageTaskSummary[];
-  result: FusionResult | null;
+  tasks: readonly DeepReadonly<RadarAnalysisTask>[];
+  result: DeepReadonly<FusionResult> | null;
   loading: boolean;
 }>();
 
