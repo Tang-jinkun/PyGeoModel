@@ -8,6 +8,7 @@ from rasterio.coords import BoundingBox
 from rasterio.transform import from_origin
 from shapely.geometry import Point
 
+from app.core.config import settings
 from app.core.errors import AppError
 from app.schemas.radar import CoverageMetrics, CoverageModelMetadata, CoverageOutputFile, CoverageRequest
 from app.services.coverage_model import PreparedCoverageDem
@@ -25,6 +26,7 @@ from app.workers.coverage_task import (
     _write_json_atomic,
     _write_output_manifest,
     _write_text_atomic,
+    _write_vector_outputs,
 )
 
 
@@ -156,6 +158,69 @@ def test_beam_clip_profile_is_capped_to_effective_range(tmp_path: Path) -> None:
     assert profile is not None
     assert profile.azimuth_step_deg == 2
     assert profile.radius_m == [750, 750, 600]
+
+
+def test_write_vector_outputs_assigns_current_coverage_contract(tmp_path: Path) -> None:
+    settings.data_dir = tmp_path
+    settings.ensure_directories()
+    staging_dir = tmp_path / ".staging"
+    staging_dir.mkdir()
+    output_dir = settings.outputs_dir / "task_new"
+    for filename in OUTPUT_FILENAMES.values():
+        (staging_dir / filename).write_bytes(b"placeholder")
+
+    data = numpy.zeros((4, 4), dtype=numpy.float32)
+    transform = from_origin(-20, 20, 10, 10)
+    for path in (staging_dir / "viewshed.tif", staging_dir / "min_visible_height.tif"):
+        with rasterio.open(
+            path,
+            "w",
+            driver="GTiff",
+            width=4,
+            height=4,
+            count=1,
+            dtype=data.dtype,
+            crs="EPSG:32648",
+            transform=transform,
+            nodata=-9999,
+        ) as dataset:
+            dataset.write(data, 1)
+
+    request = CoverageRequest.model_validate(
+        {
+            "dem_id": "dem_test",
+            "radar": {"lon": 105, "lat": 0, "height_m": 10},
+            "target": {"height_m": 0},
+            "coverage": {"max_range_m": 100, "scan_mode": "omni"},
+            "advanced": {"min_elevation_deg": 0, "max_elevation_deg": 89},
+        }
+    )
+    prepared = PreparedCoverageDem(
+        source_dem=tmp_path / "source.tif",
+        projected_dem=tmp_path / "projected.tif",
+        target_epsg=32648,
+        radar_x=0,
+        radar_y=0,
+        projected_bounds=BoundingBox(-20, -20, 20, 20),
+        resolution_m=(10, 10),
+        dem_coverage_ratio=1,
+        analysis_domain=numpy.ones(data.shape, dtype=bool),
+    )
+
+    _, _, _, model, _, _ = _write_vector_outputs(
+        "task_new",
+        staging_dir,
+        output_dir,
+        prepared,
+        request,
+        staging_dir / "viewshed.tif",
+        staging_dir / "min_visible_height.tif",
+        ["gdal_viewshed"],
+    )
+
+    metadata = json.loads((output_dir / "model_metadata.json").read_text(encoding="utf-8"))
+    assert model.coverage_contract_version == 2
+    assert metadata["model"]["coverage_contract_version"] == 2
 
 
 def test_write_feature_collection_is_valid_json_and_cleans_temp(tmp_path: Path) -> None:
