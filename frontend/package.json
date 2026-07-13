@@ -6,9 +6,11 @@
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "build": "vue-tsc -b && vite build",
-    "preview": "vite preview --host 0.0.0.0"
+    "preview": "vite preview --host 0.0.0.0",
+    "test": "vitest run"
   },
   "dependencies": {
+    "@element-plus/icons-vue": "^2.3.2",
     "@vitejs/plugin-vue": "5.2.1",
     "element-plus": "2.9.3",
     "maplibre-gl": "4.7.1",
@@ -17,8 +19,11 @@
   },
   "devDependencies": {
     "@types/three": "^0.171.0",
+    "@vue/test-utils": "^2.4.11",
+    "happy-dom": "^20.10.6",
     "typescript": "5.7.3",
     "vite": "6.0.7",
+    "vitest": "^4.1.10",
     "vue-tsc": "2.2.0"
   }
 }

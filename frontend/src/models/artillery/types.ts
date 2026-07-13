@@ -1,0 +1,7 @@
+export interface ArtilleryPositionInput { lon: number; lat: number; height_m: number; altitude_mode: "agl" | "amsl" }
+export interface ArtilleryTargetInput { target_height_m: number }
+export interface ArtilleryWeaponInput { min_range_m: number; max_range_m: number; azimuth_deg: number; traverse_deg: number; muzzle_velocity_mps: number; elevation_deg: number }
+export interface ArtilleryMunitionInput { munition_type: "he" | "smoke" | "illumination" | "generic"; lethal_radius_m: number; effective_radius_m: number }
+export interface ArtilleryAnalysisInput { use_dem_elevation: boolean; use_terrain_masking: boolean; sample_resolution_m: number | null; trajectory_samples: number; clearance_margin_m: number; output_simplify_tolerance_m: number | null }
+export interface ArtilleryRequest { dem_id: string; battery: ArtilleryPositionInput; target: ArtilleryTargetInput; weapon: ArtilleryWeaponInput; munition: ArtilleryMunitionInput; analysis: ArtilleryAnalysisInput }
+export interface ArtilleryMetrics { theoretical_area_m2: number; reachable_area_m2: number; terrain_masked_area_m2: number; terrain_masked_ratio: number; lethal_area_m2: number; effective_area_m2: number; min_range_m: number; max_range_m: number; effective_traverse_deg: number; lethal_radius_m: number; effective_radius_m: number; sample_point_count: number; reachable_sample_count: number; masked_sample_count: number; min_clearance_m: number | null; mean_clearance_m: number | null; battery_ground_elevation_m: number; battery_altitude_m: number }
