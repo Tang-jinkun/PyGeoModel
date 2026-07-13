@@ -1,8 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { radarDefinition } from "./definition";
 import {
+  createRadarLayerAdapter,
   resolveRadarLayerPlan,
+  type RadarLayerPlan,
   type RadarTask
 } from "./layerAdapter";
 import type { BeamClipProfile, RadarModelMetadata } from "./types";
@@ -54,6 +56,57 @@ function makeModel(overrides: Partial<RadarModelMetadata> = {}): RadarModelMetad
     effective_max_range_m: 4000,
     beam_clip_profile: null,
     ...overrides
+  };
+}
+
+function makeLayerTask(taskId = "radar-1"): RadarTask {
+  return makeTask({
+    task_id: taskId,
+    output_files: [
+      outputFile("voxel_manifest_json"),
+      outputFile("voxel_points_bin"),
+      outputFile("clipped_volume_manifest_json"),
+      outputFile("clipped_volume_cells_bin"),
+      outputFile("height_layers_manifest_json")
+    ]
+  });
+}
+
+function outputFile(kind: string) {
+  return {
+    kind,
+    label: kind,
+    url: `/view-${kind}`,
+    download_url: `/download-${kind}`,
+    filename: kind,
+    media_type: "application/octet-stream",
+    exists: true
+  };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
+function runtimeDependencies() {
+  return {
+    renderVolume: vi.fn(),
+    removeVolume: vi.fn(),
+    loadVoxel: vi.fn(async (_plan: RadarLayerPlan) => "voxel"),
+    renderVoxel: vi.fn(),
+    removeVoxel: vi.fn(),
+    loadClipped: vi.fn(async (_plan: RadarLayerPlan) => "clipped"),
+    renderClipped: vi.fn(),
+    removeClipped: vi.fn(),
+    loadHeightLayers: vi.fn(async (_plan: RadarLayerPlan) => "height"),
+    renderHeightLayers: vi.fn(),
+    removeHeightLayers: vi.fn()
   };
 }
 
@@ -125,5 +178,83 @@ describe("resolveRadarLayerPlan", () => {
   it("does not create a plan for unfinished tasks or tasks without a request", () => {
     expect(resolveRadarLayerPlan(makeTask({ status: "running" }), [])).toBeNull();
     expect(resolveRadarLayerPlan(makeTask({ request: null }), [])).toBeNull();
+  });
+});
+
+describe("createRadarLayerAdapter", () => {
+  it("loads eligible layers once and reuses cached data after hiding radar", async () => {
+    const deps = runtimeDependencies();
+    const adapter = createRadarLayerAdapter(deps);
+
+    await adapter.showTask(makeLayerTask(), [79.7, 31.4, 79.9, 31.6]);
+
+    expect(deps.renderVolume).toHaveBeenCalledTimes(1);
+    expect(deps.renderVoxel).toHaveBeenCalledWith("voxel", expect.objectContaining({ taskId: "radar-1" }));
+    expect(deps.renderClipped).toHaveBeenCalledTimes(1);
+    expect(deps.renderHeightLayers).toHaveBeenCalledTimes(1);
+
+    adapter.setRadarVisible(false);
+    expect(deps.removeVolume).toHaveBeenCalled();
+    expect(deps.removeVoxel).toHaveBeenCalled();
+    expect(deps.removeClipped).toHaveBeenCalled();
+    expect(deps.removeHeightLayers).toHaveBeenCalled();
+
+    adapter.setRadarVisible(true);
+    expect(deps.renderVolume).toHaveBeenCalledTimes(2);
+    expect(deps.renderVoxel).toHaveBeenCalledTimes(2);
+    expect(deps.loadVoxel).toHaveBeenCalledTimes(1);
+    expect(deps.loadClipped).toHaveBeenCalledTimes(1);
+    expect(deps.loadHeightLayers).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not render stale data after changing tasks", async () => {
+    const deps = runtimeDependencies();
+    const oldVoxel = deferred<string>();
+    deps.loadVoxel.mockImplementation((plan) => (
+      plan.taskId === "radar-old" ? oldVoxel.promise : Promise.resolve("new-voxel")
+    ));
+    const adapter = createRadarLayerAdapter(deps);
+
+    const oldLoad = adapter.showTask(makeLayerTask("radar-old"), []);
+    await adapter.showTask(makeLayerTask("radar-new"), []);
+    oldVoxel.resolve("old-voxel");
+    await oldLoad;
+
+    expect(adapter.activeTaskId).toBe("radar-new");
+    expect(deps.renderVoxel).toHaveBeenCalledWith("new-voxel", expect.objectContaining({ taskId: "radar-new" }));
+    expect(deps.renderVoxel).not.toHaveBeenCalledWith("old-voxel", expect.anything());
+  });
+
+  it("isolates loader errors without blocking successful layers", async () => {
+    const deps = runtimeDependencies();
+    const voxelError = new Error("voxel failed");
+    deps.loadVoxel.mockRejectedValue(voxelError);
+    const adapter = createRadarLayerAdapter(deps);
+
+    await adapter.showTask(makeLayerTask(), []);
+
+    expect(adapter.errors.voxel).toBe(voxelError);
+    expect(deps.renderVoxel).not.toHaveBeenCalled();
+    expect(deps.renderClipped).toHaveBeenCalledTimes(1);
+    expect(deps.renderHeightLayers).toHaveBeenCalledTimes(1);
+  });
+
+  it("invalidates pending writes on clear and blocks commands after dispose", async () => {
+    const deps = runtimeDependencies();
+    const height = deferred<string>();
+    deps.loadHeightLayers.mockReturnValue(height.promise);
+    const adapter = createRadarLayerAdapter(deps);
+
+    const pending = adapter.showTask(makeLayerTask(), []);
+    adapter.clear();
+    height.resolve("late-height");
+    await pending;
+    expect(deps.renderHeightLayers).not.toHaveBeenCalled();
+    expect(adapter.activeTaskId).toBeNull();
+
+    adapter.dispose();
+    await adapter.showTask(makeLayerTask("after-dispose"), []);
+    expect(adapter.activeTaskId).toBeNull();
+    expect(deps.loadVoxel).toHaveBeenCalledTimes(1);
   });
 });
