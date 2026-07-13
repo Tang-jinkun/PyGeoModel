@@ -80,10 +80,47 @@ describe("WorkspaceShell", () => {
     expect(normalizedCss).toContain("--workspace-result-track: minmax(200px, var(--result-width));");
     expect(52 + 180 + 240 + 200).toBeLessThanOrEqual(801);
   });
+
+  it("isolates desktop collapse rules from the narrow grid cascade", () => {
+    const desktop = mediaBlock("(min-width: 1101px)");
+    const compact = mediaBlock("(min-width: 801px) and (max-width: 1100px)");
+    const narrow = mediaBlock("(max-width: 800px)");
+    const firstScopedGrid = appCss.indexOf("@media (min-width: 1101px)");
+
+    expect(appCss.slice(0, firstScopedGrid)).not.toMatch(
+      /\.workspace-shell\[data-(?:parameters|results)-open[^\{]*\]\s*\{[^}]*grid-template-columns/
+    );
+    expect(desktop).toContain('.workspace-shell[data-parameters-open="false"]');
+    expect(desktop).toContain('.workspace-shell[data-results-open="false"]');
+    expect(desktop).toContain("grid-template-columns:");
+    expect(compact).toContain('.workspace-shell[data-parameters-open="false"]');
+    expect(compact).toContain('.workspace-shell[data-results-open="false"]');
+    expect(compact).toContain("--workspace-map-track: minmax(240px, 1fr);");
+    expect(narrow).toContain("grid-template-columns: var(--model-nav-width) minmax(0, 1fr);");
+    expect(narrow).not.toMatch(/\.workspace-shell\[data-(?:parameters|results)-open/);
+    expect(appCss.indexOf("@media (min-width: 801px) and (max-width: 1100px)")).toBeLessThan(
+      appCss.indexOf("@media (max-width: 800px)")
+    );
+  });
 });
 
 function region(wrapper: ReturnType<typeof mount>, name: "parameters" | "results") {
   return wrapper.get(`[data-region="${name}"]`);
+}
+
+function mediaBlock(query: string) {
+  const start = appCss.indexOf(`@media ${query}`);
+  expect(start, `missing @media ${query}`).toBeGreaterThanOrEqual(0);
+
+  const openBrace = appCss.indexOf("{", start);
+  let depth = 0;
+  for (let index = openBrace; index < appCss.length; index++) {
+    if (appCss[index] === "{") depth++;
+    if (appCss[index] === "}") depth--;
+    if (depth === 0) return appCss.slice(start, index + 1);
+  }
+
+  throw new Error(`unterminated @media ${query}`);
 }
 
 function installMatchMedia(matches: boolean) {
