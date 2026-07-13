@@ -602,6 +602,17 @@ export function getGeoJsonBounds(data: GeoJSON.GeoJSON): maplibregl.LngLatBounds
   return hasCoordinate ? bounds : null;
 }
 
+export function fitGeoJsonBounds(
+  map: maplibregl.Map,
+  data: GeoJSON.GeoJSON,
+  options: maplibregl.FitBoundsOptions = { padding: 48, maxZoom: 14 }
+): boolean {
+  const bounds = getGeoJsonBounds(data);
+  if (!bounds) return false;
+  map.fitBounds(bounds, options);
+  return true;
+}
+
 function visitCoordinates(data: GeoJSON.GeoJSON, visitor: (coordinate: GeoJSON.Position) => void) {
   if (data.type === "FeatureCollection") {
     for (const feature of data.features) {
