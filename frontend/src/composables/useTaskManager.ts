@@ -118,6 +118,7 @@ export function useTaskManager(options: UseTaskManagerOptions) {
   }
 
   function track(modelId: ModelId, task: TaskSummary) {
+    invalidateRefresh(modelId);
     storeTask(modelId, task);
     const key = taskKey(modelId, task.task_id);
     if (isTerminal(task)) clearPollingState(key);

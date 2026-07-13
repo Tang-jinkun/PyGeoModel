@@ -224,6 +224,20 @@ describe("useTaskManager", () => {
     manager.dispose();
   });
 
+  it("keeps a publicly tracked task when an earlier refresh resolves later", async () => {
+    const pendingList = deferred<TaskSummary[]>();
+    const list = vi.fn().mockReturnValue(pendingList.promise);
+    const manager = useTaskManager({ pollIntervalMs: 100, clientFactory: () => ({ list, get: vi.fn() }) });
+
+    const refresh = manager.refreshModel("uav");
+    manager.track("uav", task("tracked", "finished", 100));
+    pendingList.resolve([task("stale", "finished", 100)]);
+    await refresh;
+
+    expect(manager.tasksByModel.uav.map(({ task_id }) => task_id)).toEqual(["tracked"]);
+    manager.dispose();
+  });
+
   it("backs off failed polls to the maximum delay and resets after success", async () => {
     vi.useFakeTimers();
     const get = vi.fn()
