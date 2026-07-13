@@ -4,6 +4,8 @@ import math
 import numpy
 from rasterio.transform import rowcol
 
+PROFILE_MASK_ROW_CHUNK_SIZE = 256
+
 
 @dataclass(frozen=True)
 class CoverageDomain:
@@ -103,25 +105,30 @@ def _profile_to_mask(
     tolerance_m: float,
 ) -> numpy.ndarray:
     height, width = valid_pixels.shape
-    rows, cols = numpy.meshgrid(
-        numpy.arange(height, dtype=numpy.float64) + 0.5,
-        numpy.arange(width, dtype=numpy.float64) + 0.5,
-        indexing="ij",
-    )
-    xs = transform.c + cols * transform.a + rows * transform.b
-    ys = transform.f + cols * transform.d + rows * transform.e
-    dx = xs - radar_x
-    dy = ys - radar_y
-    distances = numpy.hypot(dx, dy)
-    azimuths = (numpy.degrees(numpy.arctan2(dx, dy)) + 360) % 360
-
     profile = numpy.asarray(radius_m, dtype=numpy.float64)
-    fractional_indices = azimuths / azimuth_step_deg
-    lower_indices = numpy.floor(fractional_indices).astype(numpy.int64) % len(profile)
-    upper_indices = (lower_indices + 1) % len(profile)
-    fractions = fractional_indices - numpy.floor(fractional_indices)
-    limits = profile[lower_indices] + (profile[upper_indices] - profile[lower_indices]) * fractions
-    return valid_pixels.astype(bool, copy=False) & (distances <= limits + tolerance_m)
+    column_centers = numpy.arange(width, dtype=numpy.float64) + 0.5
+    result = numpy.zeros((height, width), dtype=bool)
+    valid = valid_pixels.astype(bool, copy=False)
+
+    for row_start in range(0, height, PROFILE_MASK_ROW_CHUNK_SIZE):
+        row_stop = min(height, row_start + PROFILE_MASK_ROW_CHUNK_SIZE)
+        row_centers = numpy.arange(row_start, row_stop, dtype=numpy.float64) + 0.5
+        rows, cols = numpy.meshgrid(row_centers, column_centers, indexing="ij")
+        xs = transform.c + cols * transform.a + rows * transform.b
+        ys = transform.f + cols * transform.d + rows * transform.e
+        dx = xs - radar_x
+        dy = ys - radar_y
+        distances = numpy.hypot(dx, dy)
+        azimuths = (numpy.degrees(numpy.arctan2(dx, dy)) + 360) % 360
+        fractional_indices = azimuths / azimuth_step_deg
+        index_floors = numpy.floor(fractional_indices)
+        lower_indices = index_floors.astype(numpy.int64) % len(profile)
+        upper_indices = (lower_indices + 1) % len(profile)
+        fractions = fractional_indices - index_floors
+        limits = profile[lower_indices] + (profile[upper_indices] - profile[lower_indices]) * fractions
+        result[row_start:row_stop] = valid[row_start:row_stop] & (distances <= limits + tolerance_m)
+
+    return result
 
 
 def _inside(array: numpy.ndarray, row: int, col: int) -> bool:

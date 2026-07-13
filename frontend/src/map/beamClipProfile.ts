@@ -1,11 +1,25 @@
-export interface BeamClipProfile {
-  azimuth_step_deg: number;
-  radius_m: number[];
-}
+import type { BeamClipProfile } from "../api/client";
+
+export type { BeamClipProfile } from "../api/client";
 
 interface RadarPosition {
   lon: number;
   lat: number;
+}
+
+export function resolveBeamRenderRange(
+  requestedRangeM: number,
+  effectiveRangeM: number | null | undefined
+) {
+  const requested = Number.isFinite(requestedRangeM) ? Math.max(0, requestedRangeM) : 0;
+  if (!Number.isFinite(effectiveRangeM) || (effectiveRangeM ?? 0) <= 0) {
+    return requested;
+  }
+  return Math.min(requested, effectiveRangeM as number);
+}
+
+export function canPreviewBeam(requestDemId: string, selectedDemId: string | null | undefined) {
+  return Boolean(requestDemId && selectedDemId && requestDemId === selectedDemId);
 }
 
 export function radiusAtAzimuth(

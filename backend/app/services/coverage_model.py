@@ -14,12 +14,14 @@ from shapely.ops import unary_union
 from app.core.errors import AppError
 from app.schemas.radar import CoverageRequest
 from app.services.coverage_domain import build_coverage_domain
+from app.services.coverage_range import effective_max_range
 from app.services.geometry import make_range_geometry
 from app.services.projection import utm_epsg_from_lonlat
 
 MIN_DEM_COVERAGE_RATIO = 0.5
 WARN_DEM_COVERAGE_RATIO = 0.98
 PROJECTED_DEM_NODATA = -3.4028235e38
+COVERAGE_RATIO_ROW_CHUNK_SIZE = 256
 
 
 @dataclass(frozen=True)
@@ -43,6 +45,7 @@ def prepare_coverage_dem(source: Path, destination: Path, payload: CoverageReque
     target_epsg = utm_epsg_from_lonlat(payload.radar.lon, payload.radar.lat)
     target_crs = CRS.from_epsg(target_epsg)
     radar_x, radar_y = project_lonlat_to_crs(payload.radar.lon, payload.radar.lat, target_crs)
+    effective_range_m, _ = effective_max_range(payload)
 
     with rasterio.open(source) as src:
         if src.crs is None:
@@ -72,7 +75,7 @@ def prepare_coverage_dem(source: Path, destination: Path, payload: CoverageReque
                 status_code=400,
             )
 
-        target_bounds = bounds_around_point(radar_x, radar_y, payload.coverage.max_range_m)
+        target_bounds = bounds_around_point(radar_x, radar_y, effective_range_m)
         src_crop_bounds = transform_bounds(
             target_crs,
             src.crs,
@@ -172,7 +175,7 @@ def prepare_coverage_dem(source: Path, destination: Path, payload: CoverageReque
             dst_transform,
             radar_x,
             radar_y,
-            payload.coverage.max_range_m,
+            effective_range_m,
         )
     except ValueError as exc:
         if "Radar is on an invalid DEM cell" in str(exc):
@@ -189,6 +192,7 @@ def prepare_coverage_dem(source: Path, destination: Path, payload: CoverageReque
         radar_x,
         radar_y,
         payload,
+        effective_range_m,
     )
     if dem_coverage_ratio < MIN_DEM_COVERAGE_RATIO:
         raise AppError(
@@ -259,7 +263,7 @@ def coverage_extent_ratio_for_dataset(dataset, payload: CoverageRequest, target_
     range_geom = make_range_geometry(
         radar_x,
         radar_y,
-        payload.coverage.max_range_m,
+        effective_max_range(payload)[0],
         payload.coverage.scan_mode,
         payload.coverage.azimuth_deg,
         payload.coverage.beam_width_deg,
@@ -275,27 +279,31 @@ def _coverage_ratio_for_domain(
     radar_x: float,
     radar_y: float,
     payload: CoverageRequest,
+    effective_range_m: float,
 ) -> float:
     height, width = analysis_domain.shape
-    rows, cols = numpy.meshgrid(
-        numpy.arange(height, dtype=numpy.float64) + 0.5,
-        numpy.arange(width, dtype=numpy.float64) + 0.5,
-        indexing="ij",
-    )
-    xs = transform.c + cols * transform.a + rows * transform.b
-    ys = transform.f + cols * transform.d + rows * transform.e
-    dx = xs - radar_x
-    dy = ys - radar_y
-    requested = numpy.hypot(dx, dy) <= payload.coverage.max_range_m
-    if payload.coverage.scan_mode == "sector" and payload.coverage.beam_width_deg < 360:
-        azimuth = (numpy.degrees(numpy.arctan2(dx, dy)) + 360) % 360
-        center = payload.coverage.azimuth_deg % 360
-        delta = numpy.abs((azimuth - center + 180) % 360 - 180)
-        requested &= delta <= payload.coverage.beam_width_deg / 2
-    requested_count = int(requested.sum())
+    column_centers = numpy.arange(width, dtype=numpy.float64) + 0.5
+    requested_count = 0
+    analyzed_count = 0
+    for row_start in range(0, height, COVERAGE_RATIO_ROW_CHUNK_SIZE):
+        row_stop = min(height, row_start + COVERAGE_RATIO_ROW_CHUNK_SIZE)
+        row_centers = numpy.arange(row_start, row_stop, dtype=numpy.float64) + 0.5
+        rows, cols = numpy.meshgrid(row_centers, column_centers, indexing="ij")
+        xs = transform.c + cols * transform.a + rows * transform.b
+        ys = transform.f + cols * transform.d + rows * transform.e
+        dx = xs - radar_x
+        dy = ys - radar_y
+        requested = numpy.hypot(dx, dy) <= effective_range_m
+        if payload.coverage.scan_mode == "sector" and payload.coverage.beam_width_deg < 360:
+            azimuth = (numpy.degrees(numpy.arctan2(dx, dy)) + 360) % 360
+            center = payload.coverage.azimuth_deg % 360
+            delta = numpy.abs((azimuth - center + 180) % 360 - 180)
+            requested &= delta <= payload.coverage.beam_width_deg / 2
+        requested_count += int(requested.sum())
+        analyzed_count += int((requested & analysis_domain[row_start:row_stop]).sum())
     if requested_count == 0:
         return 0.0
-    return float((requested & analysis_domain).sum()) / requested_count
+    return analyzed_count / requested_count
 
 
 def vectorize_visible_viewshed(viewshed: Path):

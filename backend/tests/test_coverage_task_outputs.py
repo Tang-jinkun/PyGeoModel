@@ -17,6 +17,7 @@ from app.workers.coverage_task import (
     _build_coverage_metrics,
     _commit_staged_outputs,
     _coverage_masks,
+    _dem_coverage_ratio,
     _ensure_finished_outputs_exist,
     _ensure_staged_outputs_exist,
     _generate_height_layers,
@@ -62,6 +63,42 @@ def test_coverage_masks_partition_unknown_from_blocked() -> None:
     assert numpy.array_equal(masks["theoretical"], masks["visible"] | masks["blocked"])
 
 
+def test_coverage_masks_build_coordinate_grids_in_row_chunks(monkeypatch) -> None:
+    data = numpy.zeros((1025, 4), dtype=numpy.float32)
+    domain = numpy.ones_like(data, dtype=bool)
+    original_meshgrid = numpy.meshgrid
+    row_chunk_sizes: list[int] = []
+
+    def bounded_meshgrid(xs, ys, *args, **kwargs):
+        row_chunk_sizes.append(len(ys))
+        assert len(ys) <= 256
+        return original_meshgrid(xs, ys, *args, **kwargs)
+
+    monkeypatch.setattr(numpy, "meshgrid", bounded_meshgrid)
+
+    masks = _coverage_masks(
+        data,
+        from_origin(-20, 5125, 10, 10),
+        radar_x=5,
+        radar_y=5,
+        payload=CoverageRequest.model_validate(
+            {
+                "dem_id": "dem_test",
+                "radar": {"lon": 105, "lat": 0, "height_m": 10},
+                "target": {"height_m": 0},
+                "coverage": {"max_range_m": 100, "scan_mode": "omni"},
+                "advanced": {"min_elevation_deg": 0, "max_elevation_deg": 89},
+            }
+        ),
+        target_height_m=0,
+        effective_range_m=100,
+        analysis_domain=domain,
+    )
+
+    assert masks["theoretical"].shape == data.shape
+    assert len(row_chunk_sizes) > 1
+
+
 def test_build_coverage_metrics_preserves_area_identities() -> None:
     true = numpy.ones((2, 2), dtype=bool)
     false = numpy.zeros((2, 2), dtype=bool)
@@ -89,6 +126,15 @@ def test_build_coverage_metrics_preserves_area_identities() -> None:
     assert metrics.visible_area_m2 == 100
     assert metrics.blocked_area_m2 == 100
     assert metrics.blocked_ratio == 0.5
+
+
+def test_dem_coverage_ratio_is_one_when_requested_area_is_empty() -> None:
+    metrics = CoverageMetrics(
+        requested_theoretical_area_m2=0,
+        theoretical_area_m2=0,
+    )
+
+    assert _dem_coverage_ratio(metrics) == 1
 
 
 def test_beam_clip_profile_is_capped_to_effective_range(tmp_path: Path) -> None:
@@ -223,7 +269,7 @@ def test_coverage_metrics_and_model_include_dem_clip_contract() -> None:
 def test_legacy_coverage_contract_defaults_new_fields() -> None:
     metrics = CoverageMetrics.model_validate({"theoretical_area_m2": 100})
 
-    assert metrics.requested_theoretical_area_m2 == 0
+    assert metrics.requested_theoretical_area_m2 == 100
     assert metrics.unknown_area_m2 == 0
 
 

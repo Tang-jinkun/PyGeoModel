@@ -9,6 +9,7 @@ from app.core.errors import AppError
 from app.schemas.radar import CoverageRequest
 from app.services.coverage_domain import build_coverage_domain
 from app.services.coverage_model import (
+    _coverage_ratio_for_domain,
     default_simplify_tolerance,
     prepare_coverage_dem,
     validate_coverage_extent,
@@ -71,6 +72,58 @@ def test_build_coverage_domain_preserves_other_azimuths() -> None:
     assert domain.radius_m[45] >= 40
 
 
+def test_build_coverage_domain_rasterizes_profile_in_row_chunks(monkeypatch) -> None:
+    valid = numpy.ones((1025, 4), dtype=bool)
+    transform = from_origin(-20, 5125, 10, 10)
+    original_meshgrid = numpy.meshgrid
+    row_chunk_sizes: list[int] = []
+
+    def bounded_meshgrid(rows, cols, *args, **kwargs):
+        row_chunk_sizes.append(len(rows))
+        assert len(rows) <= 256
+        return original_meshgrid(rows, cols, *args, **kwargs)
+
+    monkeypatch.setattr(numpy, "meshgrid", bounded_meshgrid)
+
+    domain = build_coverage_domain(
+        valid,
+        transform,
+        radar_x=5,
+        radar_y=5,
+        max_range_m=100,
+        azimuth_step_deg=2,
+    )
+
+    assert domain.analysis_mask.shape == valid.shape
+    assert len(row_chunk_sizes) > 1
+
+
+def test_coverage_ratio_counts_requested_pixels_in_row_chunks(monkeypatch) -> None:
+    domain = numpy.ones((1025, 4), dtype=bool)
+    transform = from_origin(-20, 5125, 10, 10)
+    original_meshgrid = numpy.meshgrid
+    row_chunk_sizes: list[int] = []
+
+    def bounded_meshgrid(rows, cols, *args, **kwargs):
+        row_chunk_sizes.append(len(rows))
+        assert len(rows) <= 256
+        return original_meshgrid(rows, cols, *args, **kwargs)
+
+    monkeypatch.setattr(numpy, "meshgrid", bounded_meshgrid)
+
+    ratio = _coverage_ratio_for_domain(
+        domain,
+        transform,
+        radar_x=5,
+        radar_y=5,
+        payload=make_request(lon=105.0, lat=35.0, max_range_m=100),
+        effective_range_m=100,
+    )
+
+    assert ratio == pytest.approx(1)
+    assert len(row_chunk_sizes) > 1
+
+
 def test_advanced_height_layers_are_sorted_deduplicated_and_limited() -> None:
     request = make_request(lon=105.0, lat=35.0)
     request.advanced.height_layers_m = [500, 0, 100, 100, 250]
@@ -124,6 +177,22 @@ def test_validate_coverage_extent_rejects_mostly_outside_range(tmp_path: Path) -
         validate_coverage_extent(source, make_request(lon=105.0, lat=35.0, max_range_m=50_000))
 
     assert exc_info.value.code == "RANGE_OUTSIDE_DEM"
+
+
+def test_validate_coverage_extent_uses_radar_equation_effective_range(tmp_path: Path) -> None:
+    source = tmp_path / "source.tif"
+    write_test_dem(source)
+    request = make_request(lon=105.0, lat=35.0, max_range_m=50_000)
+    request.reserved_radar_params.frequency_hz = 1_000_000_000
+    request.reserved_radar_params.transmit_power_w = 1
+    request.reserved_radar_params.antenna_gain_db = 0
+    request.reserved_radar_params.receiver_sensitivity_dbm = -140
+    request.reserved_radar_params.target_rcs_m2 = 1
+    request.reserved_radar_params.system_loss_db = 0
+
+    ratio = validate_coverage_extent(source, request)
+
+    assert ratio == pytest.approx(1)
 
 
 def test_prepare_coverage_dem_reports_dem_coverage_ratio(tmp_path: Path) -> None:

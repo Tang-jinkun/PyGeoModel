@@ -99,7 +99,11 @@ import {
   type ResultLayerKey
 } from "./map/mapLayers";
 import { addOrUpdateRadarVolume, removeRadarVolume } from "./map/radarVolumeLayer";
-import { clipProfileFromBounds } from "./map/beamClipProfile";
+import {
+  canPreviewBeam,
+  clipProfileFromBounds,
+  resolveBeamRenderRange
+} from "./map/beamClipProfile";
 import {
   addOrUpdateClippedVolumeLayer,
   loadClippedVolumeData,
@@ -319,6 +323,7 @@ watch(
   () => {
     radarVolumeRequest.value = coverageRequest;
     radarVolumeTaskId.value = null;
+    updateBeamPreviewAvailability();
     syncRadarVolumeLayer(coverageRequest);
   },
   { deep: true }
@@ -1077,8 +1082,10 @@ function applyLayerControl(control: ResultLayerControl) {
 function clearLayerAvailability() {
   focusToken++;
   radarVolumeTaskId.value = null;
+  radarVolumeRequest.value = coverageRequest;
+  const beamPreviewAvailable = canPreviewBeam(coverageRequest.dem_id, dem.value?.dem_id);
   for (const control of layerControls) {
-    control.available = false;
+    control.available = isBeamPreviewLayer(control.key) && beamPreviewAvailable;
     control.visible = defaultLayerVisibility(control.key);
     control.opacity = control.defaultOpacity;
   }
@@ -1093,6 +1100,9 @@ function clearLayerAvailability() {
     removeClippedVolumeLayer(map.value);
     removeVoxelLayer(map.value);
     removeFusionLayers(map.value);
+    if (beamPreviewAvailable) {
+      syncRadarVolumeLayer(coverageRequest);
+    }
   }
 }
 
@@ -1172,6 +1182,20 @@ function getLayerControl(key: LayerKey) {
   return layerControls.find((item) => item.key === key);
 }
 
+function isBeamPreviewLayer(key: LayerKey) {
+  return key === "radarVolume" || key === "radarRequestBoundary";
+}
+
+function updateBeamPreviewAvailability() {
+  const available = canPreviewBeam(coverageRequest.dem_id, dem.value?.dem_id);
+  for (const key of ["radarVolume", "radarRequestBoundary"] as const) {
+    const control = getLayerControl(key);
+    if (control) {
+      control.available = available;
+    }
+  }
+}
+
 function defaultLayerVisibility(key: LayerKey) {
   return key !== "voxel" && key !== "radarRequestBoundary";
 }
@@ -1193,16 +1217,26 @@ function syncRadarVolumeLayer(request?: CoverageRequest) {
     return;
   }
   const renderRequest = request ?? radarVolumeRequest.value ?? coverageRequest;
-  const exactProfile = radarVolumeTaskId.value === task.value?.task_id
-    ? task.value?.model?.beam_clip_profile ?? null
-    : null;
-  const requestDem = demList.value.find((item) => item.dem_id === renderRequest.dem_id) ?? dem.value;
+  const displayedModel = radarVolumeTaskId.value === task.value?.task_id ? task.value?.model ?? null : null;
+  const exactProfile = displayedModel?.beam_clip_profile ?? null;
+  const renderRangeM = resolveBeamRenderRange(
+    renderRequest.coverage.max_range_m,
+    displayedModel?.effective_max_range_m
+  );
+  const volumeRequest = renderRangeM === renderRequest.coverage.max_range_m
+    ? renderRequest
+    : {
+        ...renderRequest,
+        coverage: { ...renderRequest.coverage, max_range_m: renderRangeM }
+      };
+  const requestDem = demList.value.find((item) => item.dem_id === renderRequest.dem_id)
+    ?? (dem.value?.dem_id === renderRequest.dem_id ? dem.value : null);
   const clipProfile = exactProfile ?? clipProfileFromBounds(
     requestDem?.bounds ?? [],
     renderRequest.radar,
-    renderRequest.coverage.max_range_m
+    renderRangeM
   );
-  addOrUpdateRadarVolume(map.value, renderRequest, {
+  addOrUpdateRadarVolume(map.value, volumeRequest, {
     opacity: showSolid ? control?.opacity ?? 0.62 : 0,
     showScanPlane: showSolid && !(getLayerControl("clippedVolume")?.available && clippedVolumeCells.value.length),
     clipProfile,

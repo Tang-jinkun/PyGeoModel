@@ -88,7 +88,7 @@ def test_read_coverage_metrics_returns_json(tmp_path: Path) -> None:
     payload = response.json()
     assert payload["theoretical_area_m2"] == 100
     assert payload["visible_area_m2"] == 60
-    assert payload["requested_theoretical_area_m2"] == 0
+    assert payload["requested_theoretical_area_m2"] == 100
     assert payload["unknown_area_m2"] == 0
 
 

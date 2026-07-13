@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { clipProfileFromBounds, createRadiusResolver, radiusAtAzimuth } from "./beamClipProfile";
+import {
+  canPreviewBeam,
+  clipProfileFromBounds,
+  createRadiusResolver,
+  radiusAtAzimuth,
+  resolveBeamRenderRange
+} from "./beamClipProfile";
 
 
 describe("beam clip profiles", () => {
@@ -37,5 +43,18 @@ describe("beam clip profiles", () => {
     expect(radius(0)).toBe(800);
     expect(radius(Math.PI / 2)).toBe(1000);
     expect(radius(Math.PI)).toBe(500);
+  });
+
+  it("caps completed-task rendering to the effective range", () => {
+    expect(resolveBeamRenderRange(10_000, 2500)).toBe(2500);
+    expect(resolveBeamRenderRange(10_000, 12_000)).toBe(10_000);
+    expect(resolveBeamRenderRange(10_000, null)).toBe(10_000);
+  });
+
+  it("enables bounds preview only for the selected request DEM", () => {
+    expect(canPreviewBeam("dem_a", "dem_a")).toBe(true);
+    expect(canPreviewBeam("dem_a", "dem_b")).toBe(false);
+    expect(canPreviewBeam("", "dem_a")).toBe(false);
+    expect(canPreviewBeam("dem_a", null)).toBe(false);
   });
 });

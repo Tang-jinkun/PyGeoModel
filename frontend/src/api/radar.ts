@@ -357,9 +357,10 @@ function normalizeMetrics(payload: unknown): CoverageTaskSummary["metrics"] {
   if (!isRecord(payload)) {
     return null;
   }
+  const theoreticalAreaM2 = numberOr(payload.theoretical_area_m2, 0);
   return {
-    requested_theoretical_area_m2: numberOr(payload.requested_theoretical_area_m2, 0),
-    theoretical_area_m2: numberOr(payload.theoretical_area_m2, 0),
+    requested_theoretical_area_m2: numberOr(payload.requested_theoretical_area_m2, theoreticalAreaM2),
+    theoretical_area_m2: theoreticalAreaM2,
     unknown_area_m2: numberOr(payload.unknown_area_m2, 0),
     visible_area_m2: numberOr(payload.visible_area_m2, 0),
     blocked_area_m2: numberOr(payload.blocked_area_m2, 0),

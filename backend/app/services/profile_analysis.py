@@ -5,9 +5,9 @@ from pyproj import Transformer
 from app.core.errors import AppError
 from app.schemas.radar import CoverageProfileResult, CoverageProfileSample
 from app.services.dem_store import find_dem_file
+from app.services.coverage_range import effective_max_range as _effective_max_range
 from app.services.projection import utm_epsg_from_lonlat
 from app.services.task_store import get_task
-from app.workers.coverage_task import _effective_max_range
 
 EARTH_RADIUS_M = 6_371_000.0
 

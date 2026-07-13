@@ -52,7 +52,7 @@ describe("radar task normalization", () => {
       }
     });
 
-    expect(task.metrics?.requested_theoretical_area_m2).toBe(0);
+    expect(task.metrics?.requested_theoretical_area_m2).toBe(100);
     expect(task.metrics?.unknown_area_m2).toBe(0);
     expect(task.model?.beam_clip_profile).toBeNull();
   });

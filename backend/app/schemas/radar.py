@@ -100,6 +100,16 @@ class CoverageMetrics(BaseModel):
     beam_eligible_area_m2: float = 0
     radar_equation_limited_area_m2: float = 0
 
+    @model_validator(mode="before")
+    @classmethod
+    def preserve_legacy_theoretical_area(cls, value: Any) -> Any:
+        if isinstance(value, dict) and "requested_theoretical_area_m2" not in value:
+            return {
+                **value,
+                "requested_theoretical_area_m2": value.get("theoretical_area_m2", 0),
+            }
+        return value
+
 
 class CoverageDiagnostics(BaseModel):
     radar_equation_active: bool = False

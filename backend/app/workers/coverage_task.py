@@ -28,9 +28,12 @@ from app.services.coverage_model import (
     default_simplify_tolerance,
     prepare_coverage_dem,
 )
+from app.services.coverage_range import effective_max_range as _effective_max_range
 from app.services.geometry import make_range_geometry, project_geometry
 from app.services.output_files import OUTPUT_FILENAMES, describe_output_files, list_task_output_files
 from app.services.task_store import mark_failed, mark_finished, mark_running
+
+COVERAGE_MASK_ROW_CHUNK_SIZE = 256
 
 
 def run_coverage_task(task_id: str, payload: CoverageRequest) -> None:
@@ -123,47 +126,6 @@ def _run_gdal_viewshed(
     return command
 
 
-def _radar_equation_max_range(payload: CoverageRequest) -> float | None:
-    params = payload.reserved_radar_params
-    required = [
-        params.frequency_hz,
-        params.transmit_power_w,
-        params.antenna_gain_db,
-        params.receiver_sensitivity_dbm,
-        params.target_rcs_m2,
-    ]
-    if any(value is None for value in required):
-        return None
-    if (
-        params.frequency_hz <= 0
-        or params.transmit_power_w <= 0
-        or params.target_rcs_m2 <= 0
-    ):
-        return None
-
-    light_speed = 299_792_458.0
-    wavelength = light_speed / params.frequency_hz
-    gain = 10 ** (params.antenna_gain_db / 10)
-    loss = 10 ** ((params.system_loss_db or 0) / 10)
-    threshold_dbm = params.receiver_sensitivity_dbm + (params.noise_figure_db or 0)
-    threshold_w = 10 ** ((threshold_dbm - 30) / 10)
-    if threshold_w <= 0 or loss <= 0:
-        return None
-
-    numerator = params.transmit_power_w * gain * gain * wavelength * wavelength * params.target_rcs_m2
-    denominator = ((4 * math.pi) ** 3) * threshold_w * loss
-    if numerator <= 0 or denominator <= 0:
-        return None
-    return (numerator / denominator) ** 0.25
-
-
-def _effective_max_range(payload: CoverageRequest) -> tuple[float, float | None]:
-    radar_range = _radar_equation_max_range(payload)
-    if radar_range is None:
-        return payload.coverage.max_range_m, None
-    return min(payload.coverage.max_range_m, radar_range), radar_range
-
-
 def _coverage_masks(
     data,
     transform,
@@ -175,30 +137,6 @@ def _coverage_masks(
     analysis_domain=None,
 ):
     height, width = data.shape
-    cols = numpy.arange(width, dtype=numpy.float64)
-    rows = numpy.arange(height, dtype=numpy.float64)
-    xs = transform.c + (cols + 0.5) * transform.a
-    ys = transform.f + (rows + 0.5) * transform.e
-    x_grid, y_grid = numpy.meshgrid(xs, ys)
-
-    dx = x_grid - radar_x
-    dy = y_grid - radar_y
-    dist = numpy.hypot(dx, dy)
-    finite = numpy.isfinite(data)
-
-    sector_mask = numpy.ones_like(data, dtype=bool)
-    if payload.coverage.scan_mode == "sector" and payload.coverage.beam_width_deg < 360:
-        azimuth = (numpy.degrees(numpy.arctan2(dx, dy)) + 360) % 360
-        half = payload.coverage.beam_width_deg / 2
-        center = payload.coverage.azimuth_deg % 360
-        delta = numpy.abs((azimuth - center + 180) % 360 - 180)
-        sector_mask = delta <= half
-
-    requested_range_mask = dist <= payload.coverage.max_range_m
-    effective_range_mask = dist <= effective_range_m
-    min_height = dist * math.tan(math.radians(payload.advanced.min_elevation_deg))
-    max_height = dist * math.tan(math.radians(payload.advanced.max_elevation_deg))
-    elevation_mask = (target_height_m >= min_height) & (target_height_m <= max_height)
     domain_mask = (
         numpy.asarray(analysis_domain, dtype=bool)
         if analysis_domain is not None
@@ -206,25 +144,70 @@ def _coverage_masks(
     )
     if domain_mask.shape != data.shape:
         raise AppError("DEM_DOMAIN_MISMATCH", "DEM analysis domain does not match viewshed dimensions.", status_code=500)
-    raw_theoretical_mask = sector_mask & effective_range_mask & elevation_mask
-    theoretical_mask = raw_theoretical_mask & domain_mask
-    unknown_mask = raw_theoretical_mask & ~domain_mask
-    terrain_mask = domain_mask & finite & (data <= target_height_m)
-    visible_mask = theoretical_mask & terrain_mask
-    blocked_mask = theoretical_mask & ~visible_mask
+
+    masks = {
+        name: numpy.empty_like(data, dtype=bool)
+        for name in (
+            "sector",
+            "requested_range",
+            "effective_range",
+            "elevation",
+            "terrain",
+            "raw_theoretical",
+            "theoretical",
+            "unknown",
+            "visible",
+            "blocked",
+        )
+    }
+    xs = transform.c + (numpy.arange(width, dtype=numpy.float64) + 0.5) * transform.a
+    min_elevation_slope = math.tan(math.radians(payload.advanced.min_elevation_deg))
+    max_elevation_slope = math.tan(math.radians(payload.advanced.max_elevation_deg))
+    has_sector_limit = payload.coverage.scan_mode == "sector" and payload.coverage.beam_width_deg < 360
+    sector_half_width = payload.coverage.beam_width_deg / 2
+    sector_center = payload.coverage.azimuth_deg % 360
+
+    for row_start in range(0, height, COVERAGE_MASK_ROW_CHUNK_SIZE):
+        row_stop = min(height, row_start + COVERAGE_MASK_ROW_CHUNK_SIZE)
+        rows = numpy.arange(row_start, row_stop, dtype=numpy.float64)
+        ys = transform.f + (rows + 0.5) * transform.e
+        x_grid, y_grid = numpy.meshgrid(xs, ys)
+        dx = x_grid - radar_x
+        dy = y_grid - radar_y
+        distance = numpy.hypot(dx, dy)
+
+        if has_sector_limit:
+            azimuth = (numpy.degrees(numpy.arctan2(dx, dy)) + 360) % 360
+            delta = numpy.abs((azimuth - sector_center + 180) % 360 - 180)
+            sector = delta <= sector_half_width
+        else:
+            sector = numpy.ones(distance.shape, dtype=bool)
+        requested_range = distance <= payload.coverage.max_range_m
+        effective_range = distance <= effective_range_m
+        min_height = distance * min_elevation_slope
+        max_height = distance * max_elevation_slope
+        elevation = (target_height_m >= min_height) & (target_height_m <= max_height)
+        domain = domain_mask[row_start:row_stop]
+        raw_theoretical = sector & effective_range & elevation
+        theoretical = raw_theoretical & domain
+        terrain = domain & numpy.isfinite(data[row_start:row_stop]) & (data[row_start:row_stop] <= target_height_m)
+        visible = theoretical & terrain
+
+        masks["sector"][row_start:row_stop] = sector
+        masks["requested_range"][row_start:row_stop] = requested_range
+        masks["effective_range"][row_start:row_stop] = effective_range
+        masks["elevation"][row_start:row_stop] = elevation
+        masks["terrain"][row_start:row_stop] = terrain
+        masks["raw_theoretical"][row_start:row_stop] = raw_theoretical
+        masks["theoretical"][row_start:row_stop] = theoretical
+        masks["unknown"][row_start:row_stop] = raw_theoretical & ~domain
+        masks["visible"][row_start:row_stop] = visible
+        masks["blocked"][row_start:row_stop] = theoretical & ~visible
+
     return {
-        "sector": sector_mask,
-        "requested_range": requested_range_mask,
-        "effective_range": effective_range_mask,
-        "elevation": elevation_mask,
+        **masks,
         "analysis_domain": domain_mask,
-        "terrain": terrain_mask,
-        "raw_theoretical": raw_theoretical_mask,
-        "theoretical": theoretical_mask,
-        "unknown": unknown_mask,
-        "visible": visible_mask,
-        "blocked": blocked_mask,
-        "final": visible_mask,
+        "final": masks["visible"],
     }
 
 
@@ -297,6 +280,12 @@ def _build_coverage_metrics(masks, transform, radar_equation_limited_area: float
         beam_eligible_area_m2=beam_eligible_area,
         radar_equation_limited_area_m2=radar_equation_limited_area,
     )
+
+
+def _dem_coverage_ratio(metrics: CoverageMetrics) -> float:
+    if metrics.requested_theoretical_area_m2 <= 0:
+        return 1.0
+    return metrics.theoretical_area_m2 / metrics.requested_theoretical_area_m2
 
 
 def _beam_clip_profile_for_range(
@@ -677,11 +666,7 @@ def _write_vector_outputs(
         min_visible_transform,
         radar_equation_limited_area=radar_equation_limited_area,
     )
-    dem_coverage_ratio = (
-        metrics.theoretical_area_m2 / metrics.requested_theoretical_area_m2
-        if metrics.requested_theoretical_area_m2 > 0
-        else 0
-    )
+    dem_coverage_ratio = _dem_coverage_ratio(metrics)
     diagnostics = CoverageDiagnostics(
         radar_equation_active=radar_equation_range is not None,
         radar_equation_max_range_m=radar_equation_range,
