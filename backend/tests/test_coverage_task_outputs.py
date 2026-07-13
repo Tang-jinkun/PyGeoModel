@@ -13,7 +13,10 @@ from app.schemas.radar import CoverageMetrics, CoverageModelMetadata, CoverageOu
 from app.services.coverage_model import PreparedCoverageDem
 from app.services.output_files import OUTPUT_FILENAMES, describe_output_files
 from app.workers.coverage_task import (
+    _beam_clip_profile_for_range,
+    _build_coverage_metrics,
     _commit_staged_outputs,
+    _coverage_masks,
     _ensure_finished_outputs_exist,
     _ensure_staged_outputs_exist,
     _generate_height_layers,
@@ -22,6 +25,91 @@ from app.workers.coverage_task import (
     _write_output_manifest,
     _write_text_atomic,
 )
+
+
+def test_coverage_masks_partition_unknown_from_blocked() -> None:
+    data = numpy.full((4, 4), 10, dtype=numpy.float32)
+    domain = numpy.ones((4, 4), dtype=bool)
+    domain[:, 2:] = False
+    request = CoverageRequest.model_validate(
+        {
+            "dem_id": "dem_test",
+            "radar": {"lon": 105, "lat": 0, "height_m": 10},
+            "target": {"height_m": 100},
+            "coverage": {
+                "max_range_m": 100,
+                "scan_mode": "omni",
+                "azimuth_deg": 0,
+                "beam_width_deg": 360,
+            },
+            "advanced": {"min_elevation_deg": 0, "max_elevation_deg": 89},
+        }
+    )
+
+    masks = _coverage_masks(
+        data,
+        from_origin(-20, 20, 10, 10),
+        radar_x=0,
+        radar_y=0,
+        payload=request,
+        target_height_m=100,
+        effective_range_m=100,
+        analysis_domain=domain,
+    )
+
+    assert numpy.array_equal(masks["raw_theoretical"], masks["theoretical"] | masks["unknown"])
+    assert not numpy.any(masks["unknown"] & masks["blocked"])
+    assert numpy.array_equal(masks["theoretical"], masks["visible"] | masks["blocked"])
+
+
+def test_build_coverage_metrics_preserves_area_identities() -> None:
+    true = numpy.ones((2, 2), dtype=bool)
+    false = numpy.zeros((2, 2), dtype=bool)
+    theoretical = numpy.array([[True, False], [True, False]])
+    visible = numpy.array([[True, False], [False, False]])
+    masks = {
+        "raw_theoretical": true,
+        "theoretical": theoretical,
+        "unknown": true & ~theoretical,
+        "visible": visible,
+        "blocked": theoretical & ~visible,
+        "terrain": visible,
+        "sector": true,
+        "requested_range": true,
+        "effective_range": true,
+        "elevation": true,
+        "analysis_domain": theoretical,
+    }
+
+    metrics = _build_coverage_metrics(masks, from_origin(0, 20, 10, 10), radar_equation_limited_area=0)
+
+    assert metrics.requested_theoretical_area_m2 == 400
+    assert metrics.theoretical_area_m2 == 200
+    assert metrics.unknown_area_m2 == 200
+    assert metrics.visible_area_m2 == 100
+    assert metrics.blocked_area_m2 == 100
+    assert metrics.blocked_ratio == 0.5
+
+
+def test_beam_clip_profile_is_capped_to_effective_range(tmp_path: Path) -> None:
+    prepared = PreparedCoverageDem(
+        source_dem=tmp_path / "source.tif",
+        projected_dem=tmp_path / "projected.tif",
+        target_epsg=32648,
+        radar_x=0,
+        radar_y=0,
+        projected_bounds=BoundingBox(-20, -20, 20, 20),
+        resolution_m=(10, 10),
+        dem_coverage_ratio=1,
+        beam_clip_profile_m=(1000, 800, 600),
+        beam_clip_azimuth_step_deg=2,
+    )
+
+    profile = _beam_clip_profile_for_range(prepared, effective_range_m=750)
+
+    assert profile is not None
+    assert profile.azimuth_step_deg == 2
+    assert profile.radius_m == [750, 750, 600]
 
 
 def test_write_feature_collection_is_valid_json_and_cleans_temp(tmp_path: Path) -> None:
@@ -104,6 +192,39 @@ def test_write_output_manifest_includes_all_sections(tmp_path: Path) -> None:
     assert payload["model"]["target_epsg"] == 32648
     assert payload["warnings"] == ["extent warning"]
     assert not list(tmp_path.glob("*.tmp"))
+
+
+def test_coverage_metrics_and_model_include_dem_clip_contract() -> None:
+    metrics = CoverageMetrics(
+        requested_theoretical_area_m2=1600,
+        theoretical_area_m2=800,
+        unknown_area_m2=800,
+        visible_area_m2=500,
+        blocked_area_m2=300,
+    )
+    model = CoverageModelMetadata(
+        target_epsg=32648,
+        radar_projected_xy=[0, 0],
+        projected_dem_bounds=[0, 0, 10, 10],
+        projected_dem_resolution_m=[10, 10],
+        max_range_m=1000,
+        scan_mode="omni",
+        azimuth_deg=0,
+        beam_width_deg=360,
+        simplify_tolerance_m=10,
+        beam_clip_profile={"azimuth_step_deg": 2, "radius_m": [1000, 900]},
+    )
+
+    assert metrics.requested_theoretical_area_m2 == metrics.theoretical_area_m2 + metrics.unknown_area_m2
+    assert model.beam_clip_profile is not None
+    assert model.beam_clip_profile.radius_m == [1000, 900]
+
+
+def test_legacy_coverage_contract_defaults_new_fields() -> None:
+    metrics = CoverageMetrics.model_validate({"theoretical_area_m2": 100})
+
+    assert metrics.requested_theoretical_area_m2 == 0
+    assert metrics.unknown_area_m2 == 0
 
 
 def test_output_manifest_can_describe_all_public_outputs(tmp_path: Path) -> None:

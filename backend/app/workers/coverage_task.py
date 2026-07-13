@@ -13,6 +13,7 @@ from shapely.geometry import box, mapping
 from app.core.config import settings
 from app.core.errors import AppError
 from app.schemas.radar import (
+    BeamClipProfile,
     CoverageDiagnostics,
     CoverageMetrics,
     CoverageModelMetadata,
@@ -171,6 +172,7 @@ def _coverage_masks(
     payload: CoverageRequest,
     target_height_m: float,
     effective_range_m: float,
+    analysis_domain=None,
 ):
     height, width = data.shape
     cols = numpy.arange(width, dtype=numpy.float64)
@@ -182,7 +184,7 @@ def _coverage_masks(
     dx = x_grid - radar_x
     dy = y_grid - radar_y
     dist = numpy.hypot(dx, dy)
-    finite = numpy.isfinite(data) & (data >= 0)
+    finite = numpy.isfinite(data)
 
     sector_mask = numpy.ones_like(data, dtype=bool)
     if payload.coverage.scan_mode == "sector" and payload.coverage.beam_width_deg < 360:
@@ -197,17 +199,32 @@ def _coverage_masks(
     min_height = dist * math.tan(math.radians(payload.advanced.min_elevation_deg))
     max_height = dist * math.tan(math.radians(payload.advanced.max_elevation_deg))
     elevation_mask = (target_height_m >= min_height) & (target_height_m <= max_height)
-    terrain_mask = finite & (data <= target_height_m)
-    theoretical_mask = sector_mask & effective_range_mask & elevation_mask
-    final_mask = theoretical_mask & terrain_mask
+    domain_mask = (
+        numpy.asarray(analysis_domain, dtype=bool)
+        if analysis_domain is not None
+        else numpy.ones_like(data, dtype=bool)
+    )
+    if domain_mask.shape != data.shape:
+        raise AppError("DEM_DOMAIN_MISMATCH", "DEM analysis domain does not match viewshed dimensions.", status_code=500)
+    raw_theoretical_mask = sector_mask & effective_range_mask & elevation_mask
+    theoretical_mask = raw_theoretical_mask & domain_mask
+    unknown_mask = raw_theoretical_mask & ~domain_mask
+    terrain_mask = domain_mask & finite & (data <= target_height_m)
+    visible_mask = theoretical_mask & terrain_mask
+    blocked_mask = theoretical_mask & ~visible_mask
     return {
         "sector": sector_mask,
         "requested_range": requested_range_mask,
         "effective_range": effective_range_mask,
         "elevation": elevation_mask,
+        "analysis_domain": domain_mask,
         "terrain": terrain_mask,
+        "raw_theoretical": raw_theoretical_mask,
         "theoretical": theoretical_mask,
-        "final": final_mask,
+        "unknown": unknown_mask,
+        "visible": visible_mask,
+        "blocked": blocked_mask,
+        "final": visible_mask,
     }
 
 
@@ -219,7 +236,16 @@ def _coverage_masks_for_prepared(
     target_height_m: float,
     effective_range_m: float,
 ):
-    return _coverage_masks(data, transform, prepared.radar_x, prepared.radar_y, payload, target_height_m, effective_range_m)
+    return _coverage_masks(
+        data,
+        transform,
+        prepared.radar_x,
+        prepared.radar_y,
+        payload,
+        target_height_m,
+        effective_range_m,
+        prepared.analysis_domain,
+    )
 
 
 def _mask_to_geometry(mask, transform):
@@ -241,6 +267,59 @@ def _mask_to_geometry(mask, transform):
 
 def _mask_area(mask, transform) -> float:
     return float(mask.sum()) * abs(float(transform.a) * float(transform.e))
+
+
+def _build_coverage_metrics(masks, transform, radar_equation_limited_area: float) -> CoverageMetrics:
+    requested_theoretical_area = _mask_area(masks["raw_theoretical"], transform)
+    theoretical_area = _mask_area(masks["theoretical"], transform)
+    unknown_area = _mask_area(masks["unknown"], transform)
+    visible_area = _mask_area(masks["visible"], transform)
+    blocked_area = _mask_area(masks["blocked"], transform)
+    terrain_visible_area = _mask_area(
+        masks["terrain"] & masks["sector"] & masks["requested_range"],
+        transform,
+    )
+    beam_eligible_area = _mask_area(
+        masks["elevation"]
+        & masks["sector"]
+        & masks["requested_range"]
+        & masks["analysis_domain"],
+        transform,
+    )
+    return CoverageMetrics(
+        requested_theoretical_area_m2=requested_theoretical_area,
+        theoretical_area_m2=theoretical_area,
+        unknown_area_m2=unknown_area,
+        visible_area_m2=visible_area,
+        blocked_area_m2=blocked_area,
+        blocked_ratio=blocked_area / theoretical_area if theoretical_area > 0 else 0,
+        terrain_visible_area_m2=terrain_visible_area,
+        beam_eligible_area_m2=beam_eligible_area,
+        radar_equation_limited_area_m2=radar_equation_limited_area,
+    )
+
+
+def _beam_clip_profile_for_range(
+    prepared: PreparedCoverageDem,
+    effective_range_m: float,
+) -> BeamClipProfile | None:
+    if not prepared.beam_clip_profile_m:
+        return None
+    return BeamClipProfile(
+        azimuth_step_deg=prepared.beam_clip_azimuth_step_deg,
+        radius_m=[
+            max(0.0, min(float(radius_m), effective_range_m))
+            for radius_m in prepared.beam_clip_profile_m
+        ],
+    )
+
+
+def _analysis_domain_for_shape(prepared: PreparedCoverageDem, shape: tuple[int, int]) -> numpy.ndarray:
+    if prepared.analysis_domain is None:
+        return numpy.ones(shape, dtype=bool)
+    if prepared.analysis_domain.shape != shape:
+        raise AppError("DEM_DOMAIN_MISMATCH", "DEM analysis domain does not match output dimensions.", status_code=500)
+    return prepared.analysis_domain
 
 
 def _generate_height_layers(
@@ -269,9 +348,9 @@ def _generate_height_layers(
     }
     for height in height_layers:
         masks = _coverage_masks_for_prepared(data, transform, prepared, payload, height, effective_range)
-        visible_mask = masks["final"]
+        visible_mask = masks["visible"]
         theoretical_mask = masks["theoretical"]
-        blocked_mask = theoretical_mask & ~visible_mask
+        blocked_mask = masks["blocked"]
         visible_path = staging_dir / f"visible_h_{_height_filename_token(height)}.geojson"
         blocked_path = staging_dir / f"blocked_h_{_height_filename_token(height)}.geojson"
 
@@ -330,6 +409,8 @@ def _generate_voxels(
         transform = src.transform
         height, width = data.shape
 
+    analysis_domain = _analysis_domain_for_shape(prepared, data.shape)
+
     # Sample grid
     x_indices = numpy.linspace(0, width - 1, grid_size, dtype=numpy.int32)
     y_indices = numpy.linspace(0, height - 1, grid_size, dtype=numpy.int32)
@@ -341,6 +422,8 @@ def _generate_voxels(
             yi_int = int(round(yi))
             xi_int = int(round(xi))
             if not (0 <= yi_int < height and 0 <= xi_int < width):
+                continue
+            if not analysis_domain[yi_int, xi_int]:
                 continue
             min_h = data[yi_int, xi_int]
             if not numpy.isfinite(min_h) or min_h < 0:
@@ -421,6 +504,8 @@ def _generate_clipped_volume(
         transform = src.transform
         height, width = data.shape
 
+    analysis_domain = _analysis_domain_for_shape(prepared, data.shape)
+
     x_indices = numpy.linspace(0, width - 1, grid_size, dtype=numpy.int32)
     y_indices = numpy.linspace(0, height - 1, grid_size, dtype=numpy.int32)
     transformer = Transformer.from_crs(f"EPSG:{prepared.target_epsg}", "EPSG:4326", always_xy=True)
@@ -435,6 +520,8 @@ def _generate_clipped_volume(
             yi_int = int(round(yi))
             xi_int = int(round(xi))
             if not (0 <= yi_int < height and 0 <= xi_int < width):
+                continue
+            if not analysis_domain[yi_int, xi_int]:
                 continue
             min_visible_h = data[yi_int, xi_int]
             if not numpy.isfinite(min_visible_h) or min_visible_h < 0:
@@ -539,8 +626,8 @@ def _write_vector_outputs(
         effective_range,
     )
     theoretical_geom = _mask_to_geometry(masks["theoretical"], min_visible_transform)
-    visible_clipped = _mask_to_geometry(masks["final"], min_visible_transform)
-    blocked_geom = theoretical_geom.difference(visible_clipped)
+    visible_clipped = _mask_to_geometry(masks["visible"], min_visible_transform)
+    blocked_geom = _mask_to_geometry(masks["blocked"], min_visible_transform)
 
     tolerance = default_simplify_tolerance(prepared.resolution_m, payload.advanced.output_simplify_tolerance_m)
     if tolerance > 0:
@@ -575,10 +662,6 @@ def _write_vector_outputs(
         {"kind": "blocked"},
     )
 
-    theoretical_area = _mask_area(masks["theoretical"], min_visible_transform)
-    visible_area = _mask_area(masks["final"], min_visible_transform)
-    terrain_visible_area = _mask_area(masks["terrain"] & masks["sector"] & masks["requested_range"], min_visible_transform)
-    beam_eligible_area = _mask_area(masks["elevation"] & masks["sector"] & masks["requested_range"], min_visible_transform)
     requested_area = requested_range_geom.area
     effective_range_geom = make_range_geometry(
         prepared.radar_x,
@@ -589,22 +672,29 @@ def _write_vector_outputs(
         payload.coverage.beam_width_deg,
     )
     radar_equation_limited_area = max(0.0, requested_area - effective_range_geom.area) if radar_equation_range is not None else 0.0
-    blocked_area = max(0.0, theoretical_area - visible_area)
-    metrics = CoverageMetrics(
-        theoretical_area_m2=theoretical_area,
-        visible_area_m2=visible_area,
-        blocked_area_m2=blocked_area,
-        blocked_ratio=blocked_area / theoretical_area if theoretical_area > 0 else 0,
-        terrain_visible_area_m2=terrain_visible_area,
-        beam_eligible_area_m2=beam_eligible_area,
-        radar_equation_limited_area_m2=radar_equation_limited_area,
+    metrics = _build_coverage_metrics(
+        masks,
+        min_visible_transform,
+        radar_equation_limited_area=radar_equation_limited_area,
+    )
+    dem_coverage_ratio = (
+        metrics.theoretical_area_m2 / metrics.requested_theoretical_area_m2
+        if metrics.requested_theoretical_area_m2 > 0
+        else 0
     )
     diagnostics = CoverageDiagnostics(
         radar_equation_active=radar_equation_range is not None,
         radar_equation_max_range_m=radar_equation_range,
         effective_max_range_m=effective_range,
-        terrain_blocked_area_m2=blocked_area,
-        elevation_limited_area_m2=max(0.0, _mask_area(masks["sector"] & masks["effective_range"], min_visible_transform) - theoretical_area),
+        terrain_blocked_area_m2=metrics.blocked_area_m2,
+        elevation_limited_area_m2=max(
+            0.0,
+            _mask_area(
+                masks["sector"] & masks["effective_range"] & masks["analysis_domain"],
+                min_visible_transform,
+            )
+            - metrics.theoretical_area_m2,
+        ),
         radar_equation_limited_area_m2=radar_equation_limited_area,
         notes=_build_diagnostic_notes(payload, effective_range, radar_equation_range),
     )
@@ -633,7 +723,7 @@ def _write_vector_outputs(
             prepared.projected_bounds.top,
         ],
         projected_dem_resolution_m=[prepared.resolution_m[0], prepared.resolution_m[1]],
-        dem_coverage_ratio=prepared.dem_coverage_ratio,
+        dem_coverage_ratio=dem_coverage_ratio,
         max_range_m=payload.coverage.max_range_m,
         scan_mode=payload.coverage.scan_mode,
         azimuth_deg=payload.coverage.azimuth_deg,
@@ -651,8 +741,9 @@ def _write_vector_outputs(
         radar_equation_active=diagnostics.radar_equation_active,
         radar_equation_max_range_m=diagnostics.radar_equation_max_range_m,
         effective_max_range_m=effective_range,
+        beam_clip_profile=_beam_clip_profile_for_range(prepared, effective_range),
     )
-    warnings = _build_model_warnings(prepared, requested_range_geom, diagnostics)
+    warnings = _build_model_warnings(prepared, requested_range_geom, diagnostics, dem_coverage_ratio)
     _write_json_atomic(
         model_metadata_json,
         {
@@ -719,6 +810,7 @@ def _build_model_warnings(
     prepared: PreparedCoverageDem,
     range_geom,
     diagnostics: CoverageDiagnostics | None = None,
+    dem_coverage_ratio: float | None = None,
 ) -> list[str]:
     warnings: list[str] = []
     dem_bounds_geom = box(
@@ -727,8 +819,11 @@ def _build_model_warnings(
         prepared.projected_bounds.right,
         prepared.projected_bounds.top,
     )
-    if prepared.dem_coverage_ratio < WARN_DEM_COVERAGE_RATIO:
-        warnings.append(f"DEM covers {prepared.dem_coverage_ratio:.1%} of the requested radar footprint.")
+    coverage_ratio = prepared.dem_coverage_ratio if dem_coverage_ratio is None else dem_coverage_ratio
+    if coverage_ratio < WARN_DEM_COVERAGE_RATIO:
+        warnings.append(
+            f"DEM covers {coverage_ratio:.1%} of the requested theoretical beam; the remainder is unknown."
+        )
     if diagnostics is not None:
         warnings.extend(diagnostics.notes)
     return warnings

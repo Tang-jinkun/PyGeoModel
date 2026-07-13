@@ -88,6 +88,42 @@ def test_read_coverage_metrics_returns_json(tmp_path: Path) -> None:
     payload = response.json()
     assert payload["theoretical_area_m2"] == 100
     assert payload["visible_area_m2"] == 60
+    assert payload["requested_theoretical_area_m2"] == 0
+    assert payload["unknown_area_m2"] == 0
+
+
+def test_read_coverage_task_returns_dem_clip_contract(tmp_path: Path) -> None:
+    settings.data_dir = tmp_path
+    settings.ensure_directories()
+    write_task(
+        tmp_path,
+        "task_a",
+        "finished",
+        metrics={
+            "requested_theoretical_area_m2": 1200,
+            "theoretical_area_m2": 1000,
+            "unknown_area_m2": 200,
+        },
+        model={
+            "target_epsg": 32648,
+            "radar_projected_xy": [0, 0],
+            "projected_dem_bounds": [0, 0, 10, 10],
+            "projected_dem_resolution_m": [10, 10],
+            "max_range_m": 1000,
+            "scan_mode": "omni",
+            "azimuth_deg": 0,
+            "beam_width_deg": 360,
+            "simplify_tolerance_m": 10,
+            "beam_clip_profile": {"azimuth_step_deg": 2, "radius_m": [1000, 900]},
+        },
+    )
+
+    response = TestClient(app).get("/api/radar/coverage/task_a")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["metrics"]["unknown_area_m2"] == 200
+    assert payload["model"]["beam_clip_profile"]["radius_m"] == [1000, 900]
 
 
 def test_list_coverage_tasks_omits_request(tmp_path: Path) -> None:
@@ -225,7 +261,13 @@ def test_create_coverage_task_rejects_range_mostly_outside_dem(tmp_path: Path) -
     assert response.json()["detail"]["code"] == "RANGE_OUTSIDE_DEM"
 
 
-def write_task(root: Path, task_id: str, status: str, metrics: dict | None = None) -> None:
+def write_task(
+    root: Path,
+    task_id: str,
+    status: str,
+    metrics: dict | None = None,
+    model: dict | None = None,
+) -> None:
     task_dir = root / "tasks"
     task_dir.mkdir(parents=True, exist_ok=True)
     task = {
@@ -238,6 +280,8 @@ def write_task(root: Path, task_id: str, status: str, metrics: dict | None = Non
     }
     if metrics is not None:
         task["metrics"] = metrics
+    if model is not None:
+        task["model"] = model
     (task_dir / f"{task_id}.json").write_text(json.dumps({"task": task}), encoding="utf-8")
 
 

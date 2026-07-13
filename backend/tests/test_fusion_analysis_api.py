@@ -2,7 +2,9 @@ import json
 from pathlib import Path
 
 from fastapi.testclient import TestClient
-from shapely.geometry import box, mapping
+import pytest
+from shapely.geometry import box, mapping, shape
+from shapely.ops import unary_union
 
 from app.core.config import settings
 from app.main import app
@@ -37,6 +39,8 @@ def test_fusion_analysis_returns_union_overlap_and_blind_area(tmp_path: Path) ->
     assert payload["visible_union_geojson"]["features"]
     assert payload["overlap_geojson"]["features"]
     assert payload["blind_geojson"]["features"]
+    blind = unary_union([shape(feature["geometry"]) for feature in payload["blind_geojson"]["features"]])
+    assert blind.bounds == pytest.approx((0.0, 0.0, 2.0, 2.0), abs=1e-9)
 
 
 def test_fusion_analysis_rejects_unfinished_task(tmp_path: Path) -> None:

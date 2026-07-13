@@ -90,7 +90,9 @@ class CoverageRequest(BaseModel):
 
 
 class CoverageMetrics(BaseModel):
+    requested_theoretical_area_m2: float = 0
     theoretical_area_m2: float = 0
+    unknown_area_m2: float = 0
     visible_area_m2: float = 0
     blocked_area_m2: float = 0
     blocked_ratio: float = 0
@@ -135,6 +137,11 @@ class CoverageOutputFile(BaseModel):
     exists: bool = False
 
 
+class BeamClipProfile(BaseModel):
+    azimuth_step_deg: float = Field(default=2, gt=0, le=10)
+    radius_m: list[float] = Field(default_factory=list)
+
+
 class CoverageModelMetadata(BaseModel):
     target_epsg: int
     radar_projected_xy: list[float]
@@ -158,6 +165,7 @@ class CoverageModelMetadata(BaseModel):
     radar_equation_active: bool = False
     radar_equation_max_range_m: float | None = None
     effective_max_range_m: float = 0
+    beam_clip_profile: BeamClipProfile | None = None
 
 
 class CoverageTaskSummary(BaseModel):
