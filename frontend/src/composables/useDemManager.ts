@@ -15,6 +15,7 @@ export function useDemManager(workspace: DemWorkspaceSync) {
   let pendingUploads = 0;
   let latestLoadGeneration = 0;
   let mutationGeneration = 0;
+  let selectionGeneration = 0;
 
   async function load() {
     const loadGeneration = ++latestLoadGeneration;
@@ -34,11 +35,13 @@ export function useDemManager(workspace: DemWorkspaceSync) {
   }
 
   function select(demId: string | null) {
+    selectionGeneration++;
     selectedDem.value = demId;
     workspace.setDemForAll(demId);
   }
 
   async function upload(file: File) {
+    const selectionGenerationAtStart = selectionGeneration;
     pendingUploads++;
     uploading.value = true;
     try {
@@ -47,7 +50,7 @@ export function useDemManager(workspace: DemWorkspaceSync) {
       const index = dems.value.findIndex(({ dem_id }) => dem_id === uploaded.dem_id);
       if (index === -1) dems.value = [...dems.value, uploaded];
       else dems.value.splice(index, 1, uploaded);
-      select(uploaded.dem_id);
+      if (selectionGenerationAtStart === selectionGeneration) select(uploaded.dem_id);
       return uploaded;
     } finally {
       pendingUploads--;

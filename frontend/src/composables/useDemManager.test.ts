@@ -75,6 +75,21 @@ describe("useDemManager", () => {
     expect(manager.uploading.value).toBe(false);
   });
 
+  it("does not let a late upload replace a newer explicit DEM selection", async () => {
+    const pendingUpload = deferred<DemMetadata>();
+    vi.mocked(uploadDem).mockReturnValueOnce(pendingUpload.promise);
+    const { manager, workspace } = createManagerWithWorkspace();
+
+    const upload = manager.upload(new File(["b"], demB.filename));
+    manager.select(demA.dem_id);
+    pendingUpload.resolve(demB);
+    await upload;
+
+    expect(manager.dems.value).toEqual([demB]);
+    expect(manager.selectedDem.value).toBe(demA.dem_id);
+    expect(Object.values(workspace.drafts).every(({ dem_id }) => dem_id === demA.dem_id)).toBe(true);
+  });
+
   it("clears a selected DEM and every draft only after backend deletion succeeds", async () => {
     const { manager, workspace } = createManagerWithWorkspace();
     vi.mocked(listDems).mockResolvedValue([demA]);
