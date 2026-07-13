@@ -1,4 +1,4 @@
-import type { ModelDefinition } from "../shared";
+import type { ModelDefinition, ValidationIssue } from "../shared";
 import type { WatchpostMetrics, WatchpostRequest } from "./types";
 
 export const watchpostDefinition = {
@@ -13,7 +13,9 @@ export const watchpostDefinition = {
     coverage: { max_range_m: 5000, scan_mode: "omni", azimuth_deg: 0, view_angle_deg: 360 },
     analysis: { use_curvature: true, curvature_coeff: 0.75, output_simplify_tolerance_m: null }
   }),
-  validate: (_request: WatchpostRequest) => [],
+  validate: (request: WatchpostRequest): ValidationIssue[] => request.coverage.max_range_m <= 0
+    ? [{ path: "coverage.max_range_m", message: "max_range_m must be greater than 0" }]
+    : [],
   metrics: [
     { key: "theoretical_area_m2", label: "Theoretical area", format: "area" }, { key: "visible_area_m2", label: "Visible area", format: "area" }, { key: "blocked_area_m2", label: "Blocked area", format: "area" }, { key: "blocked_ratio", label: "Blocked ratio", format: "percent" }, { key: "max_range_m", label: "Maximum range", format: "distance" }, { key: "effective_view_angle_deg", label: "Effective view angle", format: "number" }, { key: "observer_ground_elevation_m", label: "Observer ground elevation", format: "distance" }, { key: "observer_altitude_m", label: "Observer altitude", format: "distance" }
   ],

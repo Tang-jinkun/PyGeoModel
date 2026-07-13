@@ -39,6 +39,20 @@ function expectFields(wrapper: ReturnType<typeof mount>, fields: string[]) {
   }
 }
 
+function collectObjectReferences(value: unknown, references = new Set<object>()) {
+  if (typeof value !== "object" || value === null || references.has(value)) return references;
+  references.add(value);
+  for (const child of Object.values(value)) collectObjectReferences(child, references);
+  return references;
+}
+
+function expectNoSharedReferences(actual: object, source: object) {
+  const sourceReferences = collectObjectReferences(source);
+  for (const reference of collectObjectReferences(actual)) {
+    expect(sourceReferences.has(reference)).toBe(false);
+  }
+}
+
 describe("point model parameter forms", () => {
   it("renders every radar request field and only shows sector controls in sector mode", async () => {
     const request = radarDefinition.createDefaultRequest();
@@ -82,6 +96,51 @@ describe("point model parameter forms", () => {
     expect(wrapper.emitted("update:modelValue")?.at(-1)?.[0]).toMatchObject({ munition: { munition_type: "smoke" } });
     expect(request.munition.munition_type).toBe("he");
     expect(wrapper.find('[data-action="submit"]').exists()).toBe(false);
+  });
+
+  it("deeply isolates every radar update from its input and sibling branches", async () => {
+    const request = radarDefinition.createDefaultRequest();
+    const original = structuredClone(request);
+    const wrapper = mount(RadarForm, { props: { modelValue: request } });
+
+    await wrapper.get('[data-field="scan-mode"] input[value="sector"]').setValue(true);
+    const update = wrapper.emitted("update:modelValue")?.at(-1)?.[0] as typeof request;
+
+    expectNoSharedReferences(update, request);
+    update.target.height_m = 250;
+    update.advanced.height_layers_m.push(600);
+    expect(update.coverage).toEqual({ ...original.coverage, scan_mode: "sector" });
+    expect(request).toEqual(original);
+  });
+
+  it("deeply isolates every watchpost update from its input and sibling branches", async () => {
+    const request = watchpostDefinition.createDefaultRequest();
+    const original = structuredClone(request);
+    const wrapper = mount(WatchpostForm, { props: { modelValue: request } });
+
+    await wrapper.get('[data-field="max-range"] input').setValue(7500);
+    const update = wrapper.emitted("update:modelValue")?.at(-1)?.[0] as typeof request;
+
+    expectNoSharedReferences(update, request);
+    update.target.height_m = 40;
+    update.analysis.curvature_coeff = 0.5;
+    expect(update.observer).toEqual(original.observer);
+    expect(request).toEqual(original);
+  });
+
+  it("deeply isolates every artillery update from its input and sibling branches", async () => {
+    const request = artilleryDefinition.createDefaultRequest();
+    const original = structuredClone(request);
+    const wrapper = mount(ArtilleryForm, { props: { modelValue: request } });
+
+    await wrapper.get('[data-field="munition-type"] input[value="smoke"]').setValue(true);
+    const update = wrapper.emitted("update:modelValue")?.at(-1)?.[0] as typeof request;
+
+    expectNoSharedReferences(update, request);
+    update.weapon.max_range_m = 1;
+    update.analysis.trajectory_samples = 2;
+    expect(update.munition).toEqual({ ...original.munition, munition_type: "smoke" });
+    expect(request).toEqual(original);
   });
 });
 
@@ -131,7 +190,30 @@ describe("ModelParameterPanel", () => {
 
     await wrapper.get('[data-action="submit"]').trigger("click");
 
-    expect(wrapper.emitted("submit")).toEqual([[request]]);
+    const submitted = wrapper.emitted("submit")?.[0]?.[0] as typeof request;
+    expect(submitted).toEqual(request);
+    expectNoSharedReferences(submitted, request);
+    submitted.target.height_m = 900;
+    submitted.advanced.height_layers_m.push(1200);
+    expect(request).toEqual(radarDefinition.createDefaultRequest());
     expect(wrapper.find('[data-validation-issues]').exists()).toBe(false);
+  });
+
+  it("deeply isolates child updates before forwarding them", async () => {
+    const request = radarDefinition.createDefaultRequest();
+    const original = structuredClone(request);
+    const wrapper = mount(ModelParameterPanel, { props: { modelId: "radar", modelValue: request } });
+
+    await wrapper.get('[data-field="max-range"] input').setValue(64000);
+    const childUpdate = wrapper.findComponent(RadarForm).emitted("update:modelValue")?.at(-1)?.[0] as typeof request;
+    const panelUpdate = wrapper.emitted("update:modelValue")?.at(-1)?.[0] as typeof request;
+
+    expectNoSharedReferences(panelUpdate, request);
+    expectNoSharedReferences(panelUpdate, childUpdate);
+    panelUpdate.target.height_m = 100;
+    panelUpdate.advanced.height_layers_m.push(800);
+    expect(childUpdate.target).toEqual(original.target);
+    expect(childUpdate.advanced.height_layers_m).toEqual(original.advanced.height_layers_m);
+    expect(request).toEqual(original);
   });
 });

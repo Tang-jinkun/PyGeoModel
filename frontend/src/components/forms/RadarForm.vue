@@ -77,7 +77,7 @@
 <script setup lang="ts">
 import { MapLocation } from "@element-plus/icons-vue";
 import { ElButton, ElInput, ElInputNumber, ElRadioButton, ElRadioGroup, ElSwitch } from "element-plus";
-import { computed, defineComponent, h, type PropType } from "vue";
+import { computed, defineComponent, h, toRaw, type PropType } from "vue";
 
 import type { SpatialCoordinate } from "../../map/spatialInput";
 import type { RadarRequest, ReservedRadarParams } from "../../models/radar/types";
@@ -128,31 +128,40 @@ function createNumberField(nullable: boolean) {
   });
 }
 
-function emitRequest(request: RadarRequest) { emit("update:modelValue", request); }
-function updateDemId(dem_id: string) { emitRequest({ ...props.modelValue, dem_id }); }
+function updateRequest(mutator: (request: RadarRequest) => void) {
+  const request = structuredClone(toRaw(props.modelValue));
+  mutator(request);
+  emit("update:modelValue", request);
+}
+function updateDemId(dem_id: string) { updateRequest((request) => { request.dem_id = dem_id; }); }
 function updateCoordinate(coordinate: SpatialCoordinate | null) {
   if (!coordinate) return;
-  emitRequest({ ...props.modelValue, radar: { ...props.modelValue.radar, lon: coordinate[0], lat: coordinate[1] } });
+  updateRequest((request) => {
+    request.radar.lon = coordinate[0];
+    request.radar.lat = coordinate[1];
+  });
 }
 function updateRadar<K extends keyof RadarRequest["radar"]>(key: K, value: RadarRequest["radar"][K]) {
-  emitRequest({ ...props.modelValue, radar: { ...props.modelValue.radar, [key]: value } });
+  updateRequest((request) => { request.radar[key] = value; });
 }
-function updateTargetHeight(height_m: number) { emitRequest({ ...props.modelValue, target: { ...props.modelValue.target, height_m } }); }
+function updateTargetHeight(height_m: number) { updateRequest((request) => { request.target.height_m = height_m; }); }
 function updateCoverage<K extends keyof RadarRequest["coverage"]>(key: K, value: RadarRequest["coverage"][K]) {
-  emitRequest({ ...props.modelValue, coverage: { ...props.modelValue.coverage, [key]: value } });
+  updateRequest((request) => { request.coverage[key] = value; });
 }
 function updateScanMode(value: string | number | boolean | undefined) {
   if (value === "omni" || value === "sector") updateCoverage("scan_mode", value);
 }
 function updateAdvanced<K extends keyof RadarRequest["advanced"]>(key: K, value: RadarRequest["advanced"][K]) {
-  emitRequest({ ...props.modelValue, advanced: { ...props.modelValue.advanced, [key]: value } });
+  updateRequest((request) => { request.advanced[key] = value; });
 }
 function updateHeightLayers(value: string) {
   const layers = value.split(/[,，\s]+/).filter(Boolean).map(Number).filter(Number.isFinite);
   updateAdvanced("height_layers_m", layers);
 }
 function updateReserved<K extends keyof ReservedRadarParams>(key: K, value: ReservedRadarParams[K]) {
-  emitRequest({ ...props.modelValue, reserved_radar_params: { ...reserved.value, [key]: value } });
+  updateRequest((request) => {
+    request.reserved_radar_params = { ...request.reserved_radar_params, [key]: value };
+  });
 }
 </script>
 

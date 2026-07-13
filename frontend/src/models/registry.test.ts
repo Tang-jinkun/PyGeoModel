@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { MODEL_IDS, MODEL_REGISTRY, getModelDefinition } from "./registry";
+import { watchpostDefinition } from "./watchpost/definition";
 
 describe("model registry", () => {
   it("registers every backend model with a unique task path", () => {
@@ -66,6 +67,16 @@ describe("model registry", () => {
     expect(MODEL_REGISTRY.radar.validate(request)).not.toContainEqual({
       path: "advanced.height_layers_m",
       message: "height_layers_m cannot contain more than 20 values"
+    });
+  });
+
+  it.each([0, -1])("rejects a watchpost maximum range of %s", (maxRange) => {
+    const request = watchpostDefinition.createDefaultRequest();
+    request.coverage.max_range_m = maxRange;
+
+    expect(watchpostDefinition.validate(request)).toContainEqual({
+      path: "coverage.max_range_m",
+      message: "max_range_m must be greater than 0"
     });
   });
 

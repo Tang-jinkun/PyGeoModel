@@ -24,7 +24,7 @@
 <script setup lang="ts">
 import { VideoPlay } from "@element-plus/icons-vue";
 import { ElButton } from "element-plus";
-import { computed, ref, type Component } from "vue";
+import { computed, ref, toRaw, type Component } from "vue";
 import { artilleryDefinition } from "../../models/artillery/definition";
 import type { ArtilleryRequest } from "../../models/artillery/types";
 import { radarDefinition } from "../../models/radar/definition";
@@ -47,24 +47,19 @@ const activeForm = computed(() => forms[props.modelId]);
 
 function updateModelValue(request: PointModelRequest) {
   issues.value = [];
-  emit("update:modelValue", request);
+  emit("update:modelValue", structuredClone(toRaw(request)));
 }
 
 function submit() {
   issues.value = validateActiveRequest();
-  if (issues.value.length === 0) emit("submit", props.modelValue);
+  if (issues.value.length === 0) emit("submit", structuredClone(toRaw(props.modelValue)));
 }
 
 function validateActiveRequest(): ValidationIssue[] {
   if (props.modelId === "radar") return localizeIssues(radarDefinition.validate(props.modelValue as RadarRequest));
   if (props.modelId === "artillery") return localizeIssues(artilleryDefinition.validate(props.modelValue as ArtilleryRequest));
 
-  const request = props.modelValue as WatchpostRequest;
-  const definitionIssues = watchpostDefinition.validate(request);
-  const rangeIssues = request.coverage.max_range_m <= 0
-    ? [{ path: "coverage.max_range_m", message: "最大探测距离必须大于 0 米" }]
-    : [];
-  return [...localizeIssues(definitionIssues), ...rangeIssues];
+  return localizeIssues(watchpostDefinition.validate(props.modelValue as WatchpostRequest));
 }
 
 function localizeIssues(source: ValidationIssue[]): ValidationIssue[] {
@@ -72,6 +67,7 @@ function localizeIssues(source: ValidationIssue[]): ValidationIssue[] {
     if (issue.path === "weapon.max_range_m") return { ...issue, message: "最小射程必须小于最大射程" };
     if (issue.path === "advanced.max_elevation_deg") return { ...issue, message: "最大仰角必须大于或等于最小仰角" };
     if (issue.path === "advanced.height_layers_m") return { ...issue, message: "高度分层最多允许 20 个不同值" };
+    if (issue.path === "coverage.max_range_m") return { ...issue, message: "最大探测距离必须大于 0 米" };
     return issue;
   });
 }

@@ -36,7 +36,7 @@
 <script setup lang="ts">
 import { MapLocation } from "@element-plus/icons-vue";
 import { ElButton, ElInput, ElInputNumber, ElRadioButton, ElRadioGroup, ElSwitch } from "element-plus";
-import { defineComponent, h, type PropType } from "vue";
+import { defineComponent, h, toRaw, type PropType } from "vue";
 import type { SpatialCoordinate } from "../../map/spatialInput";
 import type { WatchpostRequest } from "../../models/watchpost/types";
 import CoordinateEditor from "../map/CoordinateEditor.vue";
@@ -55,17 +55,25 @@ const NumberRow = defineComponent({
   }
 });
 
-function updateDemId(dem_id: string) { emit("update:modelValue", { ...props.modelValue, dem_id }); }
+function updateRequest(mutator: (request: WatchpostRequest) => void) {
+  const request = structuredClone(toRaw(props.modelValue));
+  mutator(request);
+  emit("update:modelValue", request);
+}
+function updateDemId(dem_id: string) { updateRequest((request) => { request.dem_id = dem_id; }); }
 function updateCoordinate(coordinate: SpatialCoordinate | null) {
   if (!coordinate) return;
-  emit("update:modelValue", { ...props.modelValue, observer: { ...props.modelValue.observer, lon: coordinate[0], lat: coordinate[1] } });
+  updateRequest((request) => {
+    request.observer.lon = coordinate[0];
+    request.observer.lat = coordinate[1];
+  });
 }
-function updateObserverHeight(height_m: number) { emit("update:modelValue", { ...props.modelValue, observer: { ...props.modelValue.observer, height_m } }); }
-function updateTargetHeight(height_m: number) { emit("update:modelValue", { ...props.modelValue, target: { ...props.modelValue.target, height_m } }); }
-function updateCoverage<K extends keyof WatchpostRequest["coverage"]>(key: K, value: WatchpostRequest["coverage"][K]) { emit("update:modelValue", { ...props.modelValue, coverage: { ...props.modelValue.coverage, [key]: value } }); }
+function updateObserverHeight(height_m: number) { updateRequest((request) => { request.observer.height_m = height_m; }); }
+function updateTargetHeight(height_m: number) { updateRequest((request) => { request.target.height_m = height_m; }); }
+function updateCoverage<K extends keyof WatchpostRequest["coverage"]>(key: K, value: WatchpostRequest["coverage"][K]) { updateRequest((request) => { request.coverage[key] = value; }); }
 function updateScanMode(value: string | number | boolean | undefined) { if (value === "omni" || value === "sector") updateCoverage("scan_mode", value); }
 function updateCurvature(value: string | number | boolean) { updateAnalysis("use_curvature", Boolean(value)); }
-function updateAnalysis<K extends keyof WatchpostRequest["analysis"]>(key: K, value: WatchpostRequest["analysis"][K]) { emit("update:modelValue", { ...props.modelValue, analysis: { ...props.modelValue.analysis, [key]: value } }); }
+function updateAnalysis<K extends keyof WatchpostRequest["analysis"]>(key: K, value: WatchpostRequest["analysis"][K]) { updateRequest((request) => { request.analysis[key] = value; }); }
 </script>
 
 <style scoped>
