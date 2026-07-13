@@ -2,35 +2,56 @@ import { ref } from "vue";
 
 import { deleteDem, listDems, uploadDem, type DemMetadata } from "../api/dem";
 
-export function useDemManager() {
+export interface DemWorkspaceSync {
+  setDemForAll(demId: string | null): void;
+}
+
+export function useDemManager(workspace: DemWorkspaceSync) {
   const dems = ref<DemMetadata[]>([]);
   const selectedDem = ref<string | null>(null);
   const loading = ref(false);
   const uploading = ref(false);
+  let pendingLoads = 0;
+  let pendingUploads = 0;
+  let latestLoadGeneration = 0;
+  let mutationGeneration = 0;
 
   async function load() {
+    const loadGeneration = ++latestLoadGeneration;
+    const mutationGenerationAtStart = mutationGeneration;
+    pendingLoads++;
     loading.value = true;
     try {
-      dems.value = await listDems();
+      const loaded = await listDems();
+      if (loadGeneration === latestLoadGeneration && mutationGenerationAtStart === mutationGeneration) {
+        dems.value = loaded;
+      }
+      return loaded;
     } finally {
-      loading.value = false;
+      pendingLoads--;
+      loading.value = pendingLoads > 0;
     }
   }
 
   function select(demId: string | null) {
     selectedDem.value = demId;
+    workspace.setDemForAll(demId);
   }
 
   async function upload(file: File) {
+    pendingUploads++;
     uploading.value = true;
     try {
       const uploaded = await uploadDem(file);
+      mutationGeneration++;
       const index = dems.value.findIndex(({ dem_id }) => dem_id === uploaded.dem_id);
       if (index === -1) dems.value = [...dems.value, uploaded];
       else dems.value.splice(index, 1, uploaded);
+      select(uploaded.dem_id);
       return uploaded;
     } finally {
-      uploading.value = false;
+      pendingUploads--;
+      uploading.value = pendingUploads > 0;
     }
   }
 
@@ -38,8 +59,9 @@ export function useDemManager() {
     const result = await deleteDem(demId);
     if (!result.deleted) return result;
 
+    mutationGeneration++;
     dems.value = dems.value.filter(({ dem_id }) => dem_id !== demId);
-    if (selectedDem.value === demId) selectedDem.value = null;
+    if (selectedDem.value === demId) select(null);
     return result;
   }
 
