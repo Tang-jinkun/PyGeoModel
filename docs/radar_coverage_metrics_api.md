@@ -123,12 +123,14 @@
 
 ```json
 {
-  "theoretical_area_m2": 7850000000.0,
-  "visible_area_m2": 4620000000.0,
-  "blocked_area_m2": 3230000000.0,
-  "blocked_ratio": 0.411,
+  "requested_theoretical_area_m2": 7850000000.0,
+  "theoretical_area_m2": 6280000000.0,
+  "unknown_area_m2": 1570000000.0,
+  "visible_area_m2": 3690000000.0,
+  "blocked_area_m2": 2590000000.0,
+  "blocked_ratio": 0.412,
   "terrain_visible_area_m2": 5100000000.0,
-  "beam_eligible_area_m2": 7850000000.0,
+  "beam_eligible_area_m2": 6280000000.0,
   "radar_equation_limited_area_m2": 0.0
 }
 ```
@@ -137,13 +139,24 @@
 
 | 字段 | 单位 | 说明 |
 | --- | --- | --- |
-| `theoretical_area_m2` | 平方米 | 理论覆盖面积，已考虑最大距离、扇区、俯仰角和雷达方程有效距离，但不扣除地形遮挡 |
-| `visible_area_m2` | 平方米 | 实际可探测面积，已考虑地形遮挡 |
-| `blocked_area_m2` | 平方米 | 理论覆盖内被地形遮挡的面积 |
-| `blocked_ratio` | 0-1 | 遮挡面积占理论覆盖面积比例 |
+| `requested_theoretical_area_m2` | 平方米 | DEM 裁剪前的理论波束面积，已考虑扇区、俯仰角和雷达方程有效距离 |
+| `theoretical_area_m2` | 平方米 | DEM 有效分析域内的理论波束面积，即可分析理论面积 |
+| `unknown_area_m2` | 平方米 | 理论波束中超出 DEM 连续有效域的面积，结果未知，不视为地形遮挡 |
+| `visible_area_m2` | 平方米 | 可分析理论面积中的实际可探测面积 |
+| `blocked_area_m2` | 平方米 | 可分析理论面积中被地形遮挡的面积，不包含 DEM 外未知区 |
+| `blocked_ratio` | 0-1 | `blocked_area_m2 / theoretical_area_m2` |
 | `terrain_visible_area_m2` | 平方米 | 仅按地形最低可见高度判断的可见面积参考值 |
-| `beam_eligible_area_m2` | 平方米 | 满足波束俯仰角约束的面积 |
+| `beam_eligible_area_m2` | 平方米 | DEM 有效分析域内满足波束俯仰角约束的面积 |
 | `radar_equation_limited_area_m2` | 平方米 | 因雷达方程有效距离小于请求距离而被排除的面积 |
+
+面积关系如下。由于面积由栅格像元统计，外部系统校验时应允许浮点误差：
+
+```text
+requested_theoretical_area_m2 = theoretical_area_m2 + unknown_area_m2
+theoretical_area_m2 = visible_area_m2 + blocked_area_m2
+```
+
+DEM 有效分析域按方位角从雷达位置向外连续采样；每条射线遇到 DEM 边界或首个 NoData 像元后，后续区域都归入 `unknown_area_m2`。负高程是有效地形数据，不会被当作 NoData。
 
 ### 错误响应
 
@@ -194,7 +207,31 @@ HTTP 状态码: `409`
 | `radar_equation_limited_area_m2` | 平方米 | 因雷达方程距离限制排除的面积 |
 | `notes` | array | 模型诊断说明 |
 
-## 5. 查询输出文件
+## 5. DEM 裁剪轮廓
+
+完整任务响应的 `model.beam_clip_profile` 描述前端绘制理论波束时使用的径向裁剪轮廓：
+
+```json
+{
+  "model": {
+    "dem_coverage_ratio": 0.8,
+    "beam_clip_profile": {
+      "azimuth_step_deg": 2.0,
+      "radius_m": [50000.0, 49875.0, 49250.0]
+    }
+  }
+}
+```
+
+| 字段 | 说明 |
+| --- | --- |
+| `azimuth_step_deg` | 相邻半径样本的方位角间隔；当前为 2 度，方位角 0 度指北并顺时针增加 |
+| `radius_m` | 各方位角从雷达位置到 DEM 连续有效域边界的距离，已限制在任务有效探测距离内 |
+| `dem_coverage_ratio` | `theoretical_area_m2 / requested_theoretical_area_m2`；请求理论面积为 0 时取 1 |
+
+`radar_range.geojson`、可见区、遮挡区、高度层、体素和三维裁切体使用同一个 DEM 分析域。旧任务可能没有 `beam_clip_profile`；前端加载这类任务时会使用 DEM 的矩形 `bounds` 近似裁剪，不能还原内部 NoData 形成的精确边界。
+
+## 6. 查询输出文件
 
 `GET /api/radar/coverage/{task_id}/outputs`
 
@@ -217,7 +254,7 @@ HTTP 状态码: `409`
 | `clipped_volume_cells_bin` | `clipped_volume_cells.bin` | 地形裁切波束体二进制 |
 | `height_layers_manifest_json` | `height_layers_manifest.json` | 高度层输出清单 |
 
-## 6. 下载输出文件
+## 7. 下载输出文件
 
 `GET /api/radar/coverage/{task_id}/outputs/{kind}`
 
@@ -227,7 +264,7 @@ HTTP 状态码: `409`
 GET /api/radar/coverage/task_20260630_101500_ab12cd34/outputs/visible_geojson
 ```
 
-## 7. 剖面分析接口
+## 8. 剖面分析接口
 
 `GET /api/radar/coverage/{task_id}/profile?lon={lon}&lat={lat}&samples=180`
 
@@ -247,7 +284,7 @@ GET /api/radar/coverage/task_20260630_101500_ab12cd34/outputs/visible_geojson
 | `min_required_target_height_m` | 要达到可见所需的目标最低高度 |
 | `samples` | 地形剖面采样列表 |
 
-## 8. 多任务融合分析
+## 9. 多任务融合分析
 
 `POST /api/radar/fusion`
 
@@ -276,7 +313,7 @@ GET /api/radar/coverage/task_20260630_101500_ab12cd34/outputs/visible_geojson
 | `overlap_ratio` | 0-1 | 重叠覆盖比例 |
 | `blind_ratio` | 0-1 | 盲区比例 |
 
-## 9. 调用流程建议
+## 10. 调用流程建议
 
 1. 调用 `POST /api/radar/coverage` 创建任务。
 2. 保存返回的 `task_id`。
@@ -286,7 +323,7 @@ GET /api/radar/coverage/task_20260630_101500_ab12cd34/outputs/visible_geojson
 6. 如需某个点的剖面遮挡，调用 `/profile`。
 7. 如需多任务合并覆盖指标，调用 `/fusion`。
 
-## 10. 与 UAV 指标接口的一致性
+## 11. 与 UAV 指标接口的一致性
 
 UAV 模型也提供独立量化指标接口：
 
