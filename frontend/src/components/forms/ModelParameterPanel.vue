@@ -5,7 +5,7 @@
         :is="activeForm"
         :model-value="modelValue"
         @update:model-value="updateModelValue"
-        @activate-map-tool="emit('activate-map-tool')"
+        @activate-map-tool="forwardMapTool"
       />
     </div>
 
@@ -25,29 +25,54 @@
 import { VideoPlay } from "@element-plus/icons-vue";
 import { ElButton } from "element-plus";
 import { computed, ref, toRaw, type Component } from "vue";
+import { airCorridorDefinition } from "../../models/airCorridor/definition";
+import type { AirCorridorRequest } from "../../models/airCorridor/types";
 import { artilleryDefinition } from "../../models/artillery/definition";
 import type { ArtilleryRequest } from "../../models/artillery/types";
+import { mobilityDefinition } from "../../models/mobility/definition";
+import type { MobilityRequest } from "../../models/mobility/types";
 import { radarDefinition } from "../../models/radar/definition";
 import type { RadarRequest } from "../../models/radar/types";
+import { reconVehicleDefinition } from "../../models/reconVehicle/definition";
+import type { ReconVehicleRequest } from "../../models/reconVehicle/types";
 import type { ValidationIssue } from "../../models/shared";
+import { uavDefinition } from "../../models/uav/definition";
+import type { UavRequest } from "../../models/uav/types";
 import { watchpostDefinition } from "../../models/watchpost/definition";
 import type { WatchpostRequest } from "../../models/watchpost/types";
+import AirCorridorForm from "./AirCorridorForm.vue";
 import ArtilleryForm from "./ArtilleryForm.vue";
+import MobilityForm from "./MobilityForm.vue";
 import RadarForm from "./RadarForm.vue";
+import ReconVehicleForm from "./ReconVehicleForm.vue";
+import UavForm from "./UavForm.vue";
 import WatchpostForm from "./WatchpostForm.vue";
 
-type PointModelId = "radar" | "watchpost" | "artillery";
-type PointModelRequest = RadarRequest | WatchpostRequest | ArtilleryRequest;
+type FormModelId = "radar" | "uav" | "watchpost" | "artillery" | "reconVehicle" | "mobility" | "airCorridor";
+type FormModelRequest = RadarRequest | UavRequest | WatchpostRequest | ArtilleryRequest | ReconVehicleRequest | MobilityRequest | AirCorridorRequest;
+type MapToolOperation = "point" | "route" | "start" | "end" | "threat";
 
-const props = withDefaults(defineProps<{ modelId: PointModelId; modelValue: PointModelRequest; submitting?: boolean }>(), { submitting: false });
-const emit = defineEmits<{ "update:modelValue": [request: PointModelRequest]; submit: [request: PointModelRequest]; "activate-map-tool": [] }>();
+const props = withDefaults(defineProps<{ modelId: FormModelId; modelValue: FormModelRequest; submitting?: boolean }>(), { submitting: false });
+const emit = defineEmits<{ "update:modelValue": [request: FormModelRequest]; submit: [request: FormModelRequest]; "activate-map-tool": [operation?: MapToolOperation] }>();
 const issues = ref<ValidationIssue[]>([]);
-const forms: Record<PointModelId, Component> = { radar: RadarForm, watchpost: WatchpostForm, artillery: ArtilleryForm };
+const forms: Record<FormModelId, Component> = {
+  radar: RadarForm,
+  uav: UavForm,
+  watchpost: WatchpostForm,
+  artillery: ArtilleryForm,
+  reconVehicle: ReconVehicleForm,
+  mobility: MobilityForm,
+  airCorridor: AirCorridorForm
+};
 const activeForm = computed(() => forms[props.modelId]);
 
-function updateModelValue(request: PointModelRequest) {
+function updateModelValue(request: FormModelRequest) {
   issues.value = [];
   emit("update:modelValue", structuredClone(toRaw(request)));
+}
+
+function forwardMapTool(operation?: MapToolOperation) {
+  emit("activate-map-tool", operation);
 }
 
 function submit() {
@@ -58,8 +83,24 @@ function submit() {
 function validateActiveRequest(): ValidationIssue[] {
   if (props.modelId === "radar") return localizeIssues(radarDefinition.validate(props.modelValue as RadarRequest));
   if (props.modelId === "artillery") return localizeIssues(artilleryDefinition.validate(props.modelValue as ArtilleryRequest));
+  if (props.modelId === "watchpost") return localizeIssues(watchpostDefinition.validate(props.modelValue as WatchpostRequest));
+  if (props.modelId === "uav") return localizeIssues(withRouteCardinality(uavDefinition.validate(props.modelValue as UavRequest), (props.modelValue as UavRequest).route?.waypoints.length));
+  if (props.modelId === "reconVehicle") return localizeIssues(withRouteCardinality(reconVehicleDefinition.validate(props.modelValue as ReconVehicleRequest), (props.modelValue as ReconVehicleRequest).route?.waypoints.length));
+  if (props.modelId === "mobility") return localizeIssues(mobilityDefinition.validate(props.modelValue as MobilityRequest));
 
-  return localizeIssues(watchpostDefinition.validate(props.modelValue as WatchpostRequest));
+  const request = props.modelValue as AirCorridorRequest;
+  const corridorIssues = airCorridorDefinition.validate(request);
+  if (!request.altitude_layers_m.every((layer, index) => index === 0 || layer > request.altitude_layers_m[index - 1])) {
+    corridorIssues.push({ path: "altitude_layers_m", message: "altitude_layers_m must be unique and ascending" });
+  }
+  return localizeIssues(corridorIssues);
+}
+
+function withRouteCardinality(source: ValidationIssue[], waypointCount: number | undefined): ValidationIssue[] {
+  if (waypointCount !== undefined && waypointCount < 2 && !source.some(({ path }) => path === "route.waypoints")) {
+    return [...source, { path: "route.waypoints", message: "route.waypoints must contain at least two points when provided" }];
+  }
+  return source;
 }
 
 function localizeIssues(source: ValidationIssue[]): ValidationIssue[] {
@@ -68,6 +109,14 @@ function localizeIssues(source: ValidationIssue[]): ValidationIssue[] {
     if (issue.path === "advanced.max_elevation_deg") return { ...issue, message: "最大仰角必须大于或等于最小仰角" };
     if (issue.path === "advanced.height_layers_m") return { ...issue, message: "高度分层最多允许 20 个不同值" };
     if (issue.path === "coverage.max_range_m") return { ...issue, message: "最大探测距离必须大于 0 米" };
+    if (issue.path === "route.waypoints") return { ...issue, message: "航线至少包含两个航点" };
+    if (issue.path === "sensor.max_range_m") return { ...issue, message: "最小探测距离必须小于最大探测距离" };
+    if (issue.path === "vehicles") return { ...issue, message: "至少启用一种车辆" };
+    if (issue.path === "aircraft.max_agl_m") return { ...issue, message: "最低离地高度必须小于最高离地高度" };
+    if (issue.path === "altitude_layers_m") return { ...issue, message: "高度层必须唯一并按升序排列" };
+    if (issue.path.endsWith(".max_range_m")) return { ...issue, message: "威胁最小射程必须小于最大射程" };
+    if (issue.path.endsWith(".max_altitude_m")) return { ...issue, message: "威胁最低高度必须小于最高高度" };
+    if (issue.path.endsWith(".kill_zone_radius_m")) return { ...issue, message: "杀伤半径不能大于预警半径" };
     return issue;
   });
 }
