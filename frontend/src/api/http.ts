@@ -26,6 +26,8 @@ export async function requestJson<T>(path: string, init: RequestInit = {}): Prom
       ? detail.message
       : typeof detail === "string"
         ? detail
+        : detail != null
+          ? stringifyDetail(detail)
         : response.statusText;
     throw new ApiError(response.status, message, payload);
   }
@@ -46,4 +48,8 @@ export function resolveAssetUrl(path?: string | null): string | null {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function stringifyDetail(detail: unknown): string {
+  return JSON.stringify(detail) ?? String(detail);
 }
