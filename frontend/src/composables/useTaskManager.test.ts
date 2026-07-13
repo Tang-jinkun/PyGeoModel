@@ -400,6 +400,34 @@ describe("useTaskManager", () => {
     manager.dispose();
   });
 
+  it("shares one detail request between concurrent restore callers", async () => {
+    const request: BaseModelRequest & { nested: { value: number } } = {
+      dem_id: "dem-1",
+      nested: { value: 1 }
+    };
+    const listed = task("r1", "finished", 100);
+    const pendingDetail = deferred<TaskSummary>();
+    const get = vi.fn().mockReturnValue(pendingDetail.promise);
+    const manager = useTaskManager({ pollIntervalMs: 1000, clientFactory: () => ({ get }) });
+    manager.track("radar", listed);
+
+    const firstRestore = manager.restoreRequest("radar", "r1");
+    const secondRestore = manager.restoreRequest("radar", "r1");
+
+    expect(get).toHaveBeenCalledTimes(1);
+    pendingDetail.resolve({ ...listed, request });
+    const [first, second] = await Promise.all([firstRestore, secondRestore]) as [typeof request, typeof request];
+
+    expect(first).toEqual(request);
+    expect(second).toEqual(request);
+    expect(first).not.toBe(second);
+    expect(first.nested).not.toBe(second.nested);
+    first.nested.value = 2;
+    expect(second.nested.value).toBe(1);
+    expect((manager.getTask("radar", "r1")?.request as typeof request).nested.value).toBe(1);
+    manager.dispose();
+  });
+
   it("does not restore detail removed while its request is in flight", async () => {
     const pendingDetail = deferred<TaskSummary>();
     const listed = task("r1", "finished", 100);

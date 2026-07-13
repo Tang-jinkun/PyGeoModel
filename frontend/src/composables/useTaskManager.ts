@@ -35,6 +35,7 @@ export function useTaskManager(options: UseTaskManagerOptions) {
   const inFlightVersions = new Map<string, number>();
   const refreshVersions = new Map<ModelId, number>();
   const restoreVersions = new Map<string, number>();
+  const inFlightRestores = new Map<string, Promise<TaskSummary | null>>();
   const clients = new Map<ModelId, TaskClientLike>();
   const clientFactory = options.clientFactory ?? ((basePath: string) => createTaskClient(basePath));
   const maxRetryDelayMs = options.maxRetryDelayMs ?? 30_000;
@@ -86,6 +87,7 @@ export function useTaskManager(options: UseTaskManagerOptions) {
 
   function invalidateRestore(key: string) {
     restoreVersions.set(key, (restoreVersions.get(key) ?? 0) + 1);
+    inFlightRestores.delete(key);
   }
 
   function schedulePoll(modelId: ModelId, taskId: string, delayMs = options.pollIntervalMs) {
@@ -194,13 +196,24 @@ export function useTaskManager(options: UseTaskManagerOptions) {
     if (task.request) return structuredClone(toRaw(task.request));
 
     const key = taskKey(modelId, taskId);
-    const version = (restoreVersions.get(key) ?? 0) + 1;
-    restoreVersions.set(key, version);
-    const detailed = await clientFor(modelId).get(taskId);
-    if (disposed || restoreVersions.get(key) !== version || !getTask(modelId, taskId)) return null;
+    let detailPromise = inFlightRestores.get(key);
+    if (!detailPromise) {
+      if (!restoreVersions.has(key)) restoreVersions.set(key, 0);
+      const version = restoreVersions.get(key) ?? 0;
+      detailPromise = clientFor(modelId).get(taskId).then((detailed) => {
+        if (disposed || restoreVersions.get(key) !== version || !getTask(modelId, taskId)) return null;
+        storeTask(modelId, detailed);
+        return detailed;
+      });
+      inFlightRestores.set(key, detailPromise);
+    }
 
-    storeTask(modelId, detailed);
-    return detailed.request ? structuredClone(toRaw(detailed.request)) : null;
+    try {
+      const detailed = await detailPromise;
+      return detailed?.request ? structuredClone(toRaw(detailed.request)) : null;
+    } finally {
+      if (inFlightRestores.get(key) === detailPromise) inFlightRestores.delete(key);
+    }
   }
 
   function dispose() {
@@ -213,6 +226,7 @@ export function useTaskManager(options: UseTaskManagerOptions) {
     inFlightVersions.clear();
     pollVersions.clear();
     restoreVersions.clear();
+    inFlightRestores.clear();
     syncConnectionState();
   }
 
