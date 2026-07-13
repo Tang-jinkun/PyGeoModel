@@ -34,6 +34,7 @@ export function useTaskManager(options: UseTaskManagerOptions) {
   const pollVersions = new Map<string, number>();
   const inFlightVersions = new Map<string, number>();
   const refreshVersions = new Map<ModelId, number>();
+  const restoreVersions = new Map<string, number>();
   const clients = new Map<ModelId, TaskClientLike>();
   const clientFactory = options.clientFactory ?? ((basePath: string) => createTaskClient(basePath));
   const maxRetryDelayMs = options.maxRetryDelayMs ?? 30_000;
@@ -83,6 +84,10 @@ export function useTaskManager(options: UseTaskManagerOptions) {
     return version;
   }
 
+  function invalidateRestore(key: string) {
+    restoreVersions.set(key, (restoreVersions.get(key) ?? 0) + 1);
+  }
+
   function schedulePoll(modelId: ModelId, taskId: string, delayMs = options.pollIntervalMs) {
     const key = taskKey(modelId, taskId);
     if (disposed || timers.has(key) || inFlightVersions.has(key)) return;
@@ -119,8 +124,9 @@ export function useTaskManager(options: UseTaskManagerOptions) {
 
   function track(modelId: ModelId, task: TaskSummary) {
     invalidateRefresh(modelId);
-    storeTask(modelId, task);
     const key = taskKey(modelId, task.task_id);
+    invalidateRestore(key);
+    storeTask(modelId, task);
     if (isTerminal(task)) clearPollingState(key);
     else schedulePoll(modelId, task.task_id);
   }
@@ -143,7 +149,11 @@ export function useTaskManager(options: UseTaskManagerOptions) {
     if (disposed || refreshVersions.get(modelId) !== refreshVersion) return refreshed;
     const refreshedIds = new Set(refreshed.map(({ task_id }) => task_id));
 
-    for (const oldTask of tasksByModel[modelId]) clearPollingState(taskKey(modelId, oldTask.task_id));
+    for (const oldTask of tasksByModel[modelId]) {
+      const key = taskKey(modelId, oldTask.task_id);
+      clearPollingState(key);
+      invalidateRestore(key);
+    }
     tasksByModel[modelId] = refreshed;
     for (const task of refreshed) {
       if (!isTerminal(task)) schedulePoll(modelId, task.task_id);
@@ -172,14 +182,25 @@ export function useTaskManager(options: UseTaskManagerOptions) {
     invalidateRefresh(modelId);
     const key = taskKey(modelId, taskId);
     clearPollingState(key);
+    invalidateRestore(key);
     const index = tasksByModel[modelId].findIndex(({ task_id }) => task_id === taskId);
     if (index !== -1) tasksByModel[modelId].splice(index, 1);
     if (selectedTaskKey.value === key) selectedTaskKey.value = null;
   }
 
-  function restoreRequest(modelId: ModelId, taskId: string): BaseModelRequest | null {
-    const request = getTask(modelId, taskId)?.request;
-    return request ? structuredClone(toRaw(request)) : null;
+  async function restoreRequest(modelId: ModelId, taskId: string): Promise<BaseModelRequest | null> {
+    const task = getTask(modelId, taskId);
+    if (!task) return null;
+    if (task.request) return structuredClone(toRaw(task.request));
+
+    const key = taskKey(modelId, taskId);
+    const version = (restoreVersions.get(key) ?? 0) + 1;
+    restoreVersions.set(key, version);
+    const detailed = await clientFor(modelId).get(taskId);
+    if (disposed || restoreVersions.get(key) !== version || !getTask(modelId, taskId)) return null;
+
+    storeTask(modelId, detailed);
+    return detailed.request ? structuredClone(toRaw(detailed.request)) : null;
   }
 
   function dispose() {
@@ -191,6 +212,7 @@ export function useTaskManager(options: UseTaskManagerOptions) {
     failures.clear();
     inFlightVersions.clear();
     pollVersions.clear();
+    restoreVersions.clear();
     syncConnectionState();
   }
 

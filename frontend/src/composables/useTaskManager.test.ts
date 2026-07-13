@@ -358,7 +358,7 @@ describe("useTaskManager", () => {
     manager.dispose();
   });
 
-  it("returns a deep clone of a stored request", () => {
+  it("returns a deep clone of a stored request", async () => {
     const manager = useTaskManager({ pollIntervalMs: 1000 });
     const request: BaseModelRequest & { nested: { value: number } } = {
       dem_id: "dem-1",
@@ -366,14 +366,73 @@ describe("useTaskManager", () => {
     };
     manager.track("radar", { ...task("r1", "finished", 100), request });
 
-    const restored = manager.restoreRequest("radar", "r1") as typeof request;
+    const restored = await manager.restoreRequest("radar", "r1") as typeof request;
     restored.nested.value = 2;
 
     expect(restored).not.toBe(request);
     expect(restored.nested).not.toBe(request.nested);
     expect(request.nested.value).toBe(1);
-    expect(manager.restoreRequest("radar", "missing")).toBeNull();
+    await expect(manager.restoreRequest("radar", "missing")).resolves.toBeNull();
     manager.dispose();
+  });
+
+  it("fetches and caches missing request detail before returning a clone", async () => {
+    const request: BaseModelRequest & { nested: { value: number } } = {
+      dem_id: "dem-1",
+      nested: { value: 1 }
+    };
+    const listed = task("r1", "finished", 100);
+    const detailed = { ...listed, request };
+    const list = vi.fn().mockResolvedValue([listed]);
+    const get = vi.fn().mockResolvedValue(detailed);
+    const manager = useTaskManager({ pollIntervalMs: 1000, clientFactory: () => ({ list, get }) });
+
+    await manager.refreshModel("radar");
+    const restored = await manager.restoreRequest("radar", "r1") as typeof request;
+    restored.nested.value = 2;
+
+    expect(get).toHaveBeenCalledTimes(1);
+    expect(get).toHaveBeenCalledWith("r1");
+    expect(manager.getTask("radar", "r1")).toEqual(detailed);
+    expect((manager.getTask("radar", "r1")?.request as typeof request).nested.value).toBe(1);
+    await expect(manager.restoreRequest("radar", "r1")).resolves.toEqual(request);
+    expect(get).toHaveBeenCalledTimes(1);
+    manager.dispose();
+  });
+
+  it("does not restore detail removed while its request is in flight", async () => {
+    const pendingDetail = deferred<TaskSummary>();
+    const listed = task("r1", "finished", 100);
+    const get = vi.fn().mockReturnValue(pendingDetail.promise);
+    const deleteTask = vi.fn().mockResolvedValue({ task_id: "r1" });
+    const manager = useTaskManager({
+      pollIntervalMs: 1000,
+      clientFactory: () => ({ get, delete: deleteTask })
+    });
+    manager.track("radar", listed);
+
+    const restoring = manager.restoreRequest("radar", "r1");
+    await manager.remove("radar", "r1");
+    pendingDetail.resolve({ ...listed, request: { dem_id: "dem-1" } });
+
+    await expect(restoring).resolves.toBeNull();
+    expect(manager.getTask("radar", "r1")).toBeUndefined();
+    manager.dispose();
+  });
+
+  it("does not restore detail after disposal", async () => {
+    const pendingDetail = deferred<TaskSummary>();
+    const listed = task("r1", "finished", 100);
+    const get = vi.fn().mockReturnValue(pendingDetail.promise);
+    const manager = useTaskManager({ pollIntervalMs: 1000, clientFactory: () => ({ get }) });
+    manager.track("radar", listed);
+
+    const restoring = manager.restoreRequest("radar", "r1");
+    manager.dispose();
+    pendingDetail.resolve({ ...listed, request: { dem_id: "dem-1" } });
+
+    await expect(restoring).resolves.toBeNull();
+    expect(manager.getTask("radar", "r1")?.request).toBeUndefined();
   });
 
   it("disposes idempotently and permanently prevents polling", async () => {

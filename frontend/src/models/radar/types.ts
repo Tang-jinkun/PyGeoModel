@@ -15,10 +15,46 @@ export interface ReservedRadarParams {
 }
 export interface RadarRequest {
   dem_id: string; radar: RadarInput; target: RadarTargetInput; coverage: RadarCoverageInput;
-  advanced: RadarAdvancedInput; reserved_radar_params: ReservedRadarParams;
+  advanced: RadarAdvancedInput; reserved_radar_params?: Partial<ReservedRadarParams>;
 }
 export interface RadarMetrics {
   requested_theoretical_area_m2: number; theoretical_area_m2: number; unknown_area_m2: number;
   visible_area_m2: number; blocked_area_m2: number; blocked_ratio: number;
   terrain_visible_area_m2: number; beam_eligible_area_m2: number; radar_equation_limited_area_m2: number;
+}
+export interface BeamClipProfile { azimuth_step_deg: number; radius_m: number[] }
+export interface RadarModelMetadata {
+  coverage_contract_version: number;
+  target_epsg: number;
+  radar_projected_xy: number[];
+  projected_dem_bounds: number[];
+  projected_dem_resolution_m: number[];
+  dem_coverage_ratio: number;
+  max_range_m: number;
+  scan_mode: string;
+  azimuth_deg: number;
+  beam_width_deg: number;
+  simplify_tolerance_m: number;
+  gdal_viewshed_command: string[];
+  voxel_grid_size: number;
+  voxel_vertical_levels: number;
+  voxel_max_height_m: number;
+  min_elevation_deg: number;
+  max_elevation_deg: number;
+  vertical_beam_width_deg: number;
+  visual_dome_mode: boolean;
+  height_layers_m: number[];
+  radar_equation_active: boolean;
+  radar_equation_max_range_m?: number | null;
+  effective_max_range_m: number;
+  beam_clip_profile: BeamClipProfile | null;
+}
+export interface RadarDiagnostics {
+  radar_equation_active: boolean;
+  radar_equation_max_range_m?: number | null;
+  effective_max_range_m: number;
+  terrain_blocked_area_m2: number;
+  elevation_limited_area_m2: number;
+  radar_equation_limited_area_m2: number;
+  notes: string[];
 }

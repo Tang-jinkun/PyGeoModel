@@ -1,4 +1,14 @@
 import { requestJson } from "./http";
+import type {
+  BeamClipProfile as RadarBeamClipProfile,
+  RadarAdvancedInput,
+  RadarDiagnostics,
+  RadarMetrics,
+  RadarModelMetadata,
+  RadarRequest
+} from "../models/radar/types";
+
+export type BeamClipProfile = RadarBeamClipProfile;
 
 const DEFAULT_COVERAGE_REQUEST: CoverageRequest = {
   dem_id: "",
@@ -57,11 +67,6 @@ export type CoverageOutputKind =
   | "clipped_volume_cells_bin"
   | "height_layers_manifest_json";
 
-export interface BeamClipProfile {
-  azimuth_step_deg: number;
-  radius_m: number[];
-}
-
 export interface CoverageTaskSummary {
   task_id: string;
   dem_id?: string | null;
@@ -70,17 +75,7 @@ export interface CoverageTaskSummary {
   message: string;
   created_at?: string | null;
   updated_at?: string | null;
-  metrics?: {
-    requested_theoretical_area_m2: number;
-    theoretical_area_m2: number;
-    unknown_area_m2: number;
-    visible_area_m2: number;
-    blocked_area_m2: number;
-    blocked_ratio: number;
-    terrain_visible_area_m2: number;
-    beam_eligible_area_m2: number;
-    radar_equation_limited_area_m2: number;
-  } | null;
+  metrics?: RadarMetrics | null;
   outputs?: {
     viewshed_tif?: string | null;
     visible_geojson?: string | null;
@@ -96,40 +91,8 @@ export interface CoverageTaskSummary {
     height_layers_manifest_json?: string | null;
   } | null;
   output_files: CoverageOutputFile[];
-  model?: {
-    target_epsg: number;
-    radar_projected_xy: number[];
-    projected_dem_bounds: number[];
-    projected_dem_resolution_m: number[];
-    dem_coverage_ratio: number;
-    max_range_m: number;
-    scan_mode: string;
-    azimuth_deg: number;
-    beam_width_deg: number;
-    simplify_tolerance_m: number;
-    gdal_viewshed_command: string[];
-    voxel_grid_size: number;
-    voxel_vertical_levels: number;
-    voxel_max_height_m: number;
-    min_elevation_deg: number;
-    max_elevation_deg: number;
-    vertical_beam_width_deg: number;
-    visual_dome_mode: boolean;
-    height_layers_m: number[];
-    radar_equation_active: boolean;
-    radar_equation_max_range_m?: number | null;
-    effective_max_range_m: number;
-    beam_clip_profile: BeamClipProfile | null;
-  } | null;
-  diagnostics?: {
-    radar_equation_active: boolean;
-    radar_equation_max_range_m?: number | null;
-    effective_max_range_m: number;
-    terrain_blocked_area_m2: number;
-    elevation_limited_area_m2: number;
-    radar_equation_limited_area_m2: number;
-    notes: string[];
-  } | null;
+  model?: RadarModelMetadata | null;
+  diagnostics?: RadarDiagnostics | null;
   warnings: string[];
 }
 
@@ -193,39 +156,8 @@ export interface CoverageTaskDeleteResult {
   deleted_output_dir: boolean;
 }
 
-export interface AdvancedInput {
-  use_curvature: boolean;
-  curvature_coeff: number;
-  output_simplify_tolerance_m: number;
-  voxel_grid_size: number;
-  voxel_vertical_levels: number;
-  voxel_max_height_m: number;
-  min_elevation_deg: number;
-  max_elevation_deg: number;
-  vertical_beam_width_deg: number;
-  visual_dome_mode: boolean;
-  height_layers_m: number[];
-}
-
-export interface CoverageRequest {
-  dem_id: string;
-  radar: {
-    lon: number;
-    lat: number;
-    height_m: number;
-  };
-  target: {
-    height_m: number;
-  };
-  coverage: {
-    max_range_m: number;
-    scan_mode: "omni" | "sector";
-    azimuth_deg: number;
-    beam_width_deg: number;
-  };
-  advanced: AdvancedInput;
-  reserved_radar_params?: Record<string, number | null>;
-}
+export type AdvancedInput = RadarAdvancedInput;
+export type CoverageRequest = RadarRequest;
 
 export async function createCoverageTask(payload: CoverageRequest): Promise<CoverageTaskStatus> {
   return normalizeCoverageTaskStatus(await requestJson("/api/radar/coverage", {
@@ -297,7 +229,7 @@ export function normalizeCoverageRequest(payload: unknown, fallback: CoverageReq
     advanced: {
       use_curvature: booleanOr(advanced.use_curvature, fallback.advanced.use_curvature),
       curvature_coeff: numberOr(advanced.curvature_coeff, fallback.advanced.curvature_coeff),
-      output_simplify_tolerance_m: numberOr(
+      output_simplify_tolerance_m: nullableNumberOr(
         advanced.output_simplify_tolerance_m,
         fallback.advanced.output_simplify_tolerance_m
       ),
@@ -524,6 +456,7 @@ function normalizeModel(payload: unknown): CoverageTaskSummary["model"] {
     return null;
   }
   return {
+    coverage_contract_version: numberOr(payload.coverage_contract_version, 1),
     target_epsg: numberOr(payload.target_epsg, 0),
     radar_projected_xy: numberArray(payload.radar_projected_xy),
     projected_dem_bounds: numberArray(payload.projected_dem_bounds),
@@ -639,6 +572,10 @@ function stringOr(value: unknown, fallback: string) {
 
 function numberOr(value: unknown, fallback: number) {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+function nullableNumberOr(value: unknown, fallback: number | null) {
+  return value === null || (typeof value === "number" && Number.isFinite(value)) ? value : fallback;
 }
 
 function booleanOr(value: unknown, fallback: boolean) {

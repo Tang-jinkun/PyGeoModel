@@ -8,10 +8,16 @@ export interface OutputFile {
   kind: string; label: string; url: string; download_url: string; filename: string;
   media_type: string; size_bytes?: number | null; exists: boolean;
 }
-export interface TaskSummary<Request extends BaseModelRequest = BaseModelRequest, Metrics = Record<string, unknown>> {
+export interface TaskSummary<
+  Request extends BaseModelRequest = BaseModelRequest,
+  Metrics = Record<string, unknown>,
+  Model = Record<string, unknown>,
+  Diagnostics = Record<string, unknown>
+> {
   task_id: string; dem_id?: string | null; status: TaskStatus; progress: number; message: string;
   created_at?: string | null; updated_at?: string | null; request?: Request | null;
   metrics?: Metrics | null; outputs?: Record<string, string | null> | null;
+  model?: Model | null; diagnostics?: Diagnostics | null;
   output_files: OutputFile[]; warnings: string[];
 }
 export interface MetricDefinition<Metrics> {

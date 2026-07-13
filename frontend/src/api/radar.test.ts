@@ -9,12 +9,16 @@ describe("radar task normalization", () => {
       task_id: "task_a",
       status: "finished",
       progress: 100,
+      request: {
+        advanced: { output_simplify_tolerance_m: null }
+      },
       metrics: {
         requested_theoretical_area_m2: 1200,
         theoretical_area_m2: 1000,
         unknown_area_m2: 200
       },
       model: {
+        coverage_contract_version: 2,
         target_epsg: 32648,
         radar_projected_xy: [0, 0],
         projected_dem_bounds: [0, 0, 10, 10],
@@ -30,6 +34,8 @@ describe("radar task normalization", () => {
 
     expect(task.metrics?.requested_theoretical_area_m2).toBe(1200);
     expect(task.metrics?.unknown_area_m2).toBe(200);
+    expect(task.request?.advanced.output_simplify_tolerance_m).toBeNull();
+    expect(task.model?.coverage_contract_version).toBe(2);
     expect(task.model?.beam_clip_profile?.radius_m).toEqual([1000, 900]);
   });
 
@@ -54,6 +60,7 @@ describe("radar task normalization", () => {
 
     expect(task.metrics?.requested_theoretical_area_m2).toBe(100);
     expect(task.metrics?.unknown_area_m2).toBe(0);
+    expect(task.model?.coverage_contract_version).toBe(1);
     expect(task.model?.beam_clip_profile).toBeNull();
   });
 });
