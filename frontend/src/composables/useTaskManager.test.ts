@@ -14,6 +14,14 @@ function task(taskId: string, status: TaskStatus, progress = 0): TaskSummary {
   };
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((promiseResolve) => {
+    resolve = promiseResolve;
+  });
+  return { promise, resolve };
+}
+
 afterEach(() => {
   vi.useRealTimers();
 });
@@ -130,6 +138,88 @@ describe("useTaskManager", () => {
     await vi.advanceTimersByTimeAsync(100);
     expect(get).toHaveBeenCalledTimes(3);
     expect(manager.tasksByModel.uav.every(({ status }) => status === "finished")).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+    manager.dispose();
+  });
+
+  it("keeps the newest result when overlapping refreshes resolve newest first", async () => {
+    const older = deferred<TaskSummary[]>();
+    const newer = deferred<TaskSummary[]>();
+    const list = vi.fn()
+      .mockReturnValueOnce(older.promise)
+      .mockReturnValueOnce(newer.promise);
+    const manager = useTaskManager({ pollIntervalMs: 100, clientFactory: () => ({ list, get: vi.fn() }) });
+
+    const olderRefresh = manager.refreshModel("uav");
+    const newerRefresh = manager.refreshModel("uav");
+    newer.resolve([task("newest", "finished", 100)]);
+    await newerRefresh;
+    older.resolve([task("older", "finished", 100)]);
+    await olderRefresh;
+
+    expect(manager.tasksByModel.uav.map(({ task_id }) => task_id)).toEqual(["newest"]);
+    manager.dispose();
+  });
+
+  it("does not reintroduce a deleted task from a pending refresh", async () => {
+    vi.useFakeTimers();
+    const pendingList = deferred<TaskSummary[]>();
+    const list = vi.fn().mockReturnValue(pendingList.promise);
+    const deleteTask = vi.fn().mockResolvedValue({
+      task_id: "u1",
+      deleted_task_record: true,
+      deleted_output_dir: true
+    });
+    const manager = useTaskManager({
+      pollIntervalMs: 100,
+      clientFactory: () => ({ list, delete: deleteTask, get: vi.fn() })
+    });
+    manager.track("uav", task("u1", "finished", 100));
+
+    const refresh = manager.refreshModel("uav");
+    await manager.remove("uav", "u1");
+    pendingList.resolve([task("u1", "running", 25)]);
+    await refresh;
+
+    expect(manager.getTask("uav", "u1")).toBeUndefined();
+    expect(vi.getTimerCount()).toBe(0);
+    manager.dispose();
+  });
+
+  it("ignores a pending refresh after disposal", async () => {
+    vi.useFakeTimers();
+    const pendingList = deferred<TaskSummary[]>();
+    const list = vi.fn().mockReturnValue(pendingList.promise);
+    const manager = useTaskManager({ pollIntervalMs: 100, clientFactory: () => ({ list, get: vi.fn() }) });
+
+    const refresh = manager.refreshModel("uav");
+    manager.dispose();
+    pendingList.resolve([task("u1", "running", 25)]);
+    await refresh;
+
+    expect(manager.tasksByModel.uav).toEqual([]);
+    expect(manager.connectionInterrupted.value).toBe(false);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("keeps a submitted task when an earlier refresh resolves later", async () => {
+    vi.useFakeTimers();
+    const pendingList = deferred<TaskSummary[]>();
+    const submitted = task("u1", "finished", 100);
+    const list = vi.fn().mockReturnValue(pendingList.promise);
+    const create = vi.fn().mockResolvedValue(submitted);
+    const manager = useTaskManager({
+      pollIntervalMs: 100,
+      clientFactory: () => ({ list, create, get: vi.fn() })
+    });
+
+    const refresh = manager.refreshModel("uav");
+    await manager.submit("uav", { dem_id: "dem-1" });
+    pendingList.resolve([]);
+    await refresh;
+
+    expect(manager.getTask("uav", "u1")).toEqual(submitted);
+    expect(manager.selectedTaskKey.value).toBe("uav:u1");
     expect(vi.getTimerCount()).toBe(0);
     manager.dispose();
   });

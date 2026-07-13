@@ -33,6 +33,7 @@ export function useTaskManager(options: UseTaskManagerOptions) {
   const failures = new Map<string, number>();
   const pollVersions = new Map<string, number>();
   const inFlightVersions = new Map<string, number>();
+  const refreshVersions = new Map<ModelId, number>();
   const clients = new Map<ModelId, TaskClientLike>();
   const clientFactory = options.clientFactory ?? ((basePath: string) => createTaskClient(basePath));
   const maxRetryDelayMs = options.maxRetryDelayMs ?? 30_000;
@@ -74,6 +75,12 @@ export function useTaskManager(options: UseTaskManagerOptions) {
     const existingIndex = tasksByModel[modelId].findIndex(({ task_id }) => task_id === task.task_id);
     if (existingIndex === -1) tasksByModel[modelId].push(task);
     else tasksByModel[modelId][existingIndex] = task;
+  }
+
+  function invalidateRefresh(modelId: ModelId) {
+    const version = (refreshVersions.get(modelId) ?? 0) + 1;
+    refreshVersions.set(modelId, version);
+    return version;
   }
 
   function schedulePoll(modelId: ModelId, taskId: string, delayMs = options.pollIntervalMs) {
@@ -121,6 +128,7 @@ export function useTaskManager(options: UseTaskManagerOptions) {
     const create = clientFor(modelId).create;
     if (!create) throw new Error(`Task client for ${modelId} does not support create`);
     const created = await create(request);
+    invalidateRefresh(modelId);
     track(modelId, created);
     selectedTaskKey.value = taskKey(modelId, created.task_id);
     return created;
@@ -129,7 +137,9 @@ export function useTaskManager(options: UseTaskManagerOptions) {
   async function refreshModel(modelId: ModelId) {
     const list = clientFor(modelId).list;
     if (!list) throw new Error(`Task client for ${modelId} does not support list`);
+    const refreshVersion = invalidateRefresh(modelId);
     const refreshed = await list();
+    if (disposed || refreshVersions.get(modelId) !== refreshVersion) return refreshed;
     const refreshedIds = new Set(refreshed.map(({ task_id }) => task_id));
 
     for (const oldTask of tasksByModel[modelId]) clearPollingState(taskKey(modelId, oldTask.task_id));
@@ -158,6 +168,7 @@ export function useTaskManager(options: UseTaskManagerOptions) {
     if (!deleteTask) throw new Error(`Task client for ${modelId} does not support delete`);
     await deleteTask(taskId);
 
+    invalidateRefresh(modelId);
     const key = taskKey(modelId, taskId);
     clearPollingState(key);
     const index = tasksByModel[modelId].findIndex(({ task_id }) => task_id === taskId);
@@ -173,6 +184,7 @@ export function useTaskManager(options: UseTaskManagerOptions) {
   function dispose() {
     if (disposed) return;
     disposed = true;
+    for (const modelId of MODEL_IDS) invalidateRefresh(modelId);
     for (const timer of timers.values()) clearTimeout(timer);
     timers.clear();
     failures.clear();
