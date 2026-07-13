@@ -7,6 +7,7 @@ from rasterio.transform import from_origin
 
 from app.core.errors import AppError
 from app.schemas.radar import CoverageRequest
+from app.services.coverage_domain import build_coverage_domain
 from app.services.coverage_model import (
     default_simplify_tolerance,
     prepare_coverage_dem,
@@ -35,6 +36,39 @@ def test_sector_geometry_uses_north_clockwise_azimuth() -> None:
 def test_default_simplify_tolerance_uses_resolution_when_missing() -> None:
     assert default_simplify_tolerance((30, 25), None) == 30
     assert default_simplify_tolerance((30, 25), 5) == 5
+
+
+def test_build_coverage_domain_stops_at_first_nodata_gap() -> None:
+    valid = numpy.ones((10, 10), dtype=bool)
+    valid[2, 5] = False
+
+    domain = build_coverage_domain(
+        valid,
+        from_origin(-50, 50, 10, 10),
+        radar_x=5,
+        radar_y=5,
+        max_range_m=100,
+        azimuth_step_deg=2,
+    )
+
+    assert domain.radius_m[0] < 30
+    assert not domain.analysis_mask[0, 5]
+
+
+def test_build_coverage_domain_preserves_other_azimuths() -> None:
+    valid = numpy.ones((10, 10), dtype=bool)
+    valid[2, 5] = False
+
+    domain = build_coverage_domain(
+        valid,
+        from_origin(-50, 50, 10, 10),
+        radar_x=5,
+        radar_y=5,
+        max_range_m=100,
+        azimuth_step_deg=2,
+    )
+
+    assert domain.radius_m[45] >= 40
 
 
 def test_advanced_height_layers_are_sorted_deduplicated_and_limited() -> None:
@@ -102,6 +136,52 @@ def test_prepare_coverage_dem_reports_dem_coverage_ratio(tmp_path: Path) -> None
     assert 0 < prepared.dem_coverage_ratio <= 1
 
 
+def test_prepare_coverage_dem_uses_full_requested_canvas(tmp_path: Path) -> None:
+    source = tmp_path / "source.tif"
+    destination = tmp_path / "projected.tif"
+    write_test_dem(source)
+
+    prepared = prepare_coverage_dem(
+        source,
+        destination,
+        make_request(lon=105.0, lat=35.0, max_range_m=6000),
+    )
+
+    assert prepared.projected_bounds.left <= prepared.radar_x - 5900
+    assert prepared.projected_bounds.right >= prepared.radar_x + 5900
+    with rasterio.open(destination) as dataset:
+        assert prepared.analysis_domain is not None
+        assert prepared.analysis_domain.shape == (dataset.height, dataset.width)
+
+
+def test_prepare_coverage_dem_rejects_radar_on_nodata(tmp_path: Path) -> None:
+    source = tmp_path / "source.tif"
+    write_test_dem(source, nodata_center=True)
+
+    with pytest.raises(AppError) as exc_info:
+        prepare_coverage_dem(
+            source,
+            tmp_path / "projected.tif",
+            make_request(lon=105.0, lat=35.0),
+        )
+
+    assert exc_info.value.code == "RADAR_ON_DEM_NODATA"
+
+
+def test_prepare_coverage_dem_keeps_negative_elevations_valid(tmp_path: Path) -> None:
+    source = tmp_path / "source.tif"
+    write_test_dem(source, elevation=-25)
+
+    prepared = prepare_coverage_dem(
+        source,
+        tmp_path / "projected.tif",
+        make_request(lon=105.0, lat=35.0),
+    )
+
+    assert prepared.analysis_domain is not None
+    assert prepared.analysis_domain.any()
+
+
 def test_vectorize_visible_viewshed(tmp_path: Path) -> None:
     viewshed = tmp_path / "viewshed.tif"
     transform = from_origin(0, 40, 10, 10)
@@ -133,8 +213,14 @@ def test_vectorize_visible_viewshed(tmp_path: Path) -> None:
     assert geom.bounds == pytest.approx((10, 20, 30, 40))
 
 
-def write_test_dem(path: Path) -> None:
-    data = numpy.arange(10_000, dtype=numpy.float32).reshape((100, 100))
+def write_test_dem(path: Path, *, nodata_center: bool = False, elevation: float | None = None) -> None:
+    data = (
+        numpy.full((100, 100), elevation, dtype=numpy.float32)
+        if elevation is not None
+        else numpy.arange(10_000, dtype=numpy.float32).reshape((100, 100))
+    )
+    if nodata_center:
+        data[50, 50] = -9999
     transform = from_origin(104.95, 35.05, 0.001, 0.001)
     with rasterio.open(
         path,

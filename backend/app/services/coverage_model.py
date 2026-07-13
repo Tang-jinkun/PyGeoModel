@@ -5,7 +5,7 @@ import numpy
 from pyproj import CRS, Transformer
 from rasterio.coords import BoundingBox
 from rasterio.features import shapes
-from rasterio.transform import array_bounds
+from rasterio.transform import array_bounds, from_origin
 from rasterio.windows import Window, from_bounds
 from rasterio.warp import Resampling, calculate_default_transform, reproject, transform_bounds
 from shapely.geometry import GeometryCollection, box, shape
@@ -13,11 +13,13 @@ from shapely.ops import unary_union
 
 from app.core.errors import AppError
 from app.schemas.radar import CoverageRequest
+from app.services.coverage_domain import build_coverage_domain
 from app.services.geometry import make_range_geometry
 from app.services.projection import utm_epsg_from_lonlat
 
 MIN_DEM_COVERAGE_RATIO = 0.5
 WARN_DEM_COVERAGE_RATIO = 0.98
+PROJECTED_DEM_NODATA = -3.4028235e38
 
 
 @dataclass(frozen=True)
@@ -30,6 +32,9 @@ class PreparedCoverageDem:
     projected_bounds: BoundingBox
     resolution_m: tuple[float, float]
     dem_coverage_ratio: float
+    analysis_domain: numpy.ndarray | None = None
+    beam_clip_profile_m: tuple[float, ...] = ()
+    beam_clip_azimuth_step_deg: float = 2.0
 
 
 def prepare_coverage_dem(source: Path, destination: Path, payload: CoverageRequest) -> PreparedCoverageDem:
@@ -46,6 +51,15 @@ def prepare_coverage_dem(source: Path, destination: Path, payload: CoverageReque
         src_radar_x, src_radar_y = project_lonlat_to_crs(payload.radar.lon, payload.radar.lat, src.crs)
         if not point_in_bounds(src_radar_x, src_radar_y, src.bounds):
             raise AppError("RADAR_OUTSIDE_DEM", "Radar point is outside DEM bounds.")
+
+        radar_row, radar_col = src.index(src_radar_x, src_radar_y)
+        radar_valid = src.read_masks(1, window=Window(radar_col, radar_row, 1, 1))
+        if radar_valid.size != 1 or radar_valid[0, 0] == 0:
+            raise AppError(
+                "RADAR_ON_DEM_NODATA",
+                "Radar point is on an invalid DEM cell.",
+                status_code=400,
+            )
 
         dem_coverage_ratio = coverage_extent_ratio_for_dataset(src, payload, target_crs, radar_x, radar_y)
         if dem_coverage_ratio < MIN_DEM_COVERAGE_RATIO:
@@ -78,12 +92,22 @@ def prepare_coverage_dem(source: Path, destination: Path, payload: CoverageReque
 
         crop_transform = src.window_transform(window)
         crop_bounds_exact = array_bounds(int(window.height), int(window.width), crop_transform)
-        dst_transform, dst_width, dst_height = calculate_default_transform(
+        resolution_transform, _, _ = calculate_default_transform(
             src.crs,
             target_crs,
             int(window.width),
             int(window.height),
             *crop_bounds_exact,
+        )
+        x_resolution = abs(float(resolution_transform.a))
+        y_resolution = abs(float(resolution_transform.e))
+        dst_width = int(numpy.ceil((target_bounds[2] - target_bounds[0]) / x_resolution))
+        dst_height = int(numpy.ceil((target_bounds[3] - target_bounds[1]) / y_resolution))
+        dst_transform = from_origin(
+            target_bounds[0],
+            target_bounds[3],
+            x_resolution,
+            y_resolution,
         )
         if dst_width <= 0 or dst_height <= 0:
             raise AppError("INVALID_DEM", "Projected DEM dimensions are empty.")
@@ -97,30 +121,84 @@ def prepare_coverage_dem(source: Path, destination: Path, payload: CoverageReque
                 "width": dst_width,
                 "height": dst_height,
                 "count": 1,
+                "dtype": "float32",
+                "nodata": PROJECTED_DEM_NODATA,
                 "compress": "deflate",
             }
         )
 
-        source_data = src.read(1, window=window, masked=True)
-        fill_value = src.nodata if src.nodata is not None else 0
-        source_array = source_data.filled(fill_value)
-        destination_array = numpy.full((dst_height, dst_width), fill_value, dtype=source_array.dtype)
+        source_data = src.read(1, window=window, masked=True).astype(numpy.float32)
+        source_mask = numpy.ma.getmaskarray(source_data)
+        source_array = source_data.filled(PROJECTED_DEM_NODATA)
+        source_valid = (~source_mask).astype(numpy.uint8)
+        destination_array = numpy.full(
+            (dst_height, dst_width),
+            PROJECTED_DEM_NODATA,
+            dtype=numpy.float32,
+        )
+        destination_valid = numpy.zeros((dst_height, dst_width), dtype=numpy.uint8)
 
         reproject(
             source=source_array,
             destination=destination_array,
             src_transform=crop_transform,
             src_crs=src.crs,
-            src_nodata=src.nodata,
+            src_nodata=PROJECTED_DEM_NODATA,
             dst_transform=dst_transform,
             dst_crs=target_crs,
-            dst_nodata=src.nodata,
+            dst_nodata=PROJECTED_DEM_NODATA,
             resampling=Resampling.bilinear,
+        )
+        reproject(
+            source=source_valid,
+            destination=destination_valid,
+            src_transform=crop_transform,
+            src_crs=src.crs,
+            src_nodata=0,
+            dst_transform=dst_transform,
+            dst_crs=target_crs,
+            dst_nodata=0,
+            resampling=Resampling.nearest,
         )
 
         destination.parent.mkdir(parents=True, exist_ok=True)
         with rasterio.open(destination, "w", **kwargs) as dst:
             dst.write(destination_array, 1)
+            dst.write_mask(destination_valid * 255)
+
+    try:
+        domain = build_coverage_domain(
+            destination_valid.astype(bool),
+            dst_transform,
+            radar_x,
+            radar_y,
+            payload.coverage.max_range_m,
+        )
+    except ValueError as exc:
+        if "Radar is on an invalid DEM cell" in str(exc):
+            raise AppError(
+                "RADAR_ON_DEM_NODATA",
+                "Radar point is on an invalid projected DEM cell.",
+                status_code=400,
+            ) from exc
+        raise AppError("INVALID_DEM", str(exc), status_code=400) from exc
+
+    dem_coverage_ratio = _coverage_ratio_for_domain(
+        domain.analysis_mask,
+        dst_transform,
+        radar_x,
+        radar_y,
+        payload,
+    )
+    if dem_coverage_ratio < MIN_DEM_COVERAGE_RATIO:
+        raise AppError(
+            "RANGE_OUTSIDE_DEM",
+            (
+                "Coverage range is mostly outside the valid DEM domain "
+                f"({dem_coverage_ratio:.0%} covered; at least {MIN_DEM_COVERAGE_RATIO:.0%} required)."
+            ),
+            status_code=400,
+        )
 
     projected_bounds_tuple = array_bounds(dst_height, dst_width, dst_transform)
     projected_bounds = BoundingBox(
@@ -142,6 +220,9 @@ def prepare_coverage_dem(source: Path, destination: Path, payload: CoverageReque
         projected_bounds=projected_bounds,
         resolution_m=resolution_m,
         dem_coverage_ratio=dem_coverage_ratio,
+        analysis_domain=domain.analysis_mask,
+        beam_clip_profile_m=domain.radius_m,
+        beam_clip_azimuth_step_deg=domain.azimuth_step_deg,
     )
 
 
@@ -186,6 +267,35 @@ def coverage_extent_ratio_for_dataset(dataset, payload: CoverageRequest, target_
     if range_geom.is_empty or range_geom.area <= 0:
         return 0.0
     return max(0.0, min(1.0, dem_geom.intersection(range_geom).area / range_geom.area))
+
+
+def _coverage_ratio_for_domain(
+    analysis_domain: numpy.ndarray,
+    transform,
+    radar_x: float,
+    radar_y: float,
+    payload: CoverageRequest,
+) -> float:
+    height, width = analysis_domain.shape
+    rows, cols = numpy.meshgrid(
+        numpy.arange(height, dtype=numpy.float64) + 0.5,
+        numpy.arange(width, dtype=numpy.float64) + 0.5,
+        indexing="ij",
+    )
+    xs = transform.c + cols * transform.a + rows * transform.b
+    ys = transform.f + cols * transform.d + rows * transform.e
+    dx = xs - radar_x
+    dy = ys - radar_y
+    requested = numpy.hypot(dx, dy) <= payload.coverage.max_range_m
+    if payload.coverage.scan_mode == "sector" and payload.coverage.beam_width_deg < 360:
+        azimuth = (numpy.degrees(numpy.arctan2(dx, dy)) + 360) % 360
+        center = payload.coverage.azimuth_deg % 360
+        delta = numpy.abs((azimuth - center + 180) % 360 - 180)
+        requested &= delta <= payload.coverage.beam_width_deg / 2
+    requested_count = int(requested.sum())
+    if requested_count == 0:
+        return 0.0
+    return float((requested & analysis_domain).sum()) / requested_count
 
 
 def vectorize_visible_viewshed(viewshed: Path):
