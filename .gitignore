@@ -31,3 +31,4 @@ data/uploads/*
 Thumbs.db
 .idea/
 .vscode/
+.worktrees/
