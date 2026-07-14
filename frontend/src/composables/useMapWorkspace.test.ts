@@ -1,9 +1,59 @@
 import { describe, expect, it, vi } from "vitest";
 
+import type { AirCorridorMetrics, AirCorridorRequest } from "../models/airCorridor/types";
+import type { PreparedSceneGlb } from "../map/sceneGlbAsset";
 import { MODEL_REGISTRY } from "../models/registry";
 import type { OutputFile, TaskSummary } from "../models/shared";
 import type { UavMetrics, UavRequest } from "../models/uav/types";
-import { useMapWorkspace } from "./useMapWorkspace";
+import { useMapWorkspace, type SceneGlbAdapter } from "./useMapWorkspace";
+
+const sceneRuntime = vi.hoisted(() => ({
+  fetch: vi.fn(),
+  parse: vi.fn(),
+  dispose: vi.fn(),
+  add: vi.fn(),
+  remove: vi.fn(),
+  removeAll: vi.fn(),
+  focus: vi.fn(() => true)
+}));
+
+vi.mock("../map/sceneGlbAsset", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../map/sceneGlbAsset")>(),
+  fetchSceneGlb: sceneRuntime.fetch,
+  parseSceneGlb: sceneRuntime.parse,
+  disposePreparedScene: sceneRuntime.dispose
+}));
+
+vi.mock("../map/sceneGlbLayer", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../map/sceneGlbLayer")>(),
+  addSceneGlbLayer: sceneRuntime.add,
+  removeSceneGlbLayer: sceneRuntime.remove,
+  removeAllSceneGlbLayers: sceneRuntime.removeAll,
+  focusSceneGlbLayer: sceneRuntime.focus
+}));
+
+const sceneFile: OutputFile = {
+  kind: "scene_glb",
+  label: "Air Corridor 3D Result GLB",
+  url: "/outputs/air_corridor_task_demo/air_corridor_result.glb",
+  download_url: "/api/air-corridor/planning/air_corridor_task_demo/outputs/scene_glb",
+  filename: "air_corridor_result.glb",
+  media_type: "model/gltf-binary",
+  size_bytes: 1_980_764,
+  exists: true
+};
+
+const finishedAirTask = {
+  task_id: "air_corridor_task_demo",
+  dem_id: "dem-a",
+  status: "finished",
+  progress: 100,
+  message: "finished",
+  request: { ...MODEL_REGISTRY.airCorridor.createDefaultRequest(), dem_id: "dem-a" },
+  metrics: null,
+  output_files: [sceneFile],
+  warnings: []
+} satisfies TaskSummary<AirCorridorRequest, AirCorridorMetrics>;
 
 describe("useMapWorkspace", () => {
   it("provides immutable point and waypoint commands with undo and clear", () => {
@@ -67,4 +117,226 @@ describe("useMapWorkspace", () => {
     expect(fetchGeoJson).toHaveBeenCalledOnce();
     expect(fetchGeoJson).toHaveBeenCalledWith("/download-visible");
   });
+
+  it("does not fetch scene_glb until manually enabled", async () => {
+    const sceneGlb = sceneGlbAdapter();
+    const workspace = useMapWorkspace("start-end-threats", undefined, {
+      clientFactory: () => ({
+        metrics: vi.fn().mockResolvedValue({}),
+        outputs: vi.fn().mockResolvedValue([sceneFile])
+      }),
+      sceneGlb
+    });
+
+    await workspace.loadTaskOutputs("airCorridor", finishedAirTask);
+
+    expect(sceneGlb.load).not.toHaveBeenCalled();
+    expect(workspace.sceneGlbStateFor(finishedAirTask.task_id)?.status).toBe("idle");
+
+    await workspace.setSceneGlbVisibility(
+      {} as never,
+      "dem-a",
+      "airCorridor",
+      finishedAirTask,
+      true
+    );
+
+    expect(sceneGlb.load).toHaveBeenCalledWith(expect.objectContaining({
+      taskId: finishedAirTask.task_id,
+      modelId: "air_corridor",
+      url: "/api/air-corridor/planning/air_corridor_task_demo/outputs/scene_glb"
+    }));
+    expect(workspace.sceneGlbStateFor(finishedAirTask.task_id)?.status).toBe("visible");
+  });
+
+  it("rejects a DEM mismatch before fetching", async () => {
+    const sceneGlb = sceneGlbAdapter();
+    const workspace = sceneWorkspace(sceneGlb);
+    await workspace.loadTaskOutputs("airCorridor", finishedAirTask);
+
+    await workspace.setSceneGlbVisibility(
+      {} as never,
+      "dem-b",
+      "airCorridor",
+      finishedAirTask,
+      true
+    );
+
+    expect(sceneGlb.load).not.toHaveBeenCalled();
+    expect(workspace.sceneGlbStateFor(finishedAirTask.task_id)?.error).toContain("DEM");
+  });
+
+  it("aborts loading and removes resources when toggled off", async () => {
+    const pending = deferred<void>();
+    const sceneGlb = sceneGlbAdapter();
+    sceneGlb.load.mockReturnValueOnce(pending.promise);
+    const workspace = sceneWorkspace(sceneGlb);
+    const map = {} as never;
+    await workspace.loadTaskOutputs("airCorridor", finishedAirTask);
+
+    const loading = workspace.setSceneGlbVisibility(
+      map,
+      "dem-a",
+      "airCorridor",
+      finishedAirTask,
+      true
+    );
+    await Promise.resolve();
+    const signal = sceneGlb.load.mock.calls[0][0].signal;
+    await workspace.setSceneGlbVisibility(
+      map,
+      "dem-a",
+      "airCorridor",
+      finishedAirTask,
+      false
+    );
+
+    expect(signal.aborted).toBe(true);
+    expect(sceneGlb.remove).toHaveBeenCalledWith(map, finishedAirTask.task_id);
+    expect(workspace.sceneGlbStateFor(finishedAirTask.task_id)?.status).toBe("idle");
+    pending.resolve();
+    await loading;
+    expect(workspace.sceneGlbStateFor(finishedAirTask.task_id)?.status).toBe("idle");
+  });
+
+  it("keeps multiple visible task states independent", async () => {
+    const sceneGlb = sceneGlbAdapter();
+    const secondFile = {
+      ...sceneFile,
+      url: "/outputs/air_corridor_task_second/air_corridor_result.glb",
+      download_url: "/api/air-corridor/planning/air_corridor_task_second/outputs/scene_glb"
+    };
+    const secondTask = {
+      ...finishedAirTask,
+      task_id: "air_corridor_task_second",
+      output_files: [secondFile]
+    };
+    const workspace = useMapWorkspace("start-end-threats", undefined, {
+      clientFactory: () => ({
+        metrics: vi.fn().mockResolvedValue({}),
+        outputs: vi.fn(async (taskId: string) => (
+          taskId === secondTask.task_id ? [secondFile] : [sceneFile]
+        ))
+      }),
+      sceneGlb
+    });
+    const map = {} as never;
+
+    await workspace.loadTaskOutputs("airCorridor", finishedAirTask);
+    await workspace.setSceneGlbVisibility(map, "dem-a", "airCorridor", finishedAirTask, true);
+    await workspace.loadTaskOutputs("airCorridor", secondTask);
+    await workspace.setSceneGlbVisibility(map, "dem-a", "airCorridor", secondTask, true);
+
+    expect(workspace.sceneGlbStateFor(finishedAirTask.task_id)?.status).toBe("visible");
+    expect(workspace.sceneGlbStateFor(secondTask.task_id)?.status).toBe("visible");
+    await workspace.setSceneGlbVisibility(map, "dem-a", "airCorridor", finishedAirTask, false);
+    expect(workspace.sceneGlbStateFor(finishedAirTask.task_id)?.status).toBe("idle");
+    expect(workspace.sceneGlbStateFor(secondTask.task_id)?.status).toBe("visible");
+  });
+
+  it("does not add a parsed asset after the load was turned off", async () => {
+    const parsed = deferred<PreparedSceneGlb>();
+    const asset = { disposed: false } as PreparedSceneGlb;
+    sceneRuntime.fetch.mockReset().mockResolvedValue(new ArrayBuffer(8));
+    sceneRuntime.parse.mockReset().mockReturnValue(parsed.promise);
+    sceneRuntime.dispose.mockReset();
+    sceneRuntime.add.mockReset();
+    sceneRuntime.remove.mockReset();
+    const workspace = useMapWorkspace("start-end-threats", undefined, {
+      clientFactory: () => ({
+        metrics: vi.fn().mockResolvedValue({}),
+        outputs: vi.fn().mockResolvedValue([sceneFile])
+      })
+    });
+    const map = {} as never;
+    await workspace.loadTaskOutputs("airCorridor", finishedAirTask);
+
+    const loading = workspace.setSceneGlbVisibility(
+      map,
+      "dem-a",
+      "airCorridor",
+      finishedAirTask,
+      true
+    );
+    await Promise.resolve();
+    await Promise.resolve();
+    await workspace.setSceneGlbVisibility(
+      map,
+      "dem-a",
+      "airCorridor",
+      finishedAirTask,
+      false
+    );
+    parsed.resolve(asset);
+    await loading;
+
+    expect(sceneRuntime.add).not.toHaveBeenCalled();
+    expect(sceneRuntime.dispose).toHaveBeenCalledWith(asset);
+    expect(workspace.sceneGlbStateFor(finishedAirTask.task_id)?.status).toBe("idle");
+  });
+
+  it("removes incompatible and all overlays without cross-task state leaks", async () => {
+    const sceneGlb = sceneGlbAdapter();
+    const workspace = sceneWorkspace(sceneGlb);
+    const map = {} as never;
+    await workspace.loadTaskOutputs("airCorridor", finishedAirTask);
+    await workspace.setSceneGlbVisibility(map, "dem-a", "airCorridor", finishedAirTask, true);
+
+    workspace.removeIncompatibleSceneGlbs(map, "dem-b");
+    expect(sceneGlb.remove).toHaveBeenCalledWith(map, finishedAirTask.task_id);
+    expect(workspace.sceneGlbStateFor(finishedAirTask.task_id)).toBeNull();
+
+    await workspace.loadTaskOutputs("airCorridor", finishedAirTask);
+    workspace.removeAllSceneGlbs(map);
+    expect(sceneGlb.removeAll).toHaveBeenCalledWith(map);
+    expect(workspace.sceneGlbStates.value).toEqual({});
+  });
+
+  it("returns a visible lost layer to idle and resets destroyed-map state locally", async () => {
+    const sceneGlb = sceneGlbAdapter();
+    let onLayerLost: (() => void) | undefined;
+    sceneGlb.load.mockImplementation(async (request) => {
+      onLayerLost = request.onLayerLost;
+    });
+    const workspace = sceneWorkspace(sceneGlb);
+    const map = {} as never;
+    await workspace.loadTaskOutputs("airCorridor", finishedAirTask);
+    await workspace.setSceneGlbVisibility(map, "dem-a", "airCorridor", finishedAirTask, true);
+
+    expect(workspace.focusSceneGlb(map, finishedAirTask.task_id)).toBe(true);
+    onLayerLost?.();
+    expect(workspace.sceneGlbStateFor(finishedAirTask.task_id)?.status).toBe("idle");
+    workspace.resetSceneGlbStates();
+    expect(workspace.sceneGlbStates.value).toEqual({});
+    expect(sceneGlb.removeAll).not.toHaveBeenCalled();
+  });
 });
+
+function sceneGlbAdapter() {
+  return {
+    load: vi.fn<SceneGlbAdapter["load"]>().mockResolvedValue(undefined),
+    remove: vi.fn<SceneGlbAdapter["remove"]>(),
+    removeAll: vi.fn<SceneGlbAdapter["removeAll"]>(),
+    focus: vi.fn<SceneGlbAdapter["focus"]>(() => true)
+  };
+}
+
+function sceneWorkspace(sceneGlb: ReturnType<typeof sceneGlbAdapter>) {
+  return useMapWorkspace("start-end-threats", undefined, {
+    clientFactory: () => ({
+      metrics: vi.fn().mockResolvedValue({}),
+      outputs: vi.fn().mockResolvedValue([sceneFile])
+    }),
+    sceneGlb
+  });
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
