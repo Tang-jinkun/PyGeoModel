@@ -46,3 +46,17 @@ def test_registry_reports_missing_output_kind() -> None:
     )
 
     assert "missing output: threat_zones_geojson" in errors
+
+
+def test_air_corridor_requires_an_altitude_change_for_demo_effect() -> None:
+    spec = MODEL_SPECS["air_corridor"]
+    outputs = set(spec.required_outputs)
+
+    assert spec.validate(
+        {"route_found": True, "corridor_length_m": 1000, "altitude_change_count": 0},
+        outputs,
+    )
+    assert spec.validate(
+        {"route_found": True, "corridor_length_m": 1000, "altitude_change_count": 2},
+        outputs,
+    ) == []

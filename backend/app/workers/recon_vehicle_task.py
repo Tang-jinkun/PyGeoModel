@@ -300,7 +300,11 @@ def _compute_recon_vehicle_masks(
             viewshed = staging_dir / f"viewshed_{index}.tif"
             command = _run_gdal_viewshed(prepared.projected_dem, viewshed, point_x, point_y, point.mast_height_m, payload)
             commands.append(command)
-            point_visible_raw = _read_viewshed_mask(viewshed)
+            point_visible_raw = _read_viewshed_mask(
+                viewshed,
+                out_shape=finite.shape,
+                dst_transform=transform,
+            )
             point_visible = point_visible_raw & point_footprint
         else:
             point_visible = point_footprint.copy()
@@ -386,16 +390,28 @@ def _run_gdal_viewshed(
     return command
 
 
-def _read_viewshed_mask(path: Path):
+def _read_viewshed_mask(path: Path, out_shape, dst_transform):
     import rasterio
 
     with rasterio.open(path) as src:
-        data = src.read(1)
-        nodata = src.nodata
-    mask = data > 0
-    if nodata is not None:
-        mask &= data != nodata
-    return mask
+        if src.crs is None:
+            raise AppError(
+                "VIEWSHED_WITHOUT_CRS",
+                "Recon vehicle viewshed is missing its coordinate reference system.",
+            )
+        destination = numpy.zeros(out_shape, dtype=numpy.uint8)
+        reproject(
+            source=src.read(1),
+            destination=destination,
+            src_transform=src.transform,
+            src_crs=src.crs,
+            src_nodata=src.nodata,
+            dst_transform=dst_transform,
+            dst_crs=src.crs,
+            dst_nodata=0,
+            resampling=Resampling.nearest,
+        )
+    return destination > 0
 
 
 def _route_waypoints(payload: ReconVehicleCoverageRequest) -> list[ReconVehiclePositionInput]:

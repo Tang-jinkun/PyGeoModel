@@ -88,7 +88,10 @@ def _air(metrics: dict, _: set[str]) -> list[str]:
         if metrics.get("route_found") is True
         else ["air corridor route was not found"]
     )
-    return errors + _positive(metrics, "corridor_length_m")
+    errors += _positive(metrics, "corridor_length_m")
+    if int(metrics.get("altitude_change_count") or 0) <= 0:
+        errors.append("air corridor must change altitude for the demo scenario")
+    return errors
 
 
 MODEL_SPECS = {

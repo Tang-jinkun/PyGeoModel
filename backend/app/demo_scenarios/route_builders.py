@@ -23,14 +23,14 @@ def build_mobility(
     dem_id: str,
     candidate_index: int,
 ) -> ScenarioEnvelope:
-    direct_offsets = [(-5, -7), (0, 0), (5, 7)]
-    main_offsets = [(-5, -7), (-5, 0), (0, 7), (5, 7)]
-    branch_offsets = [(-2, -5), (0, 0), (2, 5)]
+    direct_offsets = [(-2, -3), (0, 0), (2, 3)]
+    main_offsets = [(-2, -3), (-2, 0), (0, 3), (2, 3)]
+    branch_offsets = [(-1, -2), (0, 0), (1, 2)]
     required_offsets = sorted(set(direct_offsets + main_offsets + branch_offsets))
     anchor = terrain.select(
         "valley",
         candidate_index,
-        margin=8,
+        margin=5,
         required_offsets=required_offsets,
     )
     direct = terrain.route(anchor, direct_offsets)
@@ -54,7 +54,7 @@ def build_mobility(
             "wheeled": {
                 "enabled": True,
                 "base_speed_kph": 50,
-                "max_slope_deg": 16,
+                "max_slope_deg": 60,
                 "slope_penalty": 2.4,
                 "road_speed_multiplier": 1.7,
                 "offroad_speed_multiplier": 0.5,
@@ -62,7 +62,7 @@ def build_mobility(
             "tracked": {
                 "enabled": True,
                 "base_speed_kph": 32,
-                "max_slope_deg": 32,
+                "max_slope_deg": 60,
                 "slope_penalty": 1.2,
                 "road_speed_multiplier": 1.2,
                 "offroad_speed_multiplier": 0.9,
@@ -109,7 +109,7 @@ def build_air_corridor(
             "name": f"Synthetic threat {index}",
             "lon": point[0],
             "lat": point[1],
-            "min_range_m": 1000,
+            "min_range_m": 0,
             "max_range_m": 5000 + index * 1000,
             "min_altitude_m": 0,
             "max_altitude_m": 800 + index * 300,
@@ -146,9 +146,9 @@ def build_air_corridor(
             "corridor_width_m": 500,
             "horizontal_resolution_m": 250,
             "allow_altitude_change": True,
-            "threat_weight": 2.5,
+            "threat_weight": 20,
             "distance_weight": 0.25,
-            "altitude_change_weight": 0.1,
+            "altitude_change_weight": 0.01,
             "terrain_clearance_weight": 0.4,
             "output_simplify_tolerance_m": 30,
         },

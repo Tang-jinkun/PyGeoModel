@@ -218,6 +218,8 @@ git commit -m "feat: add demo scenario storage primitives"
 
 **Implementation correction from real DEM verification:** `TerrainGrid.select` also accepts `required_offsets`; candidate masks must prove every offset lands on a valid DEM cell. All route-based builders pass their complete offset set because the target DEM has an irregular NoData boundary.
 
+**Runtime corrections from real task verification:** recon-vehicle viewsheds are cropped per observer and must be reprojected onto the prepared DEM grid before mask union. The mobility demo uses a shorter route and the schema maximum 60-degree slope for both vehicles. Air-corridor threats use `min_range_m=0`, high threat weight, and low altitude-change cost; acceptance requires at least one altitude transition.
+
 - [ ] **Step 1: 写入失败的地形采样测试**
 
 ```python
