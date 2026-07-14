@@ -103,22 +103,32 @@ def build_air_corridor(
         required_offsets=offsets,
     )
     line = terrain.route(anchor, offsets)
-    threats = [
-        {
-            "id": f"demo-threat-{index}",
-            "name": f"Synthetic threat {index}",
-            "lon": point[0],
-            "lat": point[1],
-            "min_range_m": 0,
-            "max_range_m": 5000 + index * 1000,
-            "min_altitude_m": 0,
-            "max_altitude_m": 800 + index * 300,
-            "threat_level": 4 + index * 2,
-            "kill_zone_radius_m": 2000 + index * 300,
-            "warning_zone_radius_m": 3500 + index * 500,
-        }
-        for index, point in enumerate(line[1:4], start=1)
-    ]
+    threats = []
+    for index, (point, (row_offset, col_offset)) in enumerate(
+        zip(line[1:4], offsets[1:4]),
+        start=1,
+    ):
+        ground_elevation_m = float(
+            terrain.elevation[
+                anchor[0] + row_offset,
+                anchor[1] + col_offset,
+            ]
+        )
+        threats.append(
+            {
+                "id": f"demo-threat-{index}",
+                "name": f"Synthetic threat {index}",
+                "lon": point[0],
+                "lat": point[1],
+                "min_range_m": 0,
+                "max_range_m": 5000 + index * 1000,
+                "min_altitude_m": 0,
+                "max_altitude_m": ground_elevation_m + 900 + index * 150,
+                "threat_level": 4 + index * 2,
+                "kill_zone_radius_m": 2000 + index * 300,
+                "warning_zone_radius_m": 3500 + index * 500,
+            }
+        )
     request = {
         "dem_id": dem_id,
         "start": {

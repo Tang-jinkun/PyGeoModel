@@ -1,5 +1,7 @@
 from pathlib import Path
 
+from rasterio.transform import rowcol
+
 from app.demo_scenarios.route_builders import (
     build_air_corridor,
     build_mobility,
@@ -36,12 +38,16 @@ def test_air_corridor_contains_three_threats_and_altitude_layers(
 ) -> None:
     path = tmp_path / "dem.tif"
     write_dem(path)
-    scenario = build_air_corridor(TerrainGrid.load(path, 80), "dem_a", 0)
+    terrain = TerrainGrid.load(path, 80)
+    scenario = build_air_corridor(terrain, "dem_a", 0)
 
     AirCorridorPlanningRequest.model_validate(scenario.request)
 
     assert len(scenario.request["threats"]) == 3
     assert all(threat["min_range_m"] == 0 for threat in scenario.request["threats"])
+    for threat in scenario.request["threats"]:
+        row, col = rowcol(terrain.transform, threat["lon"], threat["lat"])
+        assert threat["max_altitude_m"] > float(terrain.elevation[row, col]) + 900
     assert scenario.request["planning"]["threat_weight"] == 20
     assert scenario.request["planning"]["altitude_change_weight"] == 0.01
     assert scenario.request["altitude_layers_m"] == sorted(
