@@ -9,6 +9,7 @@ AirCorridorOutputKind = Literal[
     "threat_zones_geojson",
     "risk_samples_geojson",
     "cost_summary_json",
+    "scene_glb",
     "model_metadata_json",
     "output_manifest_json",
 ]
@@ -109,6 +110,7 @@ class AirCorridorPlanningOutputs(BaseModel):
     threat_zones_geojson: str | None = None
     risk_samples_geojson: str | None = None
     cost_summary_json: str | None = None
+    scene_glb: str | None = None
     model_metadata_json: str | None = None
     output_manifest_json: str | None = None
 
@@ -122,6 +124,21 @@ class AirCorridorOutputFile(BaseModel):
     media_type: str
     size_bytes: int | None = None
     exists: bool = False
+
+
+class Scene3dMetadata(BaseModel):
+    schema_version: int
+    task_id: str
+    model_id: str
+    units: str
+    source_crs: str
+    geographic_crs: str
+    origin: dict[str, float]
+    axes: dict[str, str]
+    route_found: bool
+    risk_sample_count: int
+    threat_count: int
+    corridor_width_m: float
 
 
 class AirCorridorModelMetadata(BaseModel):
@@ -138,6 +155,7 @@ class AirCorridorModelMetadata(BaseModel):
     corridor_width_m: float
     allow_altitude_change: bool
     simplify_tolerance_m: float
+    scene3d: Scene3dMetadata | None = None
 
 
 class AirCorridorPlanningTaskSummary(BaseModel):

@@ -31,6 +31,7 @@ from app.services.air_corridor_task_store import mark_air_corridor_failed, mark_
 from app.services.dem_store import find_dem_file
 from app.services.geometry import project_geometry
 from app.services.projection import utm_epsg_from_lonlat
+from app.scene3d.air_corridor import write_air_corridor_glb
 
 
 class PreparedAirCorridorDem:
@@ -230,6 +231,7 @@ def _write_air_corridor_outputs(
     threat_zones = staging_dir / "threat_zones.geojson"
     risk_samples = staging_dir / "risk_samples.geojson"
     cost_summary = staging_dir / "cost_summary.json"
+    scene_path = staging_dir / "air_corridor_result.glb"
     model_path = staging_dir / "model_metadata.json"
     manifest_path = staging_dir / "output_manifest.json"
 
@@ -239,6 +241,18 @@ def _write_air_corridor_outputs(
     _write_risk_samples(risk_samples, result["sample_features"], transformer)
 
     metrics: AirCorridorPlanningMetrics = result["metrics"]
+    scene_metadata = write_air_corridor_glb(
+        scene_path,
+        task_id=task_id,
+        target_epsg=prepared.target_epsg,
+        path_points=result["path_points"],
+        sample_features=result["sample_features"],
+        prepared_threat_xy=prepared.threat_xy,
+        start_ground_elevation_m=result["start_ground"],
+        end_ground_elevation_m=result["end_ground"],
+        payload=payload,
+        route_found=metrics.route_found,
+    )
     model = AirCorridorModelMetadata(
         target_epsg=prepared.target_epsg,
         start_projected_xy=[prepared.start_x, prepared.start_y],
@@ -253,6 +267,7 @@ def _write_air_corridor_outputs(
         corridor_width_m=payload.planning.corridor_width_m,
         allow_altitude_change=payload.planning.allow_altitude_change,
         simplify_tolerance_m=tolerance,
+        scene3d=scene_metadata,
     )
     outputs = AirCorridorPlanningOutputs(
         corridor_path_geojson=f"/outputs/{task_id}/corridor_path.geojson",
@@ -260,6 +275,7 @@ def _write_air_corridor_outputs(
         threat_zones_geojson=f"/outputs/{task_id}/threat_zones.geojson",
         risk_samples_geojson=f"/outputs/{task_id}/risk_samples.geojson",
         cost_summary_json=f"/outputs/{task_id}/cost_summary.json",
+        scene_glb=f"/outputs/{task_id}/air_corridor_result.glb",
         model_metadata_json=f"/outputs/{task_id}/model_metadata.json",
         output_manifest_json=f"/outputs/{task_id}/output_manifest.json",
     )

@@ -50,6 +50,23 @@ def test_read_air_corridor_metrics_requires_finished_task(tmp_path: Path) -> Non
     assert response.status_code == 409
 
 
+def test_download_air_corridor_scene_glb(tmp_path: Path) -> None:
+    settings.data_dir = tmp_path
+    settings.ensure_directories()
+    write_air_corridor_task(tmp_path, "air_corridor_task_a", "finished")
+    output_dir = tmp_path / "outputs" / "air_corridor_task_a"
+    output_dir.mkdir(parents=True)
+    (output_dir / "air_corridor_result.glb").write_bytes(b"glTF-test")
+
+    response = TestClient(app).get(
+        "/api/air-corridor/planning/air_corridor_task_a/outputs/scene_glb"
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "model/gltf-binary"
+    assert response.content == b"glTF-test"
+
+
 def write_air_corridor_task(root: Path, task_id: str, status: str, metrics: dict | None = None) -> None:
     task_dir = root / "tasks"
     task_dir.mkdir(parents=True, exist_ok=True)
