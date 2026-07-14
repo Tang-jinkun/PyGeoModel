@@ -98,7 +98,9 @@ def sanitize_short_label(value: str | None, unit_id: str, index: int) -> str:
 
 def crossed_label_nodes(label: str, scale_m: float) -> SceneNode:
     _validate_scale(scale_m)
-    if not label or any(
+    if not 1 <= len(label) <= 8:
+        raise ValueError("Label length must be 1 through 8 characters")
+    if any(
         character not in ALLOWED_LABEL_CHARACTERS for character in label
     ):
         raise ValueError("Label requires allowed uppercase characters")

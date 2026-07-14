@@ -1,12 +1,13 @@
 from collections.abc import Iterator
 from dataclasses import replace
 from math import pi
+from pathlib import Path
 
 import numpy
 import pytest
 import trimesh
 
-from app.scene3d.exporter import SceneNode
+from app.scene3d.exporter import SceneNode, export_glb, read_glb_document
 from app.scene3d.frame import SceneFrame
 from app.scene3d.tactical_glyphs import (
     ALLOWED_LABEL_CHARACTERS,
@@ -119,6 +120,43 @@ def test_air_defense_unit_binds_all_components_to_one_root() -> None:
             "status": "active",
             "display_scale_m": 800,
         }.items()
+
+
+def test_unit_ids_cannot_collide_with_hierarchy_component_names(
+    tmp_path: Path,
+) -> None:
+    nodes, omissions = build_unit_nodes(
+        [
+            unit(unit_id="a", warning_zone=None, kill_zone=None),
+            unit(
+                unit_id="a_model",
+                position=(501_000, 3_500_000),
+                warning_zone=None,
+                kill_zone=None,
+            ),
+        ],
+        frame(),
+    )
+
+    assert omissions == []
+    assert [node.name for node in nodes] == ["unit_a", "unit_a_model"]
+    assert {child.name for child in nodes[0].children} == {
+        "unit_a/model",
+        "unit_a/symbol_cross",
+        "unit_a/label_cross",
+    }
+    for root in nodes:
+        for parent in walk_nodes(root):
+            for child in parent.children:
+                suffix = child.name.removeprefix(f"{parent.name}/")
+                assert suffix != child.name
+                assert "/" not in suffix
+
+    path = tmp_path / "collision-proof-units.glb"
+    export_glb(path, nodes, scene_metadata={"schema_version": 1})
+    document = read_glb_document(path.read_bytes())
+    names = [node["name"] for node in document["nodes"]]
+    assert len(names) == len(set(names))
 
 
 def test_missing_type_status_and_heading_use_explicit_defaults() -> None:
@@ -243,6 +281,24 @@ def test_every_allowed_label_character_produces_finite_geometry(
     assert meshes
     assert all(len(mesh.faces) > 0 for mesh in meshes)
     assert all(numpy.isfinite(mesh.vertices).all() for mesh in meshes)
+
+
+def test_crossed_label_accepts_eight_allowed_characters() -> None:
+    label = crossed_label_nodes("ABCD-123", 800)
+    meshes = [node.mesh for node in walk_nodes(label) if node.mesh is not None]
+
+    assert meshes
+    assert all(numpy.isfinite(mesh.vertices).all() for mesh in meshes)
+
+
+def test_crossed_label_rejects_nine_allowed_characters() -> None:
+    with pytest.raises(ValueError, match="1 through 8"):
+        crossed_label_nodes("ABCDE-123", 800)
+
+
+def test_crossed_label_rejects_unsupported_characters() -> None:
+    with pytest.raises(ValueError, match="allowed uppercase characters"):
+        crossed_label_nodes("AD.05", 800)
 
 
 @pytest.mark.parametrize(

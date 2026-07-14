@@ -264,7 +264,7 @@ def _prepare_component(
     role: str,
     identity: dict,
 ) -> SceneNode:
-    root_name = f"unit_{normalized_id}_{role}"
+    root_name = f"unit_{normalized_id}/{role}"
     _rename_tree(node, root_name)
     node.extras = {"kind": "unit_component", **identity, "role": role}
     return node
@@ -273,7 +273,7 @@ def _prepare_component(
 def _rename_tree(node: SceneNode, name: str) -> None:
     node.name = name
     for child in node.children:
-        _rename_tree(child, f"{name}_{child.name}")
+        _rename_tree(child, f"{name}/{child.name}")
 
 
 def _zone_component(
@@ -292,7 +292,7 @@ def _zone_component(
         top_y=zone.max_altitude_amsl_m - ground_altitude_m,
     )
     return SceneNode(
-        name=f"unit_{normalized_id}_{role}",
+        name=f"unit_{normalized_id}/{role}",
         mesh=mesh,
         material=material,
         extras={"kind": "unit_component", **identity, "role": role},
