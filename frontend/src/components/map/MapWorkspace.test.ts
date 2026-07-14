@@ -4,6 +4,19 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createSpatialDraft } from "../../map/spatialInput";
 import MapWorkspace from "./MapWorkspace.vue";
 
+const demA = {
+  dem_id: "dem-a",
+  filename: "a.tif",
+  crs: "EPSG:4326",
+  bounds: [79, 31, 80, 32],
+  resolution: [30, 30],
+  width: 100,
+  height: 100,
+  nodata: null,
+  task_count: 0,
+  active_task_count: 0
+};
+
 const mapHarness = vi.hoisted(() => {
   const instances: FakeMap[] = [];
   return { instances, constructor: vi.fn() };
@@ -118,17 +131,63 @@ describe("MapWorkspace", () => {
     expect(wrapper.get('[data-action="undo-editing"]')).toBeTruthy();
     expect(wrapper.get('[data-action="clear-editing"]')).toBeTruthy();
   });
+
+  it("runs custom layer cleanup when the map is removed", () => {
+    const wrapper = mount(MapWorkspace, {
+      props: {
+        kind: "point",
+        draft: createSpatialDraft("point")
+      }
+    });
+    const map = mapHarness.instances[0];
+    const onRemove = vi.fn();
+    map.addLayer({ id: "custom-scene", onRemove });
+
+    wrapper.unmount();
+
+    expect(onRemove).toHaveBeenCalledOnce();
+  });
+
+  it("does not reinstall unchanged DEM terrain but does sync a new DEM", async () => {
+    const wrapper = mount(MapWorkspace, {
+      props: {
+        kind: "point",
+        draft: createSpatialDraft("point"),
+        dem: demA
+      }
+    });
+    const map = mapHarness.instances[0];
+    map.emit("load", undefined);
+    expect(map.setTerrain).toHaveBeenCalledTimes(2);
+
+    await wrapper.setProps({ dem: { ...demA } });
+    expect(map.setTerrain).toHaveBeenCalledTimes(2);
+
+    await wrapper.setProps({ dem: { ...demA, dem_id: "dem-b", filename: "b.tif" } });
+    expect(map.setTerrain).toHaveBeenCalledTimes(4);
+  });
 });
 
 class FakeMap {
   handlers = new Map<string, (event?: never) => void>();
   resize = vi.fn();
-  remove = vi.fn();
+  layers = new Map<string, { id: string; onRemove?: () => void }>();
+  remove = vi.fn(() => {
+    for (const layer of this.layers.values()) layer.onRemove?.();
+    this.layers.clear();
+  });
   addControl = vi.fn();
   addSource = vi.fn();
   getSource = vi.fn();
-  getLayer = vi.fn();
-  removeLayer = vi.fn();
+  getLayer = vi.fn((id: string) => this.layers.get(id));
+  addLayer = vi.fn((layer: { id: string; onRemove?: () => void }) => {
+    this.layers.set(layer.id, layer);
+  });
+  removeLayer = vi.fn((id: string) => {
+    const layer = this.layers.get(id);
+    layer?.onRemove?.();
+    this.layers.delete(id);
+  });
   removeSource = vi.fn();
   setTerrain = vi.fn();
 

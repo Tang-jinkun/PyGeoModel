@@ -73,6 +73,8 @@ const map = shallowRef<maplibregl.Map | null>(null);
 let resizeObserver: ResizeObserver | null = null;
 let transitionTarget: Element | null = null;
 let styleLoaded = false;
+let lastSyncedDemId: string | null = null;
+let lastSyncedTerrainUrl: string | null = null;
 
 onMounted(() => {
   if (!mapContainer.value || map.value) return;
@@ -123,10 +125,16 @@ function syncDem(instance: maplibregl.Map, dem: DemMetadata | null) {
   if (!dem || dem.bounds.length !== 4) {
     removeDemTerrain(instance);
     removeDemRasterLayer(instance);
+    lastSyncedDemId = null;
+    lastSyncedTerrainUrl = null;
     return;
   }
+  const terrainUrl = demTerrainUrlTemplate(dem.dem_id);
+  if (lastSyncedDemId === dem.dem_id && lastSyncedTerrainUrl === terrainUrl) return;
   addOrUpdateDemRasterLayer(instance, demTileUrlTemplate(dem.dem_id), dem.bounds);
-  addOrUpdateDemTerrain(instance, demTerrainUrlTemplate(dem.dem_id), dem.bounds);
+  addOrUpdateDemTerrain(instance, terrainUrl, dem.bounds);
+  lastSyncedDemId = dem.dem_id;
+  lastSyncedTerrainUrl = terrainUrl;
 }
 
 function handleMapClick(event: maplibregl.MapMouseEvent) {

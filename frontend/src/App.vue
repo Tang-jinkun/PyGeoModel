@@ -115,9 +115,12 @@
             :metrics="mapWorkspace.taskMetrics.value"
             :output-files="mapWorkspace.outputFiles.value"
             :layer-states="mapWorkspace.layerStates.value"
+            :scene-glb-state="mapWorkspace.sceneGlbStateFor(selectedTaskContext.task.task_id)"
             @layer-visibility="setLayerVisibility"
             @layer-opacity="setLayerOpacity"
             @layer-focus="focusLayer"
+            @scene-glb-visibility="setSceneGlbVisibility"
+            @scene-glb-focus="focusSceneGlb"
           />
         </div>
       </div>
@@ -342,9 +345,16 @@ onBeforeUnmount(() => {
   radarAnalysis.dispose();
   radarLayers.dispose();
   if (map.value) {
+    mapWorkspace.removeAllSceneGlbs(map.value);
     removeProfileLayer(map.value);
     removeFusionLayers(map.value);
     removeRadarMarker(map.value);
+    if (import.meta.env.DEV) {
+      const devWindow = window as Window & { __PYGEOMODEL_MAP__?: maplibregl.Map };
+      if (devWindow.__PYGEOMODEL_MAP__ === map.value) {
+        delete devWindow.__PYGEOMODEL_MAP__;
+      }
+    }
   }
   clearTaskLayers();
   taskManager.dispose();
@@ -380,6 +390,9 @@ watch(selectedTaskContext, async (context) => {
 }, { immediate: true });
 
 watch(() => mapWorkspace.layerStates.value, renderTaskLayers, { deep: true });
+watch(() => demManager.selectedDem.value, (nextDemId) => {
+  if (map.value) mapWorkspace.removeIncompatibleSceneGlbs(map.value, nextDemId ?? "");
+});
 watch(() => workspace.drafts.radar, () => {
   if (workspace.selectedModel.value !== "radar") return;
   radarLayers.clear();
@@ -471,7 +484,14 @@ function syncSpatialDraft() {
 }
 
 function setMap(instance: maplibregl.Map) {
+  if (map.value && map.value !== instance) {
+    mapWorkspace.resetSceneGlbStates();
+  }
   map.value = instance;
+  if (import.meta.env.DEV) {
+    (window as Window & { __PYGEOMODEL_MAP__?: maplibregl.Map })
+      .__PYGEOMODEL_MAP__ = instance;
+  }
   instance.on("load", handleMapLoad);
   instance.on("click", handleRadarMapClick);
   if (mapReady(instance)) handleMapLoad();
@@ -495,6 +515,28 @@ function setLayerOpacity(kind: string, opacity: number) {
 
 function focusLayer(kind: string) {
   if (map.value) mapWorkspace.focusTaskLayer(map.value, kind);
+}
+
+async function setSceneGlbVisibility(visible: boolean) {
+  const instance = map.value;
+  const context = selectedTaskContext.value;
+  const selectedDemId = demManager.selectedDem.value;
+  if (!instance || !context || !selectedDemId) return;
+  await mapWorkspace.setSceneGlbVisibility(
+    instance,
+    selectedDemId,
+    context.modelId,
+    context.task as never,
+    visible
+  );
+}
+
+function focusSceneGlb() {
+  const instance = map.value;
+  const context = selectedTaskContext.value;
+  if (instance && context) {
+    mapWorkspace.focusSceneGlb(instance, context.task.task_id);
+  }
 }
 
 function renderTaskLayers() {

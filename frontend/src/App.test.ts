@@ -3,10 +3,12 @@ import { defineComponent, h, nextTick, toRaw } from "vue";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import App from "./App.vue";
+import DemSelector from "./components/dem/DemSelector.vue";
 import ModelParameterPanel from "./components/forms/ModelParameterPanel.vue";
+import TaskResultPanel from "./components/tasks/TaskResultPanel.vue";
 import TaskHistoryDrawer from "./components/tasks/TaskHistoryDrawer.vue";
 import { getModelDefinition, MODEL_IDS, type ModelId } from "./models/registry";
-import type { BaseModelRequest, TaskSummary } from "./models/shared";
+import type { BaseModelRequest, OutputFile, TaskSummary } from "./models/shared";
 
 const clients = new Map<string, ReturnType<typeof makeClient>>();
 let taskSequence = 0;
@@ -16,6 +18,15 @@ const radarLayerAdapter = vi.hoisted(() => ({
   setRadarVisible: vi.fn(),
   clear: vi.fn(),
   dispose: vi.fn()
+}));
+const sceneRuntime = vi.hoisted(() => ({
+  fetch: vi.fn(),
+  parse: vi.fn(),
+  dispose: vi.fn(),
+  add: vi.fn(),
+  remove: vi.fn(),
+  removeAll: vi.fn(),
+  focus: vi.fn(() => true)
 }));
 
 vi.mock("./api/dem", () => ({
@@ -38,6 +49,21 @@ vi.mock("./api/tasks", () => ({
 
 vi.mock("./models/radar/layerAdapter", () => ({
   createRadarLayerAdapter: vi.fn(() => radarLayerAdapter)
+}));
+
+vi.mock("./map/sceneGlbAsset", async (importOriginal) => ({
+  ...await importOriginal<typeof import("./map/sceneGlbAsset")>(),
+  fetchSceneGlb: sceneRuntime.fetch,
+  parseSceneGlb: sceneRuntime.parse,
+  disposePreparedScene: sceneRuntime.dispose
+}));
+
+vi.mock("./map/sceneGlbLayer", async (importOriginal) => ({
+  ...await importOriginal<typeof import("./map/sceneGlbLayer")>(),
+  addSceneGlbLayer: sceneRuntime.add,
+  removeSceneGlbLayer: sceneRuntime.remove,
+  removeAllSceneGlbLayers: sceneRuntime.removeAll,
+  focusSceneGlbLayer: sceneRuntime.focus
 }));
 
 vi.mock("maplibre-gl", () => ({
@@ -65,6 +91,9 @@ describe("App workspace wiring", () => {
     clients.clear();
     taskSequence = 0;
     vi.clearAllMocks();
+    sceneRuntime.fetch.mockResolvedValue(new ArrayBuffer(8));
+    sceneRuntime.parse.mockResolvedValue({ disposed: false });
+    sceneRuntime.focus.mockReturnValue(true);
     installMatchMedia();
   });
 
@@ -212,7 +241,84 @@ describe("App workspace wiring", () => {
     pendingMetrics.resolve({});
     await flushPromises();
   });
+
+  it("loads, focuses, and removes a scene only through explicit workspace events", async () => {
+    const wrapper = mountApp();
+    await flushPromises();
+    await selectModel(wrapper, "airCorridor");
+    wrapper.getComponent(DemSelector).vm.$emit("update:modelValue", "dem-a");
+    await nextTick();
+    const client = clients.get(getModelDefinition("airCorridor").taskBasePath)!;
+    client.create.mockImplementationOnce(async (request) => sceneTask(request, "scene-task-a"));
+    client.outputs.mockResolvedValueOnce([sceneFile("scene-task-a")]);
+    const panel = wrapper.getComponent(ModelParameterPanel);
+    panel.vm.$emit("submit", structuredClone(toRaw(panel.props("modelValue"))));
+    await flushPromises();
+    const map = fakeMap();
+    wrapper.getComponent(MapWorkspaceStub).vm.$emit("map-ready", map);
+    await nextTick();
+    const results = wrapper.getComponent(TaskResultPanel);
+
+    expect(sceneRuntime.fetch).not.toHaveBeenCalled();
+    results.vm.$emit("scene-glb-visibility", true);
+    await flushPromises();
+    expect(sceneRuntime.fetch).toHaveBeenCalledOnce();
+    expect(sceneRuntime.add).toHaveBeenCalledWith(
+      map,
+      "scene-task-a",
+      expect.anything(),
+      expect.objectContaining({ onLost: expect.any(Function) })
+    );
+
+    results.vm.$emit("scene-glb-focus");
+    expect(sceneRuntime.focus).toHaveBeenCalledWith(map, "scene-task-a");
+    wrapper.unmount();
+    expect(sceneRuntime.removeAll).toHaveBeenCalledWith(map);
+  });
+
+  it("removes incompatible overlays before a DEM switch", async () => {
+    const { wrapper, map } = await mountVisibleScene();
+
+    wrapper.getComponent(DemSelector).vm.$emit("update:modelValue", "dem-b");
+    await flushPromises();
+
+    expect(sceneRuntime.remove).toHaveBeenCalledWith(map, "scene-task-a");
+    wrapper.unmount();
+  });
+
+  it("resets scene state when MapWorkspace supplies a replacement map", async () => {
+    const { wrapper } = await mountVisibleScene();
+    expect(wrapper.getComponent(TaskResultPanel).props("sceneGlbState")).toMatchObject({
+      status: "visible"
+    });
+
+    wrapper.getComponent(MapWorkspaceStub).vm.$emit("map-ready", fakeMap());
+    await nextTick();
+
+    expect(wrapper.getComponent(TaskResultPanel).props("sceneGlbState")).toBeNull();
+    wrapper.unmount();
+  });
 });
+
+async function mountVisibleScene() {
+  const wrapper = mountApp();
+  await flushPromises();
+  await selectModel(wrapper, "airCorridor");
+  wrapper.getComponent(DemSelector).vm.$emit("update:modelValue", "dem-a");
+  await nextTick();
+  const client = clients.get(getModelDefinition("airCorridor").taskBasePath)!;
+  client.create.mockImplementationOnce(async (request) => sceneTask(request, "scene-task-a"));
+  client.outputs.mockResolvedValueOnce([sceneFile("scene-task-a")]);
+  const parameters = wrapper.getComponent(ModelParameterPanel);
+  parameters.vm.$emit("submit", structuredClone(toRaw(parameters.props("modelValue"))));
+  await flushPromises();
+  const map = fakeMap();
+  wrapper.getComponent(MapWorkspaceStub).vm.$emit("map-ready", map);
+  await nextTick();
+  wrapper.getComponent(TaskResultPanel).vm.$emit("scene-glb-visibility", true);
+  await flushPromises();
+  return { wrapper, map };
+}
 
 function mountApp() {
   return mount(App, {
@@ -250,7 +356,7 @@ function makeClient() {
     })),
     get: vi.fn(),
     metrics: vi.fn(async () => ({})),
-    outputs: vi.fn(async () => []),
+    outputs: vi.fn(async (): Promise<OutputFile[]> => []),
     delete: vi.fn()
   };
 }
@@ -270,6 +376,36 @@ function finishedTask(request: BaseModelRequest, taskId: string): TaskSummary {
     output_files: [],
     warnings: []
   };
+}
+
+function sceneTask(request: BaseModelRequest, taskId: string): TaskSummary {
+  return {
+    ...finishedTask(request, taskId),
+    output_files: [sceneFile(taskId)]
+  };
+}
+
+function sceneFile(taskId: string) {
+  return {
+    kind: "scene_glb",
+    label: "3D result",
+    url: `/outputs/${taskId}/result.glb`,
+    download_url: `/api/air-corridor/planning/${taskId}/outputs/scene_glb`,
+    filename: "result.glb",
+    media_type: "model/gltf-binary",
+    size_bytes: 1_980_764,
+    exists: true
+  };
+}
+
+function fakeMap() {
+  return {
+    on: vi.fn(),
+    off: vi.fn(),
+    isStyleLoaded: vi.fn(() => true),
+    getLayer: vi.fn(),
+    getSource: vi.fn()
+  } as never;
 }
 
 function deferred<T>() {
