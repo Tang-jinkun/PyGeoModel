@@ -84,7 +84,7 @@ Services:
 - Backend API: `http://localhost:8000`
 - Frontend: `http://localhost:5173`
 
-The compose build passes Tencent Cloud mirrors for Debian apt, pip, and npm package downloads. To speed up Docker Hub base image pulls on Tencent Cloud hosts, configure the Docker daemon registry mirror:
+The compose build uses Tencent Cloud mirrors for Debian apt and npm package downloads, and official PyPI for Python packages. To speed up Docker Hub base image pulls on Tencent Cloud hosts, configure the Docker daemon registry mirror:
 
 ```json
 {
@@ -144,6 +144,18 @@ cd frontend
 npm test
 npm run build
 ```
+
+## Synthetic Demo Scenarios
+
+With Docker services running, generate and execute the six non-radar demo scenarios against the local DEM:
+
+```powershell
+docker compose up -d --build
+docker compose exec -T backend python /app/scripts/generate_demo_scenarios.py --data-dir /workspace/data --dem-id dem_20260713_080113_884937cf
+docker compose exec -T backend python /app/scripts/run_demo_scenarios.py --data-dir /workspace/data --dem-id dem_20260713_080113_884937cf --api-base-url http://127.0.0.1:8000
+```
+
+Generated scenario files and `scenario-index.json` are stored under `data/demo-scenarios/<dem-id>/`. They are synthetic runtime data and are not committed to Git.
 
 ## Important Limits
 

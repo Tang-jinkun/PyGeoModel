@@ -1343,6 +1343,7 @@ git commit -m "feat: orchestrate synthetic demo tasks"
 - Create: `scripts/run_demo_scenarios.py`
 - Create: `backend/tests/test_demo_scenario_cli.py`
 - Modify: `backend/Dockerfile`
+- Modify: `docker-compose.yml`
 - Modify: `README.md`
 
 **Interfaces:**
@@ -1454,6 +1455,15 @@ EXPOSE 8000
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
 ```
 
+Update the backend build args in `docker-compose.yml` so Compose does not override those defaults with the retired mirror:
+
+```yaml
+args:
+  DEBIAN_MIRROR: https://mirrors.cloud.tencent.com/debian
+  DEBIAN_SECURITY_MIRROR: https://mirrors.cloud.tencent.com/debian-security
+  PIP_INDEX_URL: https://pypi.org/simple
+```
+
 Append this exact section to `README.md`:
 
 ````markdown
@@ -1487,7 +1497,7 @@ Expected: test passes；镜像构建成功；容器 CLI help 包含所有运行�
 - [ ] **Step 6: 提交 Docker 与 CLI 接入**
 
 ```powershell
-git add scripts/run_demo_scenarios.py backend/tests/test_demo_scenario_cli.py backend/Dockerfile README.md
+git add scripts/run_demo_scenarios.py backend/tests/test_demo_scenario_cli.py backend/Dockerfile docker-compose.yml README.md docs/superpowers/plans/2026-07-14-independent-model-demo-scenarios.md
 git commit -m "feat: run demo scenarios from docker"
 ```
 
