@@ -28,7 +28,7 @@ The broader direction is to export semantically meaningful GLB results for all s
 
 The current delivery workflow remains unchanged:
 
-1. The backend computes an air-corridor task and writes all artifacts under `data/outputs/<task-id>/`.
+1. The backend computes an air-corridor task and writes all artifacts under the task-specific `data/outputs/{task_id}/` directory.
 2. `output_manifest.json` lists the GLB with the existing GeoJSON and JSON files.
 3. The task output API exposes the GLB through the normal authenticated path resolution and download endpoint.
 4. The frontend's existing Files tab lists the new item and downloads it. No model viewer is required in the application.
@@ -145,7 +145,7 @@ Create a focused backend package that owns reusable concerns:
 
 ### Air-Corridor Adapter
 
-The air-corridor adapter consumes the in-memory computed path, risk samples, prepared projection, request, metrics, and task ID. It builds the semantic scene without re-reading public GeoJSON or repeating route planning.
+The air-corridor adapter consumes the in-memory computed path, risk samples, prepared projection, start/end ground elevations, request, metrics, and task ID. The ground elevations are required to place AGL terminals when no route is found. It builds the semantic scene without re-reading public GeoJSON or repeating route planning.
 
 ### Worker Integration
 
