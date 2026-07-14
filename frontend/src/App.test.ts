@@ -298,6 +298,20 @@ describe("App workspace wiring", () => {
     expect(wrapper.getComponent(TaskResultPanel).props("sceneGlbState")).toBeNull();
     wrapper.unmount();
   });
+
+  it("removes a scene overlay when its history task is deleted", async () => {
+    const { wrapper, map } = await mountVisibleScene();
+
+    wrapper.getComponent(TaskHistoryDrawer).vm.$emit(
+      "deleted",
+      "airCorridor",
+      "scene-task-a"
+    );
+    await nextTick();
+
+    expect(sceneRuntime.remove).toHaveBeenCalledWith(map, "scene-task-a");
+    wrapper.unmount();
+  });
 });
 
 async function mountVisibleScene() {

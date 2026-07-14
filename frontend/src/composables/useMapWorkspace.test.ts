@@ -292,6 +292,19 @@ describe("useMapWorkspace", () => {
     expect(workspace.sceneGlbStates.value).toEqual({});
   });
 
+  it("removes one task overlay when its server task is deleted", async () => {
+    const sceneGlb = sceneGlbAdapter();
+    const workspace = sceneWorkspace(sceneGlb);
+    const map = {} as never;
+    await workspace.loadTaskOutputs("airCorridor", finishedAirTask);
+    await workspace.setSceneGlbVisibility(map, "dem-a", "airCorridor", finishedAirTask, true);
+
+    workspace.removeSceneGlb(map, finishedAirTask.task_id);
+
+    expect(sceneGlb.remove).toHaveBeenCalledWith(map, finishedAirTask.task_id);
+    expect(workspace.sceneGlbStateFor(finishedAirTask.task_id)).toBeNull();
+  });
+
   it("returns a visible lost layer to idle and resets destroyed-map state locally", async () => {
     const sceneGlb = sceneGlbAdapter();
     let onLayerLost: (() => void) | undefined;

@@ -59,6 +59,20 @@ describe("static scene GLB preparation", () => {
     expect(() => prepareStaticScene(root, metadata, [])).toThrow("skinned");
   });
 
+  it("preserves effective visibility when flattening a hidden parent", () => {
+    const root = new THREE.Group();
+    const hiddenParent = new THREE.Group();
+    hiddenParent.visible = false;
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(), new THREE.MeshBasicMaterial());
+    mesh.name = "hidden-child";
+    hiddenParent.add(mesh);
+    root.add(hiddenParent);
+
+    const asset = prepareStaticScene(root, metadata, []);
+
+    expect(asset.group.getObjectByName("hidden-child")?.visible).toBe(false);
+  });
+
   it("disposes shared resources exactly once", () => {
     const material = new THREE.MeshBasicMaterial();
     const root = new THREE.Group();

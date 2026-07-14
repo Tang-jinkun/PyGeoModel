@@ -152,7 +152,7 @@ export function prepareStaticScene(
     mesh.name = object.name;
     mesh.userData = { ...object.userData };
     mesh.renderOrder = object.renderOrder;
-    mesh.visible = object.visible;
+    mesh.visible = effectiveVisibility(object, root);
     group.add(mesh);
   });
 
@@ -220,6 +220,16 @@ function collectTextureValue(value: unknown, textures: Set<THREE.Texture>) {
   } else if (Array.isArray(value)) {
     for (const item of value) collectTextureValue(item, textures);
   }
+}
+
+function effectiveVisibility(object: THREE.Object3D, root: THREE.Object3D) {
+  let current: THREE.Object3D | null = object;
+  while (current) {
+    if (!current.visible) return false;
+    if (current === root) break;
+    current = current.parent;
+  }
+  return true;
 }
 
 function parseContentLength(value: string | null): number | null {

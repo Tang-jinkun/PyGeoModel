@@ -138,6 +138,7 @@
     @close="historyOpen = false"
     @restore="restoreRequest"
     @focus="focusTask"
+    @deleted="removeDeletedTaskScene"
     @error="showError"
   />
 </template>
@@ -515,6 +516,10 @@ function setLayerOpacity(kind: string, opacity: number) {
 
 function focusLayer(kind: string) {
   if (map.value) mapWorkspace.focusTaskLayer(map.value, kind);
+}
+
+function removeDeletedTaskScene(_modelId: ModelId, taskId: string) {
+  if (map.value) mapWorkspace.removeSceneGlb(map.value, taskId);
 }
 
 async function setSceneGlbVisibility(visible: boolean) {

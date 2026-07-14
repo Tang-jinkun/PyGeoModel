@@ -400,6 +400,16 @@ export function useMapWorkspace(kind: SpatialInputKind, initialDraft?: SpatialDr
     sceneGlbStates.value = next;
   }
 
+  function removeSceneGlb(map: maplibregl.Map, taskId: string) {
+    sceneGlbControllers.get(taskId)?.abort();
+    sceneGlbControllers.delete(taskId);
+    sceneGlb.remove(map, taskId);
+    if (!sceneGlbStates.value[taskId]) return;
+    const next = { ...sceneGlbStates.value };
+    delete next[taskId];
+    sceneGlbStates.value = next;
+  }
+
   function removeAllSceneGlbs(map: maplibregl.Map) {
     for (const controller of sceneGlbControllers.values()) controller.abort();
     sceneGlbControllers.clear();
@@ -464,6 +474,7 @@ export function useMapWorkspace(kind: SpatialInputKind, initialDraft?: SpatialDr
     sceneGlbStateFor,
     setSceneGlbVisibility,
     focusSceneGlb,
+    removeSceneGlb,
     removeIncompatibleSceneGlbs,
     removeAllSceneGlbs,
     resetSceneGlbStates,
