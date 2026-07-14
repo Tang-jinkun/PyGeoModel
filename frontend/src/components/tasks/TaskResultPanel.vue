@@ -22,14 +22,22 @@
         :definitions="metricDefinitions"
         :metrics="effectiveMetrics"
       />
-      <LayerList
-        v-else-if="activeTab === 'layers'"
-        :definitions="definition.outputLayers"
-        :states="layerStates"
-        @visibility="(kind, visible) => emit('layer-visibility', kind, visible)"
-        @opacity="(kind, opacity) => emit('layer-opacity', kind, opacity)"
-        @focus="(kind) => emit('layer-focus', kind)"
-      />
+      <div v-else-if="activeTab === 'layers'" class="task-result-panel__layers">
+        <LayerList
+          :definitions="definition.outputLayers"
+          :states="layerStates"
+          @visibility="(kind, visible) => emit('layer-visibility', kind, visible)"
+          @opacity="(kind, opacity) => emit('layer-opacity', kind, opacity)"
+          @focus="(kind) => emit('layer-focus', kind)"
+        />
+        <SceneGlbControl
+          v-if="sceneGlbFile && sceneGlbState"
+          :file="sceneGlbFile"
+          :state="sceneGlbState"
+          @visibility="emit('scene-glb-visibility', $event)"
+          @focus="emit('scene-glb-focus')"
+        />
+      </div>
       <OutputFileList v-else :files="effectiveOutputFiles" />
     </div>
   </section>
@@ -38,12 +46,16 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 
-import type { TaskOutputLayerState } from "../../composables/useMapWorkspace";
+import type {
+  SceneGlbOverlayState,
+  TaskOutputLayerState
+} from "../../composables/useMapWorkspace";
 import { getModelDefinition } from "../../models/registry";
 import type { BaseModelRequest, ModelId, OutputFile, TaskSummary } from "../../models/shared";
 import LayerList from "./LayerList.vue";
 import MetricGrid from "./MetricGrid.vue";
 import OutputFileList from "./OutputFileList.vue";
+import SceneGlbControl from "./SceneGlbControl.vue";
 import TaskStatusView from "./TaskStatusView.vue";
 
 type ResultTab = "task" | "metrics" | "layers" | "files";
@@ -54,16 +66,20 @@ const props = withDefaults(defineProps<{
   metrics?: Record<string, unknown> | null;
   outputFiles?: readonly OutputFile[];
   layerStates?: readonly TaskOutputLayerState[];
+  sceneGlbState?: SceneGlbOverlayState | null;
 }>(), {
   metrics: null,
   outputFiles: () => [],
-  layerStates: () => []
+  layerStates: () => [],
+  sceneGlbState: null
 });
 
 const emit = defineEmits<{
   "layer-visibility": [kind: string, visible: boolean];
   "layer-opacity": [kind: string, opacity: number];
   "layer-focus": [kind: string];
+  "scene-glb-visibility": [visible: boolean];
+  "scene-glb-focus": [];
 }>();
 
 const TABS: Array<{ id: ResultTab; label: string }> = [
@@ -78,6 +94,9 @@ const definition = computed(() => getModelDefinition(props.modelId));
 const metricDefinitions = computed(() => definition.value.metrics as never);
 const effectiveMetrics = computed(() => props.metrics ?? props.task.metrics as Record<string, unknown> | null ?? null);
 const effectiveOutputFiles = computed(() => props.outputFiles.length ? props.outputFiles : props.task.output_files);
+const sceneGlbFile = computed(() => effectiveOutputFiles.value.find(
+  (file) => file.kind === "scene_glb" && file.exists
+) ?? null);
 </script>
 
 <style scoped>
@@ -116,5 +135,9 @@ const effectiveOutputFiles = computed(() => props.outputFiles.length ? props.out
   min-height: 0;
   overflow: auto;
   padding: 14px;
+}
+
+.task-result-panel__layers {
+  min-width: 0;
 }
 </style>

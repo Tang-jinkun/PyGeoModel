@@ -1,7 +1,11 @@
 import { flushPromises, mount } from "@vue/test-utils";
 import { describe, expect, it, vi } from "vitest";
 
-import { useMapWorkspace, type TaskOutputLayerState } from "../../composables/useMapWorkspace";
+import {
+  useMapWorkspace,
+  type SceneGlbOverlayState,
+  type TaskOutputLayerState
+} from "../../composables/useMapWorkspace";
 import { MODEL_REGISTRY } from "../../models/registry";
 import type { OutputFile, TaskSummary } from "../../models/shared";
 import type { UavMetrics, UavRequest } from "../../models/uav/types";
@@ -200,6 +204,58 @@ describe("TaskResultPanel", () => {
     expect(workspace.taskMetrics.value).toEqual({ visible_area_m2: 22 });
     expect(fetchGeoJson).not.toHaveBeenCalledWith("/old-visible");
     expect(workspace.outputFiles.value[0].url).toBe("/new-visible");
+  });
+
+  it("shows a scene GLB only in Layers while preserving its Files download", async () => {
+    const sceneGlbFile = outputFile("scene_glb", "/view-scene", "/download-scene");
+    sceneGlbFile.media_type = "model/gltf-binary";
+    sceneGlbFile.filename = "result.glb";
+    const state: SceneGlbOverlayState = {
+      taskId: finishedUavTask.task_id,
+      modelId: "uav",
+      demId: "dem-a",
+      status: "idle",
+      visible: false,
+      progress: null,
+      error: null
+    };
+    const wrapper = mount(TaskResultPanel, {
+      props: {
+        modelId: "uav",
+        task: { ...finishedUavTask, output_files: [sceneGlbFile] },
+        sceneGlbState: state
+      }
+    });
+
+    expect(wrapper.find('[data-scene-glb-row]').exists()).toBe(false);
+    await wrapper.get('[data-tab="layers"]').trigger("click");
+    expect(wrapper.find('[data-scene-glb-row]').exists()).toBe(true);
+    await wrapper.get('[data-scene-glb-toggle] input[role="switch"]').trigger("click");
+    expect(wrapper.emitted("scene-glb-visibility")?.[0]).toEqual([true]);
+    await wrapper.get('[data-tab="files"]').trigger("click");
+    expect(wrapper.find('[data-scene-glb-row]').exists()).toBe(false);
+    expect(wrapper.get('a[href="/download-scene"]')).toBeTruthy();
+  });
+
+  it("does not show a scene control without an existing scene_glb file", async () => {
+    const wrapper = mount(TaskResultPanel, {
+      props: {
+        modelId: "uav",
+        task: finishedUavTask,
+        sceneGlbState: {
+          taskId: finishedUavTask.task_id,
+          modelId: "uav",
+          demId: "dem-a",
+          status: "idle",
+          visible: false,
+          progress: null,
+          error: null
+        }
+      }
+    });
+
+    await wrapper.get('[data-tab="layers"]').trigger("click");
+    expect(wrapper.find('[data-scene-glb-row]').exists()).toBe(false);
   });
 
   it("awaits async history restore and confirms destructive deletion explicitly", async () => {
