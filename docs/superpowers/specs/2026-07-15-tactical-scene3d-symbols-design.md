@@ -2,8 +2,8 @@
 
 ## Status
 
-Approved section by section during brainstorming on 2026-07-15. Pending review
-of this written specification. Implementation requires a separate reviewed
+Approved section by section during brainstorming and approved as a written
+specification on 2026-07-15. Implementation follows the separately reviewed
 plan.
 
 ## Goal
@@ -108,8 +108,9 @@ generic body and marker, not an invented equipment subtype.
 For air-corridor threats:
 
 - `unit_id` comes from `AirDefenseThreatInput.id`;
-- `short_label` uses a sanitized `name` when it fits, otherwise a deterministic
-  sanitized form of `id`;
+- `short_label` uses a sanitized `name` only when the complete result fits in
+  eight characters; otherwise air-corridor threats use deterministic
+  one-based labels `AD-01`, `AD-02`, and so on in request order;
 - the projected threat coordinate supplies `position`;
 - the unit anchor altitude is the finite DEM surface elevation sampled at the
   threat coordinate;
@@ -169,16 +170,20 @@ with a dark outline so terrain color does not erase it.
 Short labels are generated as mesh geometry from a bundled restricted stroke
 glyph set for `A-Z`, `0-9`, hyphen, and underscore. Version 1 uses no runtime
 font, label texture, or external image URI. Unsupported characters are removed
-during sanitization, and an empty result falls back to a deterministic label
-derived from the unit index.
+during sanitization. A sanitized requested label or unit ID longer than eight
+characters is not silently truncated because that can create duplicates; the
+generic fallback is a deterministic `U01`, `U02` sequence derived from unit
+order.
 
 The body footprint, symbol backplate, mast height, stroke width, and label
-spacing are fixed ratios of `display_scale_m`. The complete assembly must stay
-within a footprint of `1.25 * display_scale_m` and a height of
-`2.0 * display_scale_m`. These dimensions are intentionally tactical display
-scale rather than claimed physical equipment dimensions, and the scale is
-recorded in root extras. The assembly is part of the downloadable 3D artifact
-and does not billboard toward a platform camera.
+spacing are fixed ratios of `display_scale_m`. The identity geometry formed by
+the model, symbol, and label must stay within a footprint of
+`1.25 * display_scale_m` and a height of `2.0 * display_scale_m`; warning and
+kill zones retain their model-defined ranges and are excluded from this display
+bound. These dimensions are intentionally tactical display scale rather than
+claimed physical equipment dimensions, and the scale is recorded in root
+extras. The assembly is part of the downloadable 3D artifact and does not
+billboard toward a platform camera.
 
 An internal `UnitDisplayOptions` controls emission of `model`, `symbol_cross`,
 `label_cross`, `warning_zone`, and `kill_zone` independently. All available
