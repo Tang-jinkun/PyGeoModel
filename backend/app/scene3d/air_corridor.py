@@ -1,30 +1,67 @@
 from pathlib import Path
-import re
 
 import numpy
 from pyproj import Transformer
 import trimesh
 
 from app.schemas.air_corridor import AirCorridorPlanningRequest
-from app.scene3d.exporter import MaterialSpec, export_glb
+from app.scene3d.exporter import MaterialSpec, SceneNode, export_glb
 from app.scene3d.frame import ProjectedPoint, SceneFrame
 from app.scene3d.primitives import (
-    annular_prism_mesh,
     marker_mesh,
     ribbon_mesh,
     tube_mesh,
 )
+from app.scene3d.tactical_glyphs import ALLOWED_LABEL_CHARACTERS
+from app.scene3d.units import (
+    InfluenceZoneSpec,
+    UnitSpec,
+    build_unit_nodes,
+)
 
 
-PATH = MaterialSpec("corridor_path", (36, 144, 95, 255))
-RIBBON = MaterialSpec("corridor_ribbon", (45, 123, 170, 88))
-RISK_LOW = MaterialSpec("risk_low", (36, 144, 95, 255))
-RISK_MEDIUM = MaterialSpec("risk_medium", (233, 162, 43, 255))
-RISK_HIGH = MaterialSpec("risk_high", (201, 73, 73, 255))
-WARNING = MaterialSpec("threat_warning", (225, 126, 52, 72))
-KILL = MaterialSpec("threat_kill", (201, 73, 73, 96))
-START = MaterialSpec("start", (235, 240, 245, 255))
-END = MaterialSpec("end", (43, 55, 70, 255))
+PATH = MaterialSpec(
+    "corridor_path",
+    (36, 144, 95, 255),
+    shading="unlit",
+    emissive_rgb=(18, 72, 48),
+)
+RIBBON = MaterialSpec(
+    "corridor_ribbon",
+    (45, 123, 170, 88),
+    shading="unlit",
+    emissive_rgb=(23, 62, 85),
+)
+RISK_LOW = MaterialSpec(
+    "risk_low",
+    (36, 144, 95, 255),
+    shading="unlit",
+    emissive_rgb=(18, 72, 48),
+)
+RISK_MEDIUM = MaterialSpec(
+    "risk_medium",
+    (233, 162, 43, 255),
+    shading="unlit",
+    emissive_rgb=(117, 81, 22),
+)
+RISK_HIGH = MaterialSpec(
+    "risk_high",
+    (201, 73, 73, 255),
+    shading="unlit",
+    emissive_rgb=(101, 37, 37),
+)
+START = MaterialSpec(
+    "start",
+    (235, 240, 245, 255),
+    shading="unlit",
+    emissive_rgb=(118, 120, 123),
+)
+END = MaterialSpec(
+    "end",
+    (43, 55, 70, 255),
+    shading="unlit",
+    emissive_rgb=(22, 28, 35),
+)
 
 
 def write_air_corridor_glb(
@@ -35,6 +72,7 @@ def write_air_corridor_glb(
     path_points: list[ProjectedPoint],
     sample_features: list[dict],
     prepared_threat_xy: dict[str, tuple[float, float]],
+    threat_ground_elevations_m: dict[str, float | None],
     start_ground_elevation_m: float,
     end_ground_elevation_m: float,
     payload: AirCorridorPlanningRequest,
@@ -71,10 +109,12 @@ def write_air_corridor_glb(
                 (threat_x, threat_y, threat.max_altitude_m),
             ]
         )
+        ground_elevation = threat_ground_elevations_m.get(threat.id)
+        if ground_elevation is not None and numpy.isfinite(ground_elevation):
+            frame_points.append((threat_x, threat_y, float(ground_elevation)))
     frame = SceneFrame.from_projected_points(target_epsg, frame_points)
 
-    meshes: dict[str, tuple[trimesh.Trimesh, MaterialSpec]] = {}
-    node_metadata: dict[str, dict] = {}
+    nodes: list[SceneNode] = []
     marker_radius = max(30.0, payload.planning.corridor_width_m * 0.08)
     gltf_path = numpy.asarray(
         [frame.to_gltf(point) for point in path_points],
@@ -84,26 +124,34 @@ def write_air_corridor_glb(
         if len(gltf_path) < 2:
             raise ValueError("A found corridor route requires at least two path points")
         route_radius = max(20.0, payload.planning.corridor_width_m * 0.04)
-        meshes["corridor_path"] = (
-            tube_mesh(gltf_path, radius_m=route_radius),
-            PATH,
+        nodes.append(
+            SceneNode(
+                name="corridor_path",
+                mesh=tube_mesh(gltf_path, radius_m=route_radius),
+                material=PATH,
+                extras={
+                    "kind": "corridor_path",
+                    "point_count": len(gltf_path),
+                    "radius_m": route_radius,
+                },
+            )
         )
-        node_metadata["corridor_path"] = {
-            "kind": "corridor_path",
-            "point_count": len(gltf_path),
-            "radius_m": route_radius,
-        }
-        meshes["corridor_ribbon"] = (
-            ribbon_mesh(gltf_path, width_m=payload.planning.corridor_width_m),
-            RIBBON,
+        nodes.append(
+            SceneNode(
+                name="corridor_ribbon",
+                mesh=ribbon_mesh(
+                    gltf_path,
+                    width_m=payload.planning.corridor_width_m,
+                ),
+                material=RIBBON,
+                extras={
+                    "kind": "corridor_ribbon",
+                    "width_m": payload.planning.corridor_width_m,
+                },
+            )
         )
-        node_metadata["corridor_ribbon"] = {
-            "kind": "corridor_ribbon",
-            "width_m": payload.planning.corridor_width_m,
-        }
         _add_risk_meshes(
-            meshes,
-            node_metadata,
+            nodes,
             frame,
             sample_features,
             marker_radius,
@@ -111,25 +159,46 @@ def write_air_corridor_glb(
     start_marker = frame.to_gltf(start_point)
     end_marker = frame.to_gltf(end_point)
 
-    meshes["start"] = (marker_mesh(start_marker, marker_radius * 1.2), START)
-    meshes["end"] = (marker_mesh(end_marker, marker_radius * 1.2), END)
-    node_metadata["start"] = {
-        "kind": "terminal",
-        "role": "start",
-        "altitude_amsl_m": start_altitude,
-    }
-    node_metadata["end"] = {
-        "kind": "terminal",
-        "role": "end",
-        "altitude_amsl_m": end_altitude,
-    }
-    _add_threat_meshes(
-        meshes,
-        node_metadata,
-        frame,
-        prepared_threat_xy,
-        payload,
+    nodes.extend(
+        [
+            SceneNode(
+                name="start",
+                mesh=marker_mesh(start_marker, marker_radius * 1.2),
+                material=START,
+                extras={
+                    "kind": "terminal",
+                    "role": "start",
+                    "altitude_amsl_m": start_altitude,
+                },
+            ),
+            SceneNode(
+                name="end",
+                mesh=marker_mesh(end_marker, marker_radius * 1.2),
+                material=END,
+                extras={
+                    "kind": "terminal",
+                    "role": "end",
+                    "altitude_amsl_m": end_altitude,
+                },
+            ),
+        ]
     )
+    unit_specs = [
+        _threat_unit_spec(
+            threat,
+            index,
+            prepared_threat_xy[threat.id],
+            threat_ground_elevations_m.get(threat.id),
+            payload.planning.corridor_width_m,
+        )
+        for index, threat in enumerate(payload.threats)
+    ]
+    unit_nodes, omissions = build_unit_nodes(unit_specs, frame)
+    nodes.extend(unit_nodes)
+    serialized_omissions = [
+        {"unit_id": omission.unit_id, "reason": omission.reason}
+        for omission in omissions
+    ]
 
     scene_metadata = frame.metadata(task_id, "air_corridor")
     scene_metadata.update(
@@ -138,13 +207,14 @@ def write_air_corridor_glb(
             "risk_sample_count": len(sample_features),
             "threat_count": len(payload.threats),
             "corridor_width_m": payload.planning.corridor_width_m,
+            "tactical_unit_count": len(unit_nodes),
+            "omitted_units": serialized_omissions,
         }
     )
     export_glb(
         path,
-        meshes,
+        nodes,
         scene_metadata=scene_metadata,
-        node_metadata=node_metadata,
     )
     return scene_metadata
 
@@ -162,8 +232,7 @@ def _terminal_altitude(
 
 
 def _add_risk_meshes(
-    meshes: dict[str, tuple[trimesh.Trimesh, MaterialSpec]],
-    node_metadata: dict[str, dict],
+    nodes: list[SceneNode],
     frame: SceneFrame,
     sample_features: list[dict],
     marker_radius: float,
@@ -201,67 +270,66 @@ def _add_risk_meshes(
     for name, grouped_samples in groups.items():
         if not grouped_samples:
             continue
-        meshes[name] = (
-            trimesh.util.concatenate(
-                [
-                    marker_mesh(point, marker_radius * 0.7)
-                    for point, _risk in grouped_samples
-                ]
-            ),
-            materials[name],
-        )
         risks = [risk for _point, risk in grouped_samples]
-        node_metadata[name] = {
-            "kind": "risk_samples",
-            "class": name.removeprefix("risk_"),
-            "sample_count": len(grouped_samples),
-            "risk_min": min(risks),
-            "risk_max": max(risks),
-        }
-
-
-def _add_threat_meshes(
-    meshes: dict[str, tuple[trimesh.Trimesh, MaterialSpec]],
-    node_metadata: dict[str, dict],
-    frame: SceneFrame,
-    prepared_threat_xy: dict[str, tuple[float, float]],
-    payload: AirCorridorPlanningRequest,
-) -> None:
-    used_names: set[str] = set()
-    for threat in payload.threats:
-        safe_id = re.sub(r"[^A-Za-z0-9_-]+", "_", threat.id).strip("_")
-        if not safe_id or safe_id in used_names:
-            raise ValueError(f"Threat id is not unique after normalization: {threat.id}")
-        used_names.add(safe_id)
-        x, y = prepared_threat_xy[threat.id]
-        center = frame.to_gltf((x, y, threat.min_altitude_m))
-        bottom_y = float(center[1])
-        top_y = float(
-            frame.to_gltf((x, y, threat.max_altitude_m))[1]
-        )
-        warning_radius = threat.warning_zone_radius_m or threat.max_range_m
-        kill_radius = threat.kill_zone_radius_m or threat.max_range_m * 0.7
-        for suffix, outer_radius, material in (
-            ("warning", warning_radius, WARNING),
-            ("kill", kill_radius, KILL),
-        ):
-            name = f"threat_{safe_id}_{suffix}"
-            meshes[name] = (
-                annular_prism_mesh(
-                    center,
-                    threat.min_range_m,
-                    outer_radius,
-                    bottom_y,
-                    top_y,
+        nodes.append(
+            SceneNode(
+                name=name,
+                mesh=trimesh.util.concatenate(
+                    [
+                        marker_mesh(point, marker_radius * 0.7)
+                        for point, _risk in grouped_samples
+                    ]
                 ),
-                material,
+                material=materials[name],
+                extras={
+                    "kind": "risk_samples",
+                    "class": name.removeprefix("risk_"),
+                    "sample_count": len(grouped_samples),
+                    "risk_min": min(risks),
+                    "risk_max": max(risks),
+                },
             )
-            node_metadata[name] = {
-                "kind": "threat_volume",
-                "zone": suffix,
-                "threat_id": threat.id,
-                "inner_radius_m": threat.min_range_m,
-                "outer_radius_m": outer_radius,
-                "min_altitude_m": threat.min_altitude_m,
-                "max_altitude_m": threat.max_altitude_m,
-            }
+        )
+
+
+def _threat_unit_spec(
+    threat,
+    index: int,
+    position: tuple[float, float],
+    ground_elevation_m: float | None,
+    corridor_width_m: float,
+) -> UnitSpec:
+    short_label = None
+    if threat.name is not None and len(threat.name) <= 8:
+        short_label = "".join(
+            character
+            for character in threat.name.upper()
+            if character in ALLOWED_LABEL_CHARACTERS
+        ) or None
+    return UnitSpec(
+        unit_id=threat.id,
+        unit_type="air_defense",
+        position=position,
+        altitude_amsl_m=(
+            ground_elevation_m
+            if ground_elevation_m is not None
+            else float("nan")
+        ),
+        heading_deg=0,
+        status="active",
+        short_label=short_label or f"AD-{index + 1:02d}",
+        display_scale_m=min(1200.0, max(400.0, corridor_width_m)),
+        warning_zone=InfluenceZoneSpec(
+            threat.min_range_m,
+            threat.warning_zone_radius_m or threat.max_range_m,
+            threat.min_altitude_m,
+            threat.max_altitude_m,
+        ),
+        kill_zone=InfluenceZoneSpec(
+            threat.min_range_m,
+            threat.kill_zone_radius_m or threat.max_range_m * 0.7,
+            threat.min_altitude_m,
+            threat.max_altitude_m,
+        ),
+        source=threat.model_dump(),
+    )

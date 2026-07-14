@@ -15,6 +15,7 @@ from app.services.air_corridor_task_store import (
 )
 from app.workers.air_corridor_task import (
     _compute_air_corridor,
+    _threat_ground_elevations,
     _write_air_corridor_outputs,
     run_air_corridor_task,
 )
@@ -31,9 +32,16 @@ class Prepared:
     resolution_m = (10, 10)
 
 
-def prepared_dem(tmp_path: Path):
+def prepared_dem(
+    tmp_path: Path,
+    *,
+    data: numpy.ndarray | None = None,
+    nodata: float | None = None,
+    threat_xy: dict[str, tuple[float, float]] | None = None,
+):
     path = tmp_path / "projected.tif"
-    data = numpy.zeros((10, 10), dtype=numpy.float32)
+    if data is None:
+        data = numpy.zeros((10, 10), dtype=numpy.float32)
     with rasterio.open(
         path,
         "w",
@@ -44,6 +52,7 @@ def prepared_dem(tmp_path: Path):
         dtype="float32",
         crs="EPSG:32644",
         transform=from_origin(0, 100, 10, 10),
+        nodata=nodata,
     ) as dataset:
         dataset.write(data, 1)
     return SimpleNamespace(
@@ -53,7 +62,7 @@ def prepared_dem(tmp_path: Path):
         start_y=95.0,
         end_x=95.0,
         end_y=95.0,
-        threat_xy={},
+        threat_xy=threat_xy or {},
         bounds=SimpleNamespace(left=0, bottom=0, right=100, top=100),
         resolution_m=(10.0, 10.0),
     )
@@ -129,6 +138,42 @@ def test_air_corridor_uses_higher_layer_to_reduce_threat_risk() -> None:
     assert result["metrics"].max_altitude_m == 1200
 
 
+def test_threat_ground_elevations_return_none_for_invalid_dem_samples() -> None:
+    nodata = -9999.0
+    dem = numpy.asarray([[123.0, nodata, numpy.nan]], dtype=numpy.float32)
+    transform = from_origin(0, 100, 10, 10)
+    payload = AirCorridorPlanningRequest(
+        dem_id="dem_a",
+        start={"lon": 79.8, "lat": 31.48, "altitude_m": 300},
+        end={"lon": 79.81, "lat": 31.48, "altitude_m": 300},
+        threats=[
+            {"id": threat_id, "lon": 79.8, "lat": 31.48, "max_range_m": 60}
+            for threat_id in ("finite", "nodata", "nan", "outside")
+        ],
+    )
+    prepared = SimpleNamespace(
+        threat_xy={
+            "finite": (5.0, 95.0),
+            "nodata": (15.0, 95.0),
+            "nan": (25.0, 95.0),
+            "outside": (35.0, 95.0),
+        }
+    )
+
+    assert _threat_ground_elevations(
+        dem,
+        transform,
+        nodata,
+        prepared,
+        payload,
+    ) == {
+        "finite": 123.0,
+        "nodata": None,
+        "nan": None,
+        "outside": None,
+    }
+
+
 def test_worker_stages_scene_glb_and_metadata(
     tmp_path: Path,
     monkeypatch,
@@ -195,6 +240,183 @@ def test_worker_stages_scene_glb_and_metadata(
         (output_dir / "model_metadata.json").read_text(encoding="utf-8")
     )
     assert metadata["model"]["scene3d"]["model_id"] == "air_corridor"
+    assert metadata["model"]["scene3d"]["tactical_unit_count"] == 0
+    assert metadata["model"]["scene3d"]["omitted_units"] == []
+
+
+def test_worker_propagates_scene_unit_omissions(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    task_id = "air_corridor_task_omission"
+    settings.data_dir = tmp_path
+    settings.ensure_directories()
+    output_dir = settings.outputs_dir / task_id
+    staging_dir = output_dir / ".staging-test"
+    staging_dir.mkdir(parents=True)
+    nodata = -9999.0
+    dem = numpy.zeros((10, 10), dtype=numpy.float32)
+    dem[0, 4] = nodata
+    prepared = prepared_dem(
+        tmp_path,
+        data=dem,
+        nodata=nodata,
+        threat_xy={"sam_1": (45.0, 95.0)},
+    )
+    payload = AirCorridorPlanningRequest(
+        dem_id="dem_a",
+        start={"lon": 79.8, "lat": 31.48, "altitude_m": 300},
+        end={"lon": 79.81, "lat": 31.48, "altitude_m": 300},
+        altitude_layers_m=[300],
+        threats=[
+            {
+                "id": "sam_1",
+                "lon": 79.805,
+                "lat": 31.48,
+                "max_range_m": 60,
+            }
+        ],
+    )
+    scene_metadata = {
+        "schema_version": 1,
+        "task_id": task_id,
+        "model_id": "air_corridor",
+        "units": "metre",
+        "source_crs": "EPSG:32644",
+        "geographic_crs": "EPSG:4326",
+        "origin": {
+            "projected_x": 50.0,
+            "projected_y": 95.0,
+            "longitude": 79.8,
+            "latitude": 31.48,
+            "altitude_amsl_m": 0.0,
+        },
+        "axes": {"x": "east", "y": "up", "z": "south"},
+        "route_found": True,
+        "risk_sample_count": 10,
+        "threat_count": 1,
+        "corridor_width_m": 500.0,
+        "tactical_unit_count": 0,
+        "omitted_units": [
+            {"unit_id": "sam_1", "reason": "altitude_amsl_m must be finite"}
+        ],
+    }
+    glb_arguments: dict = {}
+
+    def fake_glb(path: Path, **kwargs):
+        glb_arguments.update(kwargs)
+        path.write_bytes(b"glTF")
+        return scene_metadata
+
+    monkeypatch.setattr(
+        "app.workers.air_corridor_task.write_air_corridor_glb",
+        fake_glb,
+    )
+    _outputs, _output_files, _metrics, model, warnings = (
+        _write_air_corridor_outputs(
+            task_id,
+            staging_dir,
+            output_dir,
+            prepared,
+            payload,
+        )
+    )
+    expected_warnings = [
+        "Scene3D omitted unit 'sam_1': altitude_amsl_m must be finite"
+    ]
+
+    assert glb_arguments["threat_ground_elevations_m"] == {"sam_1": None}
+    assert model.scene3d is not None
+    assert [item.model_dump() for item in model.scene3d.omitted_units] == (
+        scene_metadata["omitted_units"]
+    )
+    assert warnings == expected_warnings
+    model_document = json.loads(
+        (output_dir / "model_metadata.json").read_text(encoding="utf-8")
+    )
+    manifest = json.loads(
+        (output_dir / "output_manifest.json").read_text(encoding="utf-8")
+    )
+    assert model_document["warnings"] == expected_warnings
+    assert manifest["warnings"] == expected_warnings
+
+
+def test_scene_unit_omission_warning_reaches_finished_task(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings.data_dir = tmp_path
+    settings.ensure_directories()
+    payload = AirCorridorPlanningRequest(
+        dem_id="dem_a",
+        start={"lon": 79.8, "lat": 31.48, "altitude_m": 300},
+        end={"lon": 79.81, "lat": 31.48, "altitude_m": 300},
+        altitude_layers_m=[300],
+        threats=[
+            {
+                "id": "sam_1",
+                "lon": 79.805,
+                "lat": 31.48,
+                "max_range_m": 60,
+            }
+        ],
+    )
+    task = create_air_corridor_task(payload)
+    prepared = prepared_dem(
+        tmp_path,
+        threat_xy={"sam_1": (45.0, 95.0)},
+    )
+    monkeypatch.setattr(
+        "app.workers.air_corridor_task.find_dem_file",
+        lambda _dem_id: tmp_path / "source.tif",
+    )
+    monkeypatch.setattr(
+        "app.workers.air_corridor_task._prepare_air_corridor_dem",
+        lambda _source, _destination, _payload: prepared,
+    )
+
+    def fake_glb(path: Path, **kwargs):
+        path.write_bytes(b"glTF")
+        return {
+            "schema_version": 1,
+            "task_id": task.task_id,
+            "model_id": "air_corridor",
+            "units": "metre",
+            "source_crs": "EPSG:32644",
+            "geographic_crs": "EPSG:4326",
+            "origin": {
+                "projected_x": 50.0,
+                "projected_y": 95.0,
+                "longitude": 79.8,
+                "latitude": 31.48,
+                "altitude_amsl_m": 0.0,
+            },
+            "axes": {"x": "east", "y": "up", "z": "south"},
+            "route_found": kwargs["route_found"],
+            "risk_sample_count": len(kwargs["sample_features"]),
+            "threat_count": 1,
+            "corridor_width_m": 500.0,
+            "tactical_unit_count": 0,
+            "omitted_units": [
+                {
+                    "unit_id": "sam_1",
+                    "reason": "unit geometry is invalid",
+                }
+            ],
+        }
+
+    monkeypatch.setattr(
+        "app.workers.air_corridor_task.write_air_corridor_glb",
+        fake_glb,
+    )
+
+    run_air_corridor_task(task.task_id, payload)
+
+    detail = get_air_corridor_task(task.task_id)
+    assert detail.status == "finished"
+    assert detail.warnings == [
+        "Scene3D omitted unit 'sam_1': unit geometry is invalid"
+    ]
 
 
 def test_glb_export_failure_marks_task_failed_and_leaves_no_artifact(

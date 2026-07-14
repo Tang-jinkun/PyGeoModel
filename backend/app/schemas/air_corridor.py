@@ -129,6 +129,11 @@ class AirCorridorOutputFile(BaseModel):
     exists: bool = False
 
 
+class Scene3dUnitOmission(BaseModel):
+    unit_id: str
+    reason: str
+
+
 class Scene3dMetadata(BaseModel):
     schema_version: int
     task_id: str
@@ -142,6 +147,8 @@ class Scene3dMetadata(BaseModel):
     risk_sample_count: int
     threat_count: int
     corridor_width_m: float
+    tactical_unit_count: int = 0
+    omitted_units: list[Scene3dUnitOmission] = Field(default_factory=list)
 
 
 class AirCorridorModelMetadata(BaseModel):

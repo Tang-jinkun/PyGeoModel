@@ -208,6 +208,13 @@ def _write_air_corridor_outputs(
         dem = src.read(1)
         transform = src.transform
         nodata = src.nodata
+        threat_ground_elevations_m = _threat_ground_elevations(
+            dem,
+            transform,
+            nodata,
+            prepared,
+            payload,
+        )
 
     result = _compute_air_corridor(dem, transform, nodata, prepared, payload)
     transformer = Transformer.from_crs(f"EPSG:{prepared.target_epsg}", "EPSG:4326", always_xy=True)
@@ -248,6 +255,7 @@ def _write_air_corridor_outputs(
         path_points=result["path_points"],
         sample_features=result["sample_features"],
         prepared_threat_xy=prepared.threat_xy,
+        threat_ground_elevations_m=threat_ground_elevations_m,
         start_ground_elevation_m=result["start_ground"],
         end_ground_elevation_m=result["end_ground"],
         payload=payload,
@@ -269,6 +277,10 @@ def _write_air_corridor_outputs(
         simplify_tolerance_m=tolerance,
         scene3d=scene_metadata,
     )
+    warnings = [
+        f"Scene3D omitted unit '{omission.unit_id}': {omission.reason}"
+        for omission in model.scene3d.omitted_units
+    ]
     outputs = AirCorridorPlanningOutputs(
         corridor_path_geojson=f"/outputs/{task_id}/corridor_path.geojson",
         corridor_buffer_geojson=f"/outputs/{task_id}/corridor_buffer.geojson",
@@ -280,7 +292,14 @@ def _write_air_corridor_outputs(
         output_manifest_json=f"/outputs/{task_id}/output_manifest.json",
     )
     _write_json_atomic(cost_summary, result["cost_summary"])
-    _write_json_atomic(model_path, {"model": model.model_dump(), "metrics": metrics.model_dump(), "warnings": []})
+    _write_json_atomic(
+        model_path,
+        {
+            "model": model.model_dump(),
+            "metrics": metrics.model_dump(),
+            "warnings": warnings,
+        },
+    )
     output_paths = {kind: staging_dir / filename for kind, filename in AIR_CORRIDOR_OUTPUT_FILENAMES.items()}
     manifest_files = describe_air_corridor_output_files(task_id, output_paths)
     _write_json_atomic(
@@ -289,13 +308,13 @@ def _write_air_corridor_outputs(
             "files": [item.model_dump() for item in manifest_files],
             "metrics": metrics.model_dump(),
             "model": model.model_dump(),
-            "warnings": [],
+            "warnings": warnings,
         },
     )
     _ensure_staged_outputs_exist(staging_dir)
     _commit_staged_outputs(staging_dir, output_dir)
     output_files = list_air_corridor_task_output_files(task_id)
-    return outputs, output_files, metrics, model, []
+    return outputs, output_files, metrics, model, warnings
 
 
 def _compute_air_corridor(dem, transform, nodata, prepared: PreparedAirCorridorDem, payload: AirCorridorPlanningRequest) -> dict:
@@ -539,6 +558,29 @@ def _value_at(dem, rc: tuple[int, int], nodata, label: str) -> float:
     if not math.isfinite(value) or (nodata is not None and value == nodata):
         raise AppError("AIR_CORRIDOR_NO_DATA", f"The {label} point falls on DEM nodata.", status_code=400)
     return value
+
+
+def _threat_ground_elevations(
+    dem,
+    transform,
+    nodata,
+    prepared: PreparedAirCorridorDem,
+    payload: AirCorridorPlanningRequest,
+) -> dict[str, float | None]:
+    values: dict[str, float | None] = {}
+    for threat in payload.threats:
+        rc = _xy_to_rc(transform, *prepared.threat_xy[threat.id])
+        if not _is_inside(dem.shape, rc):
+            values[threat.id] = None
+            continue
+        value = float(dem[rc])
+        values[threat.id] = (
+            None
+            if not numpy.isfinite(value)
+            or (nodata is not None and value == nodata)
+            else value
+        )
+    return values
 
 
 def _reconstruct_path(previous: dict[tuple[int, int, int], tuple[int, int, int]], start, end):
