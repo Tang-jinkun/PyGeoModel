@@ -95,19 +95,40 @@ def build_air_corridor(
     dem_id: str,
     candidate_index: int,
 ) -> ScenarioEnvelope:
-    offsets = [(0, -22), (0, -7), (0, 0), (0, 7), (0, 22)]
+    route_offsets = [
+        (0, -100),
+        (0, -60),
+        (0, -20),
+        (0, 20),
+        (0, 60),
+        (0, 100),
+    ]
+    threat_offsets = [
+        (-10, -75),
+        (8, -55),
+        (-12, -35),
+        (10, -15),
+        (-8, 5),
+        (12, 25),
+        (-10, 45),
+        (8, 65),
+        (-6, 80),
+        (10, 90),
+    ]
+    required_offsets = sorted(set(route_offsets + threat_offsets))
     anchor = terrain.select(
         "rough",
         candidate_index,
-        margin=24,
-        required_offsets=offsets,
+        margin=112,
+        required_offsets=required_offsets,
     )
-    line = terrain.route(anchor, offsets)
+    line = terrain.route(anchor, route_offsets)
     threats = []
-    for index, (point, (row_offset, col_offset)) in enumerate(
-        zip(line[1:4], offsets[1:4]),
+    for index, (row_offset, col_offset) in enumerate(
+        threat_offsets,
         start=1,
     ):
+        point = terrain.lonlat(anchor[0] + row_offset, anchor[1] + col_offset)
         ground_elevation_m = float(
             terrain.elevation[
                 anchor[0] + row_offset,
@@ -121,12 +142,14 @@ def build_air_corridor(
                 "lon": point[0],
                 "lat": point[1],
                 "min_range_m": 0,
-                "max_range_m": 5000 + index * 1000,
+                "max_range_m": 10_000 + (index % 4) * 2_000,
                 "min_altitude_m": 0,
-                "max_altitude_m": ground_elevation_m + 900 + index * 150,
-                "threat_level": 4 + index * 2,
-                "kill_zone_radius_m": 2000 + index * 300,
-                "warning_zone_radius_m": 3500 + index * 500,
+                "max_altitude_m": (
+                    ground_elevation_m + 1_100 + (index % 4) * 450
+                ),
+                "threat_level": 5 + (index % 6),
+                "kill_zone_radius_m": 4_000 + (index % 3) * 500,
+                "warning_zone_radius_m": 7_000 + (index % 4) * 750,
             }
         )
     request = {
@@ -150,13 +173,13 @@ def build_air_corridor(
             "max_climb_rate_mps": 8,
             "max_descent_rate_mps": 10,
         },
-        "altitude_layers_m": [300, 600, 900, 1200, 1800, 2400],
+        "altitude_layers_m": [300, 600, 900, 1200, 1600, 2000, 2400, 2800],
         "threats": threats,
         "planning": {
-            "corridor_width_m": 500,
+            "corridor_width_m": 800,
             "horizontal_resolution_m": 250,
             "allow_altitude_change": True,
-            "threat_weight": 20,
+            "threat_weight": 24,
             "distance_weight": 0.25,
             "altitude_change_weight": 0.01,
             "terrain_clearance_weight": 0.4,
@@ -166,7 +189,7 @@ def build_air_corridor(
     return ScenarioEnvelope(
         "air-corridor",
         "air_corridor",
-        1,
+        2,
         dem_id,
         candidate_index,
         request,

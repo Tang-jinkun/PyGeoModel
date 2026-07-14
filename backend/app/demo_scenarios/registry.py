@@ -89,8 +89,16 @@ def _air(metrics: dict, _: set[str]) -> list[str]:
         else ["air corridor route was not found"]
     )
     errors += _positive(metrics, "corridor_length_m")
-    if int(metrics.get("altitude_change_count") or 0) <= 0:
-        errors.append("air corridor must change altitude for the demo scenario")
+    direct_distance = float(metrics.get("direct_distance_m") or 0)
+    if not 80_000 <= direct_distance <= 120_000:
+        errors.append("air corridor direct distance must be between 80 and 120 km")
+    sample_count = int(metrics.get("risk_sample_count") or 0)
+    if not 300 <= sample_count <= 600:
+        errors.append("air corridor risk sample count must be between 300 and 600")
+    if int(metrics.get("altitude_change_count") or 0) < 4:
+        errors.append("air corridor must change altitude at least four times")
+    if float(metrics.get("horizontal_detour_ratio") or 0) < 1.05:
+        errors.append("air corridor horizontal detour ratio must be at least 1.05")
     return errors
 
 
@@ -143,6 +151,7 @@ MODEL_SPECS = {
                 "corridor_buffer_geojson",
                 "corridor_path_geojson",
                 "risk_samples_geojson",
+                "scene_glb",
             }
         ),
         _air,

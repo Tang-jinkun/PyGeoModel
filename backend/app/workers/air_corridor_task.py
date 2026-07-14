@@ -462,6 +462,7 @@ def _path_points_and_samples(path, dem, transform, risk_layers, prepared: Prepar
 
 def _path_metrics(path, path_points, sample_features, total_cost: float, prepared: PreparedAirCorridorDem, payload: AirCorridorPlanningRequest):
     length = 0.0
+    horizontal_length = 0.0
     altitude_changes = 0
     for index, (current, nxt) in enumerate(zip(path, path[1:])):
         if current[0] != nxt[0]:
@@ -469,12 +470,17 @@ def _path_metrics(path, path_points, sample_features, total_cost: float, prepare
         p0 = path_points[index]
         p1 = path_points[index + 1]
         length += math.sqrt((p1[0] - p0[0]) ** 2 + (p1[1] - p0[1]) ** 2 + (p1[2] - p0[2]) ** 2)
+        horizontal_length += math.hypot(p1[0] - p0[0], p1[1] - p0[1])
     risks = [float(item["properties"]["risk"]) for item in sample_features]
     clearances = [float(item["properties"]["terrain_clearance_m"]) for item in sample_features]
     nearest_distances = [item["properties"]["nearest_threat_distance_m"] for item in sample_features if item["properties"]["nearest_threat_distance_m"] is not None]
     altitudes = [float(item["properties"]["altitude_agl_m"]) for item in sample_features]
     threat_intersections = sum(1 for value in risks if value > 0)
     estimated_time = length / max(payload.aircraft.cruise_speed_kph * 1000 / 3600, 0.001) if length > 0 else 0
+    direct_distance = math.hypot(
+        prepared.end_x - prepared.start_x,
+        prepared.end_y - prepared.start_y,
+    )
     return AirCorridorPlanningMetrics(
         route_found=True,
         risk_score=sum(risks) / len(risks) if risks else 0,
@@ -489,6 +495,11 @@ def _path_metrics(path, path_points, sample_features, total_cost: float, prepare
         max_altitude_m=max(altitudes) if altitudes else None,
         threat_intersection_count=threat_intersections,
         nearest_threat_distance_m=min(nearest_distances) if nearest_distances else None,
+        direct_distance_m=direct_distance,
+        horizontal_detour_ratio=(
+            horizontal_length / direct_distance if direct_distance > 0 else 0
+        ),
+        risk_sample_count=len(sample_features),
     )
 
 

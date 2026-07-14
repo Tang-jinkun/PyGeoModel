@@ -60,8 +60,11 @@ class FakeClient:
             },
             "air_corridor": {
                 "route_found": True,
-                "corridor_length_m": 1,
-                "altitude_change_count": 1,
+                "corridor_length_m": 110_000,
+                "altitude_change_count": 5,
+                "direct_distance_m": 100_000,
+                "horizontal_detour_ratio": 1.08,
+                "risk_sample_count": 400,
             },
         }[spec.model_id]
         outputs = [

@@ -5,15 +5,15 @@ import rasterio
 from rasterio.transform import from_origin
 
 
-def write_dem(path: Path) -> None:
-    rows, cols = numpy.indices((80, 80))
-    data = (rows * 40 + numpy.abs(cols - 40) * 15).astype("float32")
+def write_dem(path: Path, size: int = 80) -> None:
+    rows, cols = numpy.indices((size, size))
+    data = (rows * 40 + numpy.abs(cols - size // 2) * 15).astype("float32")
     with rasterio.open(
         path,
         "w",
         driver="GTiff",
-        width=80,
-        height=80,
+        width=size,
+        height=size,
         count=1,
         dtype="float32",
         crs="EPSG:4326",

@@ -102,6 +102,9 @@ class AirCorridorPlanningMetrics(BaseModel):
     max_altitude_m: float | None = None
     threat_intersection_count: int = 0
     nearest_threat_distance_m: float | None = None
+    direct_distance_m: float = 0
+    horizontal_detour_ratio: float = 0
+    risk_sample_count: int = 0
 
 
 class AirCorridorPlanningOutputs(BaseModel):

@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from pyproj import Geod
 from rasterio.transform import rowcol
 
 from app.demo_scenarios.route_builders import (
@@ -33,22 +34,35 @@ def test_mobility_contains_three_synthetic_road_classes(tmp_path: Path) -> None:
     assert abs(scenario.request["start"]["lon"] - scenario.request["end"]["lon"]) < 0.04
 
 
-def test_air_corridor_contains_three_threats_and_altitude_layers(
+def test_air_corridor_spans_large_area_with_ten_terrain_relative_threats(
     tmp_path: Path,
 ) -> None:
     path = tmp_path / "dem.tif"
-    write_dem(path)
-    terrain = TerrainGrid.load(path, 80)
+    write_dem(path, size=260)
+    terrain = TerrainGrid.load(path, 260)
     scenario = build_air_corridor(terrain, "dem_a", 0)
 
-    AirCorridorPlanningRequest.model_validate(scenario.request)
+    request = AirCorridorPlanningRequest.model_validate(scenario.request)
+    _, _, direct_m = Geod(ellps="WGS84").inv(
+        request.start.lon,
+        request.start.lat,
+        request.end.lon,
+        request.end.lat,
+    )
 
-    assert len(scenario.request["threats"]) == 3
+    assert scenario.version == 2
+    assert 80_000 <= direct_m <= 120_000
+    assert 8 <= len(request.threats) <= 12
+    assert 6 <= len(request.altitude_layers_m) <= 8
+    assert request.planning.horizontal_resolution_m <= 300
+    assert len({(item.lon, item.lat) for item in request.threats}) == len(
+        request.threats
+    )
     assert all(threat["min_range_m"] == 0 for threat in scenario.request["threats"])
     for threat in scenario.request["threats"]:
         row, col = rowcol(terrain.transform, threat["lon"], threat["lat"])
         assert threat["max_altitude_m"] > float(terrain.elevation[row, col]) + 900
-    assert scenario.request["planning"]["threat_weight"] == 20
+    assert scenario.request["planning"]["threat_weight"] == 24
     assert scenario.request["planning"]["altitude_change_weight"] == 0.01
     assert scenario.request["altitude_layers_m"] == sorted(
         scenario.request["altitude_layers_m"]

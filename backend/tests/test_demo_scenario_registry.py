@@ -51,12 +51,22 @@ def test_registry_reports_missing_output_kind() -> None:
 def test_air_corridor_requires_an_altitude_change_for_demo_effect() -> None:
     spec = MODEL_SPECS["air_corridor"]
     outputs = set(spec.required_outputs)
+    valid = {
+        "route_found": True,
+        "corridor_length_m": 110_000,
+        "direct_distance_m": 100_000,
+        "risk_sample_count": 400,
+        "altitude_change_count": 5,
+        "horizontal_detour_ratio": 1.08,
+    }
 
-    assert spec.validate(
-        {"route_found": True, "corridor_length_m": 1000, "altitude_change_count": 0},
-        outputs,
-    )
-    assert spec.validate(
-        {"route_found": True, "corridor_length_m": 1000, "altitude_change_count": 2},
-        outputs,
-    ) == []
+    assert "scene_glb" in outputs
+    assert spec.validate(valid, outputs) == []
+    for key, invalid_value in (
+        ("direct_distance_m", 70_000),
+        ("risk_sample_count", 200),
+        ("altitude_change_count", 3),
+        ("horizontal_detour_ratio", 1.01),
+    ):
+        invalid = {**valid, key: invalid_value}
+        assert spec.validate(invalid, outputs), key

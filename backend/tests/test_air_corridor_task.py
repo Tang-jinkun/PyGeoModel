@@ -3,6 +3,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import numpy
+import pytest
 import rasterio
 from rasterio.transform import from_origin
 
@@ -78,6 +79,27 @@ def test_air_corridor_flat_dem_finds_route_without_threat() -> None:
     assert result["metrics"].corridor_length_m > 0
 
 
+def test_air_corridor_reports_direct_detour_and_sample_metrics() -> None:
+    dem = numpy.zeros((10, 10), dtype=numpy.float32)
+    transform = from_origin(0, 100, 10, 10)
+    payload = AirCorridorPlanningRequest(
+        dem_id="dem_a",
+        start={"lon": 79.8, "lat": 31.48, "altitude_m": 300},
+        end={"lon": 79.81, "lat": 31.48, "altitude_m": 300},
+        altitude_layers_m=[300],
+        threats=[],
+    )
+    prepared = Prepared()
+    prepared.threat_xy = {}
+
+    result = _compute_air_corridor(dem, transform, None, prepared, payload)
+    metrics = result["metrics"]
+
+    assert metrics.direct_distance_m == pytest.approx(90.0)
+    assert metrics.horizontal_detour_ratio >= 1.0
+    assert metrics.risk_sample_count == len(result["sample_features"])
+
+
 def test_air_corridor_uses_higher_layer_to_reduce_threat_risk() -> None:
     dem = numpy.zeros((10, 10), dtype=numpy.float32)
     transform = from_origin(0, 100, 10, 10)
@@ -112,7 +134,9 @@ def test_worker_stages_scene_glb_and_metadata(
     monkeypatch,
 ) -> None:
     task_id = "air_corridor_task_a"
-    output_dir = tmp_path / task_id
+    settings.data_dir = tmp_path
+    settings.ensure_directories()
+    output_dir = settings.outputs_dir / task_id
     staging_dir = output_dir / ".staging-test"
     staging_dir.mkdir(parents=True)
     payload = AirCorridorPlanningRequest(

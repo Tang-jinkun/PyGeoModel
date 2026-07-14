@@ -10,7 +10,7 @@ from tests.demo_scenario_helpers import write_dem
 def prepare_dem(data_dir: Path, dem_id: str = "dem_a") -> None:
     dem_dir = data_dir / "dem" / dem_id
     dem_dir.mkdir(parents=True)
-    write_dem(dem_dir / "dem.cog.tif")
+    write_dem(dem_dir / "dem.cog.tif", size=260)
     (dem_dir / "metadata.json").write_text(
         json.dumps(
             {
