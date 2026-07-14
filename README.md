@@ -157,6 +157,20 @@ docker compose exec -T backend python /app/scripts/run_demo_scenarios.py --data-
 
 Generated scenario files and `scenario-index.json` are stored under `data/demo-scenarios/<dem-id>/`. They are synthetic runtime data and are not committed to Git.
 
+### Air corridor GLB inspection
+
+New air-corridor tasks include a terrain-free `air_corridor_result.glb`. The
+file uses a local glTF Y-up coordinate frame. Use `model_metadata.json` or the
+embedded `asset.extras.scene3d` object to reconstruct its geographic origin,
+source CRS, axis mapping, and altitude datum.
+
+Inspect the newest downloaded server artifact from Docker:
+
+```powershell
+$taskId = (Get-ChildItem data\tasks\air_corridor_task_*.json | Sort-Object LastWriteTime -Descending | Select-Object -First 1).BaseName
+docker compose exec -T backend python /app/scripts/inspect_glb.py "/workspace/data/outputs/$taskId/air_corridor_result.glb" --max-bytes 50000000
+```
+
 ## Important Limits
 
 - Use projected meter-based coordinates for calculation; the backend selects UTM from radar longitude/latitude.
