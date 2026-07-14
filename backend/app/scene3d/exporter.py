@@ -53,6 +53,12 @@ def export_glb(
 
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(payload)
+    loaded = trimesh.load(path, force="scene")
+    missing_mesh_nodes = _mesh_node_names(nodes) - set(loaded.graph.nodes_geometry)
+    if missing_mesh_nodes:
+        raise ValueError(
+            f"Exported GLB lost semantic scene nodes: {sorted(missing_mesh_nodes)}"
+        )
 
 
 def _normalize_scene_nodes(
@@ -125,8 +131,31 @@ def _validate_scene_nodes(nodes: list[SceneNode]) -> dict[str, MaterialSpec]:
 def _validate_material(material: MaterialSpec) -> None:
     if material.shading not in {"pbr", "unlit"}:
         raise ValueError(f"Invalid material shading: {material.name}")
+    _validate_color_channels(material.rgba, 4, "rgba", material.name)
+    if material.emissive_rgb is not None:
+        _validate_color_channels(
+            material.emissive_rgb,
+            3,
+            "emissive_rgb",
+            material.name,
+        )
     if material.shading == "unlit" and material.emissive_rgb is None:
         raise ValueError(f"Unlit material requires emissive_rgb: {material.name}")
+
+
+def _validate_color_channels(
+    channels: tuple[int, ...],
+    expected_count: int,
+    label: str,
+    material_name: str,
+) -> None:
+    if len(channels) != expected_count or any(
+        isinstance(channel, bool)
+        or not isinstance(channel, (int, numpy.integer))
+        or not 0 <= channel <= 255
+        for channel in channels
+    ):
+        raise ValueError(f"Invalid {label} channel: {material_name}")
 
 
 def _add_scene_nodes(
@@ -181,6 +210,20 @@ def _node_metadata(nodes: list[SceneNode]) -> dict[str, dict]:
     for node in nodes:
         collect(node)
     return metadata
+
+
+def _mesh_node_names(nodes: list[SceneNode]) -> set[str]:
+    names: set[str] = set()
+
+    def collect(node: SceneNode) -> None:
+        if node.mesh is not None:
+            names.add(node.name)
+        for child in node.children:
+            collect(child)
+
+    for node in nodes:
+        collect(node)
+    return names
 
 
 def _validate_serialized_scene(payload: bytes, nodes: list[SceneNode]) -> None:

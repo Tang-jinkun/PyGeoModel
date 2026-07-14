@@ -65,11 +65,11 @@ def test_export_glb_keeps_hierarchy_and_unlit_material(tmp_path: Path) -> None:
 
     document = glb_json(path)
     by_name = {node.get("name"): node for node in document["nodes"]}
-    root_index = document["nodes"].index(by_name["unit_ad_01"])
     child_index = document["nodes"].index(by_name["unit_ad_01_symbol"])
     assert child_index in by_name["unit_ad_01"]["children"]
     assert by_name["unit_ad_01"]["extras"]["unit_id"] == "ad-01"
     assert document["extensionsUsed"] == ["KHR_materials_unlit"]
+    assert "KHR_materials_unlit" not in document.get("extensionsRequired", [])
     material = next(item for item in document["materials"] if item["name"] == "symbol")
     assert material["extensions"]["KHR_materials_unlit"] == {}
     assert material["emissiveFactor"] == pytest.approx([110 / 255, 24 / 255, 32 / 255])
@@ -167,6 +167,141 @@ def test_export_glb_rejects_invalid_node_contracts(
 ) -> None:
     with pytest.raises(ValueError, match=message):
         export_glb(tmp_path / "scene.glb", [node], scene_metadata={})
+
+
+@pytest.mark.parametrize(
+    "material",
+    [
+        MaterialSpec("rgba_min", (0, 0, 0, 0)),
+        MaterialSpec(
+            "unlit_min",
+            (0, 0, 0, 0),
+            shading="unlit",
+            emissive_rgb=(0, 0, 0),
+        ),
+        MaterialSpec(
+            "unlit_max",
+            (255, 255, 255, 255),
+            shading="unlit",
+            emissive_rgb=(255, 255, 255),
+        ),
+    ],
+)
+def test_export_glb_accepts_material_color_channel_boundaries(
+    tmp_path: Path,
+    material: MaterialSpec,
+) -> None:
+    export_glb(
+        tmp_path / f"{material.name}.glb",
+        [
+            SceneNode(
+                name="mesh",
+                mesh=marker_mesh(numpy.zeros(3), 4),
+                material=material,
+            )
+        ],
+        scene_metadata={},
+    )
+
+
+@pytest.mark.parametrize(
+    ("material", "message"),
+    [
+        (MaterialSpec("rgba", (-1, 0, 0, 255)), "Invalid rgba channel: rgba"),
+        (MaterialSpec("rgba", (0, 256, 0, 255)), "Invalid rgba channel: rgba"),
+        (MaterialSpec("rgba", (0, 0.5, 0, 255)), "Invalid rgba channel: rgba"),
+        (
+            MaterialSpec(
+                "emissive",
+                (0, 0, 0, 255),
+                shading="unlit",
+                emissive_rgb=(-1, 0, 0),
+            ),
+            "Invalid emissive_rgb channel: emissive",
+        ),
+        (
+            MaterialSpec(
+                "emissive",
+                (0, 0, 0, 255),
+                shading="unlit",
+                emissive_rgb=(0, 256, 0),
+            ),
+            "Invalid emissive_rgb channel: emissive",
+        ),
+        (
+            MaterialSpec(
+                "emissive",
+                (0, 0, 0, 255),
+                shading="unlit",
+                emissive_rgb=(0, 0.5, 0),
+            ),
+            "Invalid emissive_rgb channel: emissive",
+        ),
+    ],
+)
+def test_export_glb_rejects_invalid_material_color_channels(
+    tmp_path: Path,
+    material: MaterialSpec,
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        export_glb(
+            tmp_path / "scene.glb",
+            [
+                SceneNode(
+                    name="mesh",
+                    mesh=marker_mesh(numpy.zeros(3), 4),
+                    material=material,
+                )
+            ],
+            scene_metadata={},
+        )
+
+
+def test_export_glb_propagates_final_glb_reload_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_to_reload(*args: object, **kwargs: object) -> trimesh.Scene:
+        raise ValueError("malformed finalized GLB")
+
+    monkeypatch.setattr(trimesh, "load", fail_to_reload)
+
+    with pytest.raises(ValueError, match="malformed finalized GLB"):
+        export_glb(
+            tmp_path / "scene.glb",
+            [
+                SceneNode(
+                    name="mesh",
+                    mesh=marker_mesh(numpy.zeros(3), 4),
+                    material=MaterialSpec("material", (1, 2, 3, 255)),
+                )
+            ],
+            scene_metadata={},
+        )
+
+
+def test_export_glb_rejects_missing_reloaded_mesh_node(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(trimesh, "load", lambda *args, **kwargs: trimesh.Scene())
+
+    with pytest.raises(
+        ValueError,
+        match=r"Exported GLB lost semantic scene nodes: \['mesh'\]",
+    ):
+        export_glb(
+            tmp_path / "scene.glb",
+            [
+                SceneNode(
+                    name="mesh",
+                    mesh=marker_mesh(numpy.zeros(3), 4),
+                    material=MaterialSpec("material", (1, 2, 3, 255)),
+                )
+            ],
+            scene_metadata={},
+        )
 
 
 def test_export_glb_rejects_missing_serialized_hierarchy(
