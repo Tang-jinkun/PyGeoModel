@@ -171,6 +171,18 @@ $taskId = (Get-ChildItem data\tasks\air_corridor_task_*.json | Sort-Object LastW
 docker compose exec -T backend python /app/scripts/inspect_glb.py "/workspace/data/outputs/$taskId/air_corridor_result.glb" --max-bytes 50000000
 ```
 
+### Preview a GLB over its DEM
+
+Open a finished task that includes `scene_glb`, choose **Layers**, and enable
+**3D result**. The workbench loads the file only after this manual action and
+temporarily displays DEM terrain at true 1:1 elevation. Disable the layer to
+remove the preview and release browser GPU resources. The Files tab continues
+to provide the original GLB download.
+
+The preview requires the task's source DEM to be selected and currently accepts
+static PyGeoModel GLBs whose embedded `scene3d` metadata declares WGS84 UTM and
+the `X=east`, `Y=up`, `Z=south` frame.
+
 ## Important Limits
 
 - Use projected meter-based coordinates for calculation; the backend selects UTM from radar longitude/latitude.
