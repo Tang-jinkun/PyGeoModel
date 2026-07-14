@@ -58,7 +58,11 @@ class FakeClient:
                 "wheeled": {"reachable": True, "travel_time_seconds": 100},
                 "tracked": {"reachable": True, "travel_time_seconds": 140},
             },
-            "air_corridor": {"route_found": True, "corridor_length_m": 1},
+            "air_corridor": {
+                "route_found": True,
+                "corridor_length_m": 1,
+                "altitude_change_count": 1,
+            },
         }[spec.model_id]
         outputs = [
             {
