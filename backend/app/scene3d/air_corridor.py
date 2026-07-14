@@ -108,27 +108,20 @@ def write_air_corridor_glb(
             sample_features,
             marker_radius,
         )
-        start_marker = gltf_path[0]
-        end_marker = gltf_path[-1]
-    else:
-        start_marker = frame.to_gltf(start_point)
-        end_marker = frame.to_gltf(end_point)
+    start_marker = frame.to_gltf(start_point)
+    end_marker = frame.to_gltf(end_point)
 
     meshes["start"] = (marker_mesh(start_marker, marker_radius * 1.2), START)
     meshes["end"] = (marker_mesh(end_marker, marker_radius * 1.2), END)
     node_metadata["start"] = {
         "kind": "terminal",
         "role": "start",
-        "altitude_amsl_m": float(
-            path_points[0][2] if route_found else start_altitude
-        ),
+        "altitude_amsl_m": start_altitude,
     }
     node_metadata["end"] = {
         "kind": "terminal",
         "role": "end",
-        "altitude_amsl_m": float(
-            path_points[-1][2] if route_found else end_altitude
-        ),
+        "altitude_amsl_m": end_altitude,
     }
     _add_threat_meshes(
         meshes,

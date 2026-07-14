@@ -1,9 +1,12 @@
 from pathlib import Path
 
+import numpy
+from pyproj import Transformer
 from shapely.geometry import Point
 import trimesh
 
 from app.scene3d.air_corridor import write_air_corridor_glb
+from app.scene3d.exporter import read_glb_document
 from app.schemas.air_corridor import AirCorridorPlanningRequest
 
 
@@ -121,6 +124,45 @@ def test_air_corridor_scene_writes_semantic_nodes(tmp_path: Path) -> None:
     } <= names
     assert metadata["route_found"] is True
     assert metadata["risk_sample_count"] == 3
+
+
+def test_route_found_scene_marks_requested_terminals(tmp_path: Path) -> None:
+    output = tmp_path / "air_corridor_result.glb"
+    payload = payload_with_two_threats()
+    write_air_corridor_glb(
+        output,
+        task_id="air_corridor_task_a",
+        target_epsg=32644,
+        path_points=[
+            (500_000, 3_500_000, 6200),
+            (501_000, 3_500_200, 6800),
+            (502_000, 3_500_000, 6400),
+        ],
+        sample_features=sample_features([0.0, 5.0, 10.0]),
+        prepared_threat_xy={
+            "a": (501_000, 3_500_000),
+            "b": (501_500, 3_500_300),
+        },
+        start_ground_elevation_m=5900,
+        end_ground_elevation_m=6000,
+        payload=payload,
+        route_found=True,
+    )
+    scene = trimesh.load(output, force="scene")
+    document = read_glb_document(output.read_bytes())
+    origin = document["asset"]["extras"]["scene3d"]["origin"]
+    to_target = Transformer.from_crs("EPSG:4326", "EPSG:32644", always_xy=True)
+
+    for name, terminal in (("start", payload.start), ("end", payload.end)):
+        x, y = to_target.transform(terminal.lon, terminal.lat)
+        expected = numpy.asarray(
+            [
+                x - origin["projected_x"],
+                terminal.altitude_m - origin["altitude_amsl_m"],
+                -(y - origin["projected_y"]),
+            ]
+        )
+        assert numpy.allclose(scene.geometry[name].vertices.mean(axis=0), expected)
 
 
 def test_route_not_found_scene_contains_context_only(tmp_path: Path) -> None:
