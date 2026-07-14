@@ -29,9 +29,15 @@ def build_uav(
     dem_id: str,
     candidate_index: int,
 ) -> ScenarioEnvelope:
+    offsets = [(-8, -12), (-5, -7), (-2, -2), (2, 3), (5, 8), (8, 12)]
     route = terrain.route(
-        terrain.select("rough", candidate_index, margin=14),
-        [(-8, -12), (-5, -7), (-2, -2), (2, 3), (5, 8), (8, 12)],
+        terrain.select(
+            "rough",
+            candidate_index,
+            margin=14,
+            required_offsets=offsets,
+        ),
+        offsets,
     )
     headings = _route_headings(route)
     waypoints = [
@@ -159,9 +165,15 @@ def build_recon_vehicle(
     dem_id: str,
     candidate_index: int,
 ) -> ScenarioEnvelope:
+    offsets = [(-4, -6), (-2, -3), (0, 0), (2, 3), (4, 6)]
     route = terrain.route(
-        terrain.select("valley", candidate_index, margin=8),
-        [(-4, -6), (-2, -3), (0, 0), (2, 3), (4, 6)],
+        terrain.select(
+            "valley",
+            candidate_index,
+            margin=8,
+            required_offsets=offsets,
+        ),
+        offsets,
     )
     headings = _route_headings(route)
     waypoints = [

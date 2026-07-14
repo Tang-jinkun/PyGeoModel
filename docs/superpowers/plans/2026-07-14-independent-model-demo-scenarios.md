@@ -216,6 +216,8 @@ git commit -m "feat: add demo scenario storage primitives"
 - Produces: `TerrainGrid.load(path, max_dimension=512)`, `TerrainGrid.select(profile, candidate_index)`, `TerrainGrid.lonlat(row, col)`, `TerrainGrid.route(anchor, offsets)`。
 - Consumes: rasterio 栅格、NumPy；Task 3 和 Task 4 依赖稳定候选排序与路线坐标。
 
+**Implementation correction from real DEM verification:** `TerrainGrid.select` also accepts `required_offsets`; candidate masks must prove every offset lands on a valid DEM cell. All route-based builders pass their complete offset set because the target DEM has an irregular NoData boundary.
+
 - [ ] **Step 1: 写入失败的地形采样测试**
 
 ```python

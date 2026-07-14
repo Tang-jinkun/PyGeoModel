@@ -23,11 +23,20 @@ def build_mobility(
     dem_id: str,
     candidate_index: int,
 ) -> ScenarioEnvelope:
-    anchor = terrain.select("valley", candidate_index, margin=8)
-    direct = terrain.route(anchor, [(-5, -7), (0, 0), (5, 7)])
-    main = terrain.route(anchor, [(-5, -7), (-5, 0), (0, 7), (5, 7)])
-    branch = terrain.route(anchor, [(-2, -5), (0, 0), (2, 5)])
-    trail = terrain.route(anchor, [(-5, -7), (0, 0), (5, 7)])
+    direct_offsets = [(-5, -7), (0, 0), (5, 7)]
+    main_offsets = [(-5, -7), (-5, 0), (0, 7), (5, 7)]
+    branch_offsets = [(-2, -5), (0, 0), (2, 5)]
+    required_offsets = sorted(set(direct_offsets + main_offsets + branch_offsets))
+    anchor = terrain.select(
+        "valley",
+        candidate_index,
+        margin=8,
+        required_offsets=required_offsets,
+    )
+    direct = terrain.route(anchor, direct_offsets)
+    main = terrain.route(anchor, main_offsets)
+    branch = terrain.route(anchor, branch_offsets)
+    trail = terrain.route(anchor, direct_offsets)
     roads = {
         "type": "FeatureCollection",
         "synthetic": True,
@@ -86,11 +95,14 @@ def build_air_corridor(
     dem_id: str,
     candidate_index: int,
 ) -> ScenarioEnvelope:
-    anchor = terrain.select("rough", candidate_index, margin=24)
-    line = terrain.route(
-        anchor,
-        [(0, -22), (0, -7), (0, 0), (0, 7), (0, 22)],
+    offsets = [(0, -22), (0, -7), (0, 0), (0, 7), (0, 22)]
+    anchor = terrain.select(
+        "rough",
+        candidate_index,
+        margin=24,
+        required_offsets=offsets,
     )
+    line = terrain.route(anchor, offsets)
     threats = [
         {
             "id": f"demo-threat-{index}",

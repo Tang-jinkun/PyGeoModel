@@ -68,11 +68,32 @@ class TerrainGrid:
 
         return cls(elevation, valid, slope, relief, transform, crs)
 
-    def select(self, profile: Profile, candidate_index: int, margin: int = 6) -> Cell:
+    def select(
+        self,
+        profile: Profile,
+        candidate_index: int,
+        margin: int = 6,
+        required_offsets: list[Cell] | tuple[Cell, ...] = (),
+    ) -> Cell:
         rows, cols = numpy.indices(self.elevation.shape)
         interior = self.valid & (rows >= margin) & (cols >= margin)
         interior &= rows < self.elevation.shape[0] - margin
         interior &= cols < self.elevation.shape[1] - margin
+        for row_offset, col_offset in required_offsets:
+            target_rows = rows + row_offset
+            target_cols = cols + col_offset
+            in_bounds = (
+                (target_rows >= 0)
+                & (target_rows < self.valid.shape[0])
+                & (target_cols >= 0)
+                & (target_cols < self.valid.shape[1])
+            )
+            offset_valid = numpy.zeros_like(self.valid)
+            offset_valid[in_bounds] = self.valid[
+                target_rows[in_bounds],
+                target_cols[in_bounds],
+            ]
+            interior &= offset_valid
 
         valid_elevation = self.elevation[self.valid]
         elevation_span = numpy.nanmax(valid_elevation) - numpy.nanmin(valid_elevation)
