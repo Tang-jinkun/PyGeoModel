@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   disposePreparedScene,
   fetchSceneGlb,
+  inheritedUserData,
   prepareStaticScene
 } from "./sceneGlbAsset";
 import type { Scene3dMetadata } from "./sceneGlbGeoReference";
@@ -30,6 +31,38 @@ afterEach(() => {
 });
 
 describe("static scene GLB preparation", () => {
+  it("merges inherited user data from root to leaf with child keys winning", () => {
+    const root = new THREE.Group();
+    root.userData = { kind: "scene", task_id: "task-a" };
+    const unit = new THREE.Group();
+    unit.userData = { kind: "unit", unit_id: "ad-05", status: "active" };
+    const material = new THREE.MeshStandardMaterial({ color: 0x777777 });
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(100, 40, 60), material);
+    mesh.userData = { kind: "unit_component", role: "body" };
+    unit.add(mesh);
+    root.add(unit);
+
+    expect(inheritedUserData(mesh, root)).toEqual({
+      kind: "unit_component",
+      task_id: "task-a",
+      unit_id: "ad-05",
+      status: "active",
+      role: "body"
+    });
+
+    const asset = prepareStaticScene(root, metadata, []);
+    const flattened = asset.group.children[0] as THREE.Mesh;
+
+    expect(flattened.userData).toEqual({
+      kind: "unit_component",
+      task_id: "task-a",
+      unit_id: "ad-05",
+      status: "active",
+      role: "body"
+    });
+    expect(flattened.material).toBe(material);
+  });
+
   it("bakes node transforms, preserves semantics, and returns finite bounds", () => {
     const root = new THREE.Group();
     const material = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.4 });

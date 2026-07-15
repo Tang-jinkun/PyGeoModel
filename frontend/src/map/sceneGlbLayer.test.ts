@@ -10,6 +10,7 @@ import {
   hasSceneGlbLayer,
   removeAllSceneGlbLayers,
   removeSceneGlbLayer,
+  createSceneGlbLights,
   sceneGlbLayerId
 } from "./sceneGlbLayer";
 
@@ -27,6 +28,24 @@ vi.mock("three", async () => {
 });
 
 describe("scene GLB map layer", () => {
+  it("creates neutral baseline lights for the custom scene", () => {
+    const lights = createSceneGlbLights();
+
+    expect(lights.children).toHaveLength(2);
+    expect(lights.name).toBe("scene-glb-baseline-lights");
+    expect(lights.children[0]).toBeInstanceOf(THREE.HemisphereLight);
+    expect(lights.children[1]).toBeInstanceOf(THREE.DirectionalLight);
+
+    const hemisphere = lights.children[0] as THREE.HemisphereLight;
+    const directional = lights.children[1] as THREE.DirectionalLight;
+    expect(hemisphere.color.getHex()).toBe(0xffffff);
+    expect(hemisphere.groundColor.getHex()).toBe(0x52606b);
+    expect(hemisphere.intensity).toBe(1.35);
+    expect(directional.color.getHex()).toBe(0xffffff);
+    expect(directional.intensity).toBe(1.6);
+    expect(directional.position.toArray()).toEqual([0.6, 1, 0.4]);
+  });
+
   it("keeps terrain at true scale until the final task is removed", () => {
     const map = new FakeMap();
     const first = preparedAsset("task-a");
@@ -56,6 +75,25 @@ describe("scene GLB map layer", () => {
     });
     expect(first.disposed).toBe(true);
     expect(second.disposed).toBe(true);
+  });
+
+  it("adds the baseline lights before the asset group in the custom scene", () => {
+    const map = new FakeMap();
+    const sceneAdd = vi.spyOn(THREE.Scene.prototype, "add");
+    const asset = preparedAsset("task-a");
+
+    try {
+      addSceneGlbLayer(map as never, "task-a", asset);
+
+      const [firstCall, secondCall] = sceneAdd.mock.calls as Array<[THREE.Group]>;
+      expect(firstCall[0]).toBeInstanceOf(THREE.Group);
+      expect(firstCall[0].name).toBe("scene-glb-baseline-lights");
+      expect(firstCall[0].children[0]).toBeInstanceOf(THREE.HemisphereLight);
+      expect(firstCall[0].children[1]).toBeInstanceOf(THREE.DirectionalLight);
+      expect(secondCall[0]).toBe(asset.group);
+    } finally {
+      sceneAdd.mockRestore();
+    }
   });
 
   it("focuses transformed WGS84 bounds with a stable 3D camera", () => {
@@ -118,6 +156,20 @@ describe("scene GLB map layer", () => {
     expect(getSceneGlbTerrainTaskCount(map as never)).toBe(0);
   });
 
+  it("disposes the asset and shared material once when a layer is removed twice", () => {
+    const map = new FakeMap();
+    const material = new THREE.MeshStandardMaterial();
+    const asset = preparedAsset("task-a", material);
+    const materialDispose = vi.spyOn(material, "dispose");
+
+    addSceneGlbLayer(map as never, "task-a", asset);
+    removeSceneGlbLayer(map as never, "task-a");
+    removeSceneGlbLayer(map as never, "task-a");
+
+    expect(asset.disposed).toBe(true);
+    expect(materialDispose).toHaveBeenCalledOnce();
+  });
+
   it("removes a lost WebGL layer and allows a manual retry", async () => {
     const map = new FakeMap();
     const onLost = vi.fn();
@@ -135,9 +187,9 @@ describe("scene GLB map layer", () => {
   });
 });
 
-function preparedAsset(taskId: string): PreparedSceneGlb {
+function preparedAsset(taskId: string, material: THREE.Material = new THREE.MeshBasicMaterial()): PreparedSceneGlb {
   const group = new THREE.Group();
-  group.add(new THREE.Mesh(new THREE.BoxGeometry(), new THREE.MeshBasicMaterial()));
+  group.add(new THREE.Mesh(new THREE.BoxGeometry(), material));
   return {
     group,
     anchor: [0.5, 0.4, 0.0001],

@@ -150,7 +150,7 @@ export function prepareStaticScene(
 
     const mesh = new THREE.Mesh(geometry, object.material);
     mesh.name = object.name;
-    mesh.userData = { ...object.userData };
+    mesh.userData = inheritedUserData(object, root);
     mesh.renderOrder = object.renderOrder;
     mesh.visible = effectiveVisibility(object, root);
     group.add(mesh);
@@ -230,6 +230,15 @@ function effectiveVisibility(object: THREE.Object3D, root: THREE.Object3D) {
     current = current.parent;
   }
   return true;
+}
+
+export function inheritedUserData(object: THREE.Object3D, root: THREE.Object3D) {
+  const chain: THREE.Object3D[] = [];
+  for (let current: THREE.Object3D | null = object; current; current = current.parent) {
+    chain.push(current);
+    if (current === root) break;
+  }
+  return Object.assign({}, ...chain.reverse().map((item) => item.userData));
 }
 
 function parseContentLength(value: string | null): number | null {

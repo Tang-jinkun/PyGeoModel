@@ -123,6 +123,7 @@ function createCustomLayer(
       if (cleaned) return;
       camera = new THREE.Camera();
       scene = new THREE.Scene();
+      scene.add(createSceneGlbLights());
       scene.add(asset.group);
       canvas = map.getCanvas();
       canvas.addEventListener("webglcontextlost", handleContextLost);
@@ -157,6 +158,16 @@ function createCustomLayer(
     }
   };
   return layer;
+}
+
+export function createSceneGlbLights() {
+  const lights = new THREE.Group();
+  lights.name = "scene-glb-baseline-lights";
+  const hemisphere = new THREE.HemisphereLight(0xffffff, 0x52606b, 1.35);
+  const directional = new THREE.DirectionalLight(0xffffff, 1.6);
+  directional.position.set(0.6, 1, 0.4);
+  lights.add(hemisphere, directional);
+  return lights;
 }
 
 function sceneRegistry(map: maplibregl.Map) {
