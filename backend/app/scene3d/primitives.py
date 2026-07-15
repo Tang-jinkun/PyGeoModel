@@ -171,3 +171,141 @@ def annular_prism_mesh(
         faces=numpy.asarray(faces),
         process=False,
     )
+
+
+def dashed_vertical_leader_mesh(
+    *,
+    bottom_y: float,
+    top_y: float,
+    radius_m: float,
+    sections: int = 8,
+) -> trimesh.Trimesh:
+    values = numpy.asarray([bottom_y, top_y, radius_m], dtype=numpy.float64)
+    if not numpy.isfinite(values).all() or top_y <= bottom_y:
+        raise ValueError("Dashed leader requires finite positive height")
+    if radius_m <= 0 or sections < 6:
+        raise ValueError("Dashed leader requires positive radius and at least six sections")
+
+    interval_height = (top_y - bottom_y) / 7
+    dashes = [
+        _vertical_cylinder_mesh(
+            bottom_y + interval * interval_height,
+            bottom_y + (interval + 1) * interval_height,
+            radius_m,
+            sections,
+        )
+        for interval in (0, 2, 4, 6)
+    ]
+    return trimesh.util.concatenate(dashes)
+
+
+def annular_prism_boundary_mesh(
+    *,
+    center: numpy.ndarray,
+    inner_radius_m: float,
+    outer_radius_m: float,
+    bottom_y: float,
+    top_y: float,
+    stroke_radius_m: float,
+    sections: int = 32,
+) -> trimesh.Trimesh:
+    center = numpy.asarray(center, dtype=numpy.float64)
+    scalars = numpy.asarray(
+        [inner_radius_m, outer_radius_m, bottom_y, top_y, stroke_radius_m],
+        dtype=numpy.float64,
+    )
+    if (
+        center.shape != (3,)
+        or not numpy.isfinite(center).all()
+        or not numpy.isfinite(scalars).all()
+    ):
+        raise ValueError("Annular prism boundary requires finite coordinates")
+    if inner_radius_m < 0 or outer_radius_m <= inner_radius_m:
+        raise ValueError("Annular prism boundary outer radius must exceed inner radius")
+    if top_y <= bottom_y or stroke_radius_m <= 0 or sections < 8:
+        raise ValueError("Annular prism boundary requires positive dimensions")
+
+    rings = [
+        _ring_mesh(center, outer_radius_m, y, stroke_radius_m, sections)
+        for y in (bottom_y, top_y)
+    ]
+    if inner_radius_m > 0:
+        rings.extend(
+            _ring_mesh(center, inner_radius_m, y, stroke_radius_m, sections)
+            for y in (bottom_y, top_y)
+        )
+    strokes = [
+        _vertical_cylinder_mesh(
+            bottom_y,
+            top_y,
+            stroke_radius_m,
+            8,
+            x=center[0] + outer_radius_m * numpy.cos(angle),
+            z=center[2] + outer_radius_m * numpy.sin(angle),
+        )
+        for angle in numpy.linspace(0, 2 * numpy.pi, 4, endpoint=False)
+    ]
+    return trimesh.util.concatenate([*rings, *strokes])
+
+
+def _ring_mesh(
+    center: numpy.ndarray,
+    radius_m: float,
+    y: float,
+    stroke_radius_m: float,
+    sections: int,
+    tube_sections: int = 8,
+) -> trimesh.Trimesh:
+    around = numpy.linspace(0, 2 * numpy.pi, sections, endpoint=False)
+    cross = numpy.linspace(0, 2 * numpy.pi, tube_sections, endpoint=False)
+    theta, phi = numpy.meshgrid(around, cross, indexing="ij")
+    radial = radius_m + stroke_radius_m * numpy.cos(phi)
+    vertices = numpy.column_stack(
+        (
+            center[0] + radial.ravel() * numpy.cos(theta).ravel(),
+            y + stroke_radius_m * numpy.sin(phi).ravel(),
+            center[2] + radial.ravel() * numpy.sin(theta).ravel(),
+        )
+    )
+    faces = []
+    for around_index in range(sections):
+        next_around = (around_index + 1) % sections
+        for cross_index in range(tube_sections):
+            next_cross = (cross_index + 1) % tube_sections
+            current = around_index * tube_sections + cross_index
+            faces.extend(
+                [
+                    [current, next_around * tube_sections + cross_index, around_index * tube_sections + next_cross],
+                    [
+                        around_index * tube_sections + next_cross,
+                        next_around * tube_sections + cross_index,
+                        next_around * tube_sections + next_cross,
+                    ],
+                ]
+            )
+    return trimesh.Trimesh(
+        vertices=vertices,
+        faces=numpy.asarray(faces),
+        process=False,
+    )
+
+
+def _vertical_cylinder_mesh(
+    bottom_y: float,
+    top_y: float,
+    radius_m: float,
+    sections: int,
+    *,
+    x: float = 0.0,
+    z: float = 0.0,
+) -> trimesh.Trimesh:
+    mesh = trimesh.creation.cylinder(
+        radius=radius_m,
+        height=top_y - bottom_y,
+        sections=sections,
+    )
+    mesh.apply_transform(
+        trimesh.transformations.rotation_matrix(-numpy.pi / 2, [1, 0, 0])
+    )
+    mesh.apply_translation([x, (bottom_y + top_y) / 2, z])
+    return mesh
