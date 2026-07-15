@@ -45,8 +45,8 @@ class AdvancedInput(BaseModel):
     voxel_grid_size: int = Field(default=128, ge=32, le=512)
     voxel_vertical_levels: int = Field(default=16, ge=4, le=64)
     voxel_max_height_m: float = Field(default=3000, ge=500, le=10000)
-    min_elevation_deg: float = Field(default=0, ge=-10, le=89)
-    max_elevation_deg: float = Field(default=32, ge=0, le=90)
+    min_elevation_deg: float = Field(default=-8, ge=-10, le=89)
+    max_elevation_deg: float = Field(default=24, ge=0, le=90)
     vertical_beam_width_deg: float = Field(default=32, ge=0, le=100)
     visual_dome_mode: bool = True
     height_layers_m: list[float] = Field(default_factory=list)

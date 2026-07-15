@@ -33,8 +33,8 @@ const DEFAULT_COVERAGE_REQUEST: CoverageRequest = {
     voxel_grid_size: 128,
     voxel_vertical_levels: 16,
     voxel_max_height_m: 3000,
-    min_elevation_deg: 0,
-    max_elevation_deg: 32,
+    min_elevation_deg: -8,
+    max_elevation_deg: 24,
     vertical_beam_width_deg: 32,
     visual_dome_mode: true,
     height_layers_m: []

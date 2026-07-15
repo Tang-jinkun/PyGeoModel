@@ -7,14 +7,41 @@ from rasterio.transform import from_origin
 
 from app.schemas.radar import CoverageRequest
 from app.scene3d.exporter import read_glb_document
-from app.scene3d.radar import write_radar_coverage_glb
+from app.scene3d.radar import RayResult, _shell_mesh, _trace_ray, write_radar_coverage_glb
 from app.services.coverage_model import PreparedCoverageDem
 from app.services.output_files import OUTPUT_FILENAMES, OUTPUT_MEDIA_TYPES
+
+
+def test_shell_does_not_bridge_terrain_shadow_to_full_range() -> None:
+    points = [
+        [numpy.array([0, 0, 0]), numpy.array([1, 0, 0]), numpy.array([2, 0, 0])],
+        [numpy.array([0, 1, 0]), numpy.array([1, 1, 0]), numpy.array([2, 1, 0])],
+    ]
+    nominal = RayResult(1_000, (0, 0, 0), "nominal", True)
+    terrain = RayResult(100, (0, 0, 0), "terrain", True)
+
+    mesh = _shell_mesh(
+        points,
+        [[nominal, nominal, terrain], [nominal, nominal, terrain]],
+        False,
+    )
+
+    assert len(mesh.faces) == 2
 
 
 def test_target_independent_radar_glb_is_self_contained_and_open_at_nodata(
     tmp_path: Path,
 ) -> None:
+    defaults = CoverageRequest.model_validate(
+        {
+            "dem_id": "dem_radar",
+            "radar": {"lon": 79.0, "lat": 31.5, "height_m": 30},
+            "coverage": {"max_range_m": 1_000},
+        }
+    )
+    assert defaults.advanced.min_elevation_deg == -8
+    assert defaults.advanced.max_elevation_deg == 24
+
     dem_path = tmp_path / "radar-dem.tif"
     dem = numpy.full((21, 21), 1_000, dtype=numpy.float32)
     dem[9:12, 14] = 1_450
@@ -64,6 +91,23 @@ def test_target_independent_radar_glb_is_self_contained_and_open_at_nodata(
         analysis_domain=dem != -9999,
     )
     output = tmp_path / "radar_detection_domain.glb"
+
+    terrain_contact = _trace_ray(
+        dem,
+        dem != -9999,
+        transform,
+        -9999,
+        prepared,
+        payload,
+        90,
+        0,
+        1_030,
+        1_000,
+        "nominal",
+        100,
+    )
+    assert terrain_contact.termination == "terrain"
+    assert terrain_contact.point[2] == 1_450
 
     metadata = write_radar_coverage_glb(
         output,

@@ -21,13 +21,13 @@ ELEVATION_STEP_DEG = 3.0
 
 SHELL_MATERIAL = MaterialSpec(
     "radar_detectable_shell",
-    (44, 186, 180, 76),
+    (35, 190, 176, 54),
     shading="unlit",
     emissive_rgb=(22, 93, 90),
 )
 GRID_MATERIAL = MaterialSpec(
     "radar_shell_grid",
-    (194, 246, 238, 190),
+    (207, 250, 242, 132),
     shading="unlit",
     emissive_rgb=(97, 123, 119),
 )
@@ -142,14 +142,14 @@ def write_radar_coverage_glb(
     )
     origin_mesh = trimesh.creation.icosphere(
         subdivisions=2,
-        radius=max(12.0, effective_range_m * 0.006),
+        radius=max(10.0, min(60.0, effective_range_m * 0.002)),
     )
     origin_mesh.apply_translation(origin)
     diagnostic_mesh = _diagnostic_mesh(
         local_grid,
         ray_grid,
         fallback=origin,
-        radius=max(8.0, effective_range_m * 0.003),
+        radius=max(4.0, min(20.0, effective_range_m * 0.0004)),
     )
 
     root = SceneNode(
@@ -313,13 +313,14 @@ def _trace_ray(
             )
         if altitude <= terrain_m:
             return _ray_result(
-                last_distance,
+                distance,
                 azimuth,
                 elevation,
                 prepared,
                 radar_altitude_m,
                 "terrain",
                 True,
+                altitude_m=terrain_m,
             )
         last_distance = distance
         distance += step_m
@@ -353,6 +354,8 @@ def _ray_result(
     radar_altitude_m: float,
     termination: str,
     closed: bool,
+    *,
+    altitude_m: float | None = None,
 ) -> RayResult:
     horizontal = distance * math.cos(elevation)
     return RayResult(
@@ -360,7 +363,9 @@ def _ray_result(
         point=(
             prepared.radar_x + horizontal * math.sin(azimuth),
             prepared.radar_y + horizontal * math.cos(azimuth),
-            radar_altitude_m + distance * math.sin(elevation),
+            altitude_m
+            if altitude_m is not None
+            else radar_altitude_m + distance * math.sin(elevation),
         ),
         termination=termination,
         closed=closed,
@@ -408,6 +413,9 @@ def _shell_mesh(local_grid, ray_grid, wrap: bool) -> trimesh.Trimesh:
                 ray_grid[elevation_index + 1][next_azimuth],
             ]
             if not all(item.closed and item.radius_m > 0 for item in corners):
+                continue
+            termination_kinds = {item.termination for item in corners}
+            if "terrain" in termination_kinds and len(termination_kinds) > 1:
                 continue
             a = elevation_index * azimuth_count + azimuth_index
             b = elevation_index * azimuth_count + next_azimuth
