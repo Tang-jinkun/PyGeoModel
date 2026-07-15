@@ -43,6 +43,17 @@ const sceneFile: OutputFile = {
   exists: true
 };
 
+const radarPlatformFile: OutputFile = {
+  kind: "radar_platform_glb",
+  label: "Radar Platform GLB",
+  url: "/outputs/air_corridor_task_demo/radar_platform.glb",
+  download_url: "/api/radar/coverage/air_corridor_task_demo/outputs/radar_platform_glb",
+  filename: "radar_platform.glb",
+  media_type: "model/gltf-binary",
+  size_bytes: 420_000,
+  exists: true
+};
+
 const finishedAirTask = {
   task_id: "air_corridor_task_demo",
   dem_id: "dem-a",
@@ -147,6 +158,53 @@ describe("useMapWorkspace", () => {
       url: "/api/air-corridor/planning/air_corridor_task_demo/outputs/scene_glb"
     }));
     expect(workspace.sceneGlbStateFor(finishedAirTask.task_id)?.status).toBe("visible");
+  });
+
+  it("loads and removes scene and radar platform GLBs independently", async () => {
+    const sceneGlb = sceneGlbAdapter();
+    const task = {
+      ...finishedAirTask,
+      output_files: [sceneFile, radarPlatformFile]
+    };
+    const workspace = useMapWorkspace("start-end-threats", undefined, {
+      clientFactory: () => ({
+        metrics: vi.fn().mockResolvedValue({}),
+        outputs: vi.fn().mockResolvedValue([sceneFile, radarPlatformFile])
+      }),
+      sceneGlb
+    });
+    const map = {} as never;
+
+    await workspace.loadTaskOutputs("airCorridor", task);
+    await workspace.setSceneGlbVisibility(
+      map, "dem-a", "airCorridor", task, true, "scene_glb"
+    );
+    await workspace.setSceneGlbVisibility(
+      map, "dem-a", "airCorridor", task, true, "radar_platform_glb"
+    );
+
+    expect(sceneGlb.load).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      taskId: task.task_id,
+      assetId: task.task_id,
+      url: sceneFile.download_url
+    }));
+    expect(sceneGlb.load).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      taskId: task.task_id,
+      assetId: `${task.task_id}--radar_platform_glb`,
+      url: radarPlatformFile.download_url
+    }));
+    expect(workspace.sceneGlbStateFor(task.task_id, "scene_glb")?.status).toBe("visible");
+    expect(workspace.sceneGlbStateFor(task.task_id, "radar_platform_glb")?.status).toBe("visible");
+
+    await workspace.setSceneGlbVisibility(
+      map, "dem-a", "airCorridor", task, false, "radar_platform_glb"
+    );
+    expect(workspace.sceneGlbStateFor(task.task_id, "scene_glb")?.status).toBe("visible");
+    expect(workspace.sceneGlbStateFor(task.task_id, "radar_platform_glb")?.status).toBe("idle");
+    expect(sceneGlb.remove).toHaveBeenCalledWith(
+      map,
+      `${task.task_id}--radar_platform_glb`
+    );
   });
 
   it("rejects a DEM mismatch before fetching", async () => {

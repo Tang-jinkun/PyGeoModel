@@ -143,6 +143,7 @@ function createCustomLayer(
       mixer?.setTime(performance.now() / 1_000);
       renderer.resetState();
       renderer.render(scene, camera);
+      if (mixer) map.triggerRepaint();
     },
     onRemove() {
       layer.cleanup();

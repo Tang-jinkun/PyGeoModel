@@ -127,6 +127,39 @@ def test_export_glb_injects_standard_node_rotation_animation(tmp_path: Path) -> 
     assert document["accessors"][serialized["samplers"][0]["output"]]["type"] == "VEC4"
 
 
+def test_scale_animation_keeps_source_geometry_at_identity_scale(tmp_path: Path) -> None:
+    path = tmp_path / "animated-scale.glb"
+    export_glb(
+        path,
+        [
+            SceneNode(
+                name="scan_slice",
+                mesh=marker_mesh(numpy.zeros(3), 4),
+                material=MaterialSpec("scan", (20, 220, 210, 100)),
+            )
+        ],
+        scene_metadata={},
+        animations=[
+            exporter.AnimationSpec(
+                "scan",
+                [
+                    exporter.AnimationTrack(
+                        node_name="scan_slice",
+                        path="scale",
+                        times=numpy.asarray([0, 1], dtype=numpy.float32),
+                        values=numpy.asarray([[0, 0, 0], [1, 1, 1]], dtype=numpy.float32),
+                        interpolation="STEP",
+                    )
+                ],
+            )
+        ],
+    )
+
+    document = glb_json(path)
+    node = next(item for item in document["nodes"] if item.get("name") == "scan_slice")
+    assert node["scale"] == [1, 1, 1]
+
+
 @pytest.mark.parametrize(
     ("nodes", "message"),
     [

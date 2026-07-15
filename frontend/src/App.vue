@@ -116,6 +116,7 @@
             :output-files="mapWorkspace.outputFiles.value"
             :layer-states="mapWorkspace.layerStates.value"
             :scene-glb-state="mapWorkspace.sceneGlbStateFor(selectedTaskContext.task.task_id)"
+            :radar-platform-glb-state="mapWorkspace.sceneGlbStateFor(selectedTaskContext.task.task_id, 'radar_platform_glb')"
             @layer-visibility="setLayerVisibility"
             @layer-opacity="setLayerOpacity"
             @layer-focus="focusLayer"
@@ -163,7 +164,7 @@ import RadarLayerControls, {
 } from "./components/tasks/RadarLayerControls.vue";
 import TaskResultPanel from "./components/tasks/TaskResultPanel.vue";
 import { useDemManager } from "./composables/useDemManager";
-import { useMapWorkspace } from "./composables/useMapWorkspace";
+import { useMapWorkspace, type SceneGlbKind } from "./composables/useMapWorkspace";
 import { useModelWorkspace, type ActiveDraft } from "./composables/useModelWorkspace";
 import { useTaskManager } from "./composables/useTaskManager";
 import type { SpatialDraftAction } from "./map/spatialInput";
@@ -522,25 +523,31 @@ function removeDeletedTaskScene(_modelId: ModelId, taskId: string) {
   if (map.value) mapWorkspace.removeSceneGlb(map.value, taskId);
 }
 
-async function setSceneGlbVisibility(visible: boolean) {
+async function setSceneGlbVisibility(
+  kindOrVisible: SceneGlbKind | boolean,
+  nextVisible?: boolean
+) {
   const instance = map.value;
   const context = selectedTaskContext.value;
   const selectedDemId = demManager.selectedDem.value;
   if (!instance || !context || !selectedDemId) return;
+  const kind = typeof kindOrVisible === "boolean" ? "scene_glb" : kindOrVisible;
+  const visible = typeof kindOrVisible === "boolean" ? kindOrVisible : Boolean(nextVisible);
   await mapWorkspace.setSceneGlbVisibility(
     instance,
     selectedDemId,
     context.modelId,
     context.task as never,
-    visible
+    visible,
+    kind
   );
 }
 
-function focusSceneGlb() {
+function focusSceneGlb(kind: SceneGlbKind = "scene_glb") {
   const instance = map.value;
   const context = selectedTaskContext.value;
   if (instance && context) {
-    mapWorkspace.focusSceneGlb(instance, context.task.task_id);
+    mapWorkspace.focusSceneGlb(instance, context.task.task_id, kind);
   }
 }
 

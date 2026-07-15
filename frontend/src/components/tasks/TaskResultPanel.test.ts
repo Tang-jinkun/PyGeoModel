@@ -221,10 +221,18 @@ describe("TaskResultPanel", () => {
     expect(workspace.outputFiles.value[0].url).toBe("/new-visible");
   });
 
-  it("shows a scene GLB only in Layers while preserving its Files download", async () => {
+  it("shows independent radar scene and platform GLBs in Layers", async () => {
     const sceneGlbFile = outputFile("scene_glb", "/view-scene", "/download-scene");
     sceneGlbFile.media_type = "model/gltf-binary";
     sceneGlbFile.filename = "result.glb";
+    const platformGlbFile = outputFile(
+      "radar_platform_glb",
+      "/view-platform",
+      "/download-platform"
+    );
+    platformGlbFile.label = "Radar Platform GLB";
+    platformGlbFile.media_type = "model/gltf-binary";
+    platformGlbFile.filename = "radar_platform.glb";
     const state: SceneGlbOverlayState = {
       taskId: finishedUavTask.task_id,
       modelId: "uav",
@@ -234,22 +242,32 @@ describe("TaskResultPanel", () => {
       progress: null,
       error: null
     };
+    const platformState: SceneGlbOverlayState = {
+      ...state,
+      status: "visible",
+      visible: true
+    };
     const wrapper = mount(TaskResultPanel, {
       props: {
         modelId: "uav",
-        task: { ...finishedUavTask, output_files: [sceneGlbFile] },
-        sceneGlbState: state
+        task: { ...finishedUavTask, output_files: [sceneGlbFile, platformGlbFile] },
+        sceneGlbState: state,
+        radarPlatformGlbState: platformState
       }
     });
 
     expect(wrapper.find('[data-scene-glb-row]').exists()).toBe(false);
     await wrapper.get('[data-tab="layers"]').trigger("click");
-    expect(wrapper.find('[data-scene-glb-row]').exists()).toBe(true);
-    await wrapper.get('[data-scene-glb-toggle] input[role="switch"]').trigger("click");
-    expect(wrapper.emitted("scene-glb-visibility")?.[0]).toEqual([true]);
+    expect(wrapper.findAll('[data-scene-glb-row]')).toHaveLength(2);
+    const toggles = wrapper.findAll('[data-scene-glb-toggle] input[role="switch"]');
+    await toggles[0].trigger("click");
+    await toggles[1].trigger("click");
+    expect(wrapper.emitted("scene-glb-visibility")?.[0]).toEqual(["scene_glb", true]);
+    expect(wrapper.emitted("scene-glb-visibility")?.[1]).toEqual(["radar_platform_glb", false]);
     await wrapper.get('[data-tab="files"]').trigger("click");
     expect(wrapper.find('[data-scene-glb-row]').exists()).toBe(false);
     expect(wrapper.get('a[href="/download-scene"]')).toBeTruthy();
+    expect(wrapper.get('a[href="/download-platform"]')).toBeTruthy();
   });
 
   it("does not show a scene control without an existing scene_glb file", async () => {

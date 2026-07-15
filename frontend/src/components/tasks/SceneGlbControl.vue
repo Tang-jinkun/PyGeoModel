@@ -2,18 +2,19 @@
   <div
     class="scene-glb-row"
     data-scene-glb-row
+    :data-scene-glb-kind="file.kind"
     :title="`任务 ${state.taskId}`"
   >
     <span class="scene-glb-row__swatch" aria-hidden="true" />
     <div class="scene-glb-row__identity">
-      <strong>三维结果 · {{ definition.label }}</strong>
+      <strong>{{ file.label }}</strong>
       <span :data-state="state.status">任务 {{ shortTaskId }} · {{ stateText }}</span>
     </div>
     <ElSwitch
       data-scene-glb-toggle
       :model-value="switchOn"
       :disabled="previewTooLarge"
-      :aria-label="`显示${definition.label}三维结果`"
+      :aria-label="`显示${file.label}`"
       @change="emit('visibility', Boolean($event))"
     />
     <ElTooltip content="定位三维结果" placement="top" :show-after="300">
@@ -38,7 +39,6 @@ import { computed } from "vue";
 
 import type { SceneGlbOverlayState } from "../../composables/useMapWorkspace";
 import { SCENE_GLB_PREVIEW_MAX_BYTES } from "../../map/sceneGlbAsset";
-import { getModelDefinition } from "../../models/registry";
 import type { OutputFile } from "../../models/shared";
 
 const props = defineProps<{
@@ -51,7 +51,6 @@ const emit = defineEmits<{
   focus: [];
 }>();
 
-const definition = computed(() => getModelDefinition(props.state.modelId));
 const shortTaskId = computed(() => props.state.taskId.slice(-8));
 const switchOn = computed(() => (
   props.state.status === "loading" || props.state.status === "visible"
@@ -95,6 +94,11 @@ const stateText = computed(() => {
   background: #0f9f78;
   border: 1px solid #08745a;
   border-radius: 2px;
+}
+
+.scene-glb-row[data-scene-glb-kind="radar_platform_glb"] .scene-glb-row__swatch {
+  background: #d99a24;
+  border-color: #9a6812;
 }
 
 .scene-glb-row__identity {

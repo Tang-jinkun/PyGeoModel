@@ -124,6 +124,7 @@ describe("scene GLB map layer", () => {
 
       expect(rotor.quaternion.y).toBeCloseTo(Math.SQRT1_2);
       expect(rotor.quaternion.w).toBeCloseTo(Math.SQRT1_2);
+      expect(map.triggerRepaint).toHaveBeenCalledOnce();
     } finally {
       now.mockRestore();
     }
@@ -260,6 +261,7 @@ class FakeMap {
   canvas = document.createElement("canvas");
   setTerrain = vi.fn();
   fitBounds = vi.fn();
+  triggerRepaint = vi.fn();
   hasTerrainSource: boolean;
 
   constructor(hasTerrainSource = true) {

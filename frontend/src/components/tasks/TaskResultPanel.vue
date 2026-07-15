@@ -31,11 +31,12 @@
           @focus="(kind) => emit('layer-focus', kind)"
         />
         <SceneGlbControl
-          v-if="sceneGlbFile && sceneGlbState"
-          :file="sceneGlbFile"
-          :state="sceneGlbState"
-          @visibility="emit('scene-glb-visibility', $event)"
-          @focus="emit('scene-glb-focus')"
+          v-for="entry in sceneGlbEntries"
+          :key="entry.kind"
+          :file="entry.file"
+          :state="entry.state"
+          @visibility="emit('scene-glb-visibility', entry.kind, $event)"
+          @focus="emit('scene-glb-focus', entry.kind)"
         />
       </div>
       <OutputFileList v-else :files="effectiveOutputFiles" />
@@ -47,6 +48,7 @@
 import { computed, ref } from "vue";
 
 import type {
+  SceneGlbKind,
   SceneGlbOverlayState,
   TaskOutputLayerState
 } from "../../composables/useMapWorkspace";
@@ -67,19 +69,21 @@ const props = withDefaults(defineProps<{
   outputFiles?: readonly OutputFile[];
   layerStates?: readonly TaskOutputLayerState[];
   sceneGlbState?: SceneGlbOverlayState | null;
+  radarPlatformGlbState?: SceneGlbOverlayState | null;
 }>(), {
   metrics: null,
   outputFiles: () => [],
   layerStates: () => [],
-  sceneGlbState: null
+  sceneGlbState: null,
+  radarPlatformGlbState: null
 });
 
 const emit = defineEmits<{
   "layer-visibility": [kind: string, visible: boolean];
   "layer-opacity": [kind: string, opacity: number];
   "layer-focus": [kind: string];
-  "scene-glb-visibility": [visible: boolean];
-  "scene-glb-focus": [];
+  "scene-glb-visibility": [kind: SceneGlbKind, visible: boolean];
+  "scene-glb-focus": [kind: SceneGlbKind];
 }>();
 
 const TABS: Array<{ id: ResultTab; label: string }> = [
@@ -94,9 +98,19 @@ const definition = computed(() => getModelDefinition(props.modelId));
 const metricDefinitions = computed(() => definition.value.metrics as never);
 const effectiveMetrics = computed(() => props.metrics ?? props.task.metrics as Record<string, unknown> | null ?? null);
 const effectiveOutputFiles = computed(() => props.outputFiles.length ? props.outputFiles : props.task.output_files);
-const sceneGlbFile = computed(() => effectiveOutputFiles.value.find(
-  (file) => file.kind === "scene_glb" && file.exists
-) ?? null);
+const sceneGlbEntries = computed(() => {
+  const states: Record<SceneGlbKind, SceneGlbOverlayState | null> = {
+    scene_glb: props.sceneGlbState,
+    radar_platform_glb: props.radarPlatformGlbState
+  };
+  return (["scene_glb", "radar_platform_glb"] as const).flatMap((kind) => {
+    const file = effectiveOutputFiles.value.find(
+      (candidate) => candidate.kind === kind && candidate.exists
+    );
+    const state = states[kind];
+    return file && state ? [{ kind, file, state }] : [];
+  });
+});
 </script>
 
 <style scoped>

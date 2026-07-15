@@ -423,7 +423,11 @@ def inject_glb_animations(
                     f"Animated GLB node transform must be identity: {track.node_name}"
                 )
             node.pop("matrix", None)
-            node[track.path] = values[0].astype(float).tolist()
+            node[track.path] = (
+                [1.0, 1.0, 1.0]
+                if track.path == "scale"
+                else values[0].astype(float).tolist()
+            )
             input_accessor = append_accessor(times, "SCALAR", time=True)
             output_accessor = append_accessor(
                 values,

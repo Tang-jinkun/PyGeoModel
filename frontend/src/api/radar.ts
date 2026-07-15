@@ -66,7 +66,8 @@ export type CoverageOutputKind =
   | "clipped_volume_manifest_json"
   | "clipped_volume_cells_bin"
   | "height_layers_manifest_json"
-  | "scene_glb";
+  | "scene_glb"
+  | "radar_platform_glb";
 
 export interface CoverageTaskSummary {
   task_id: string;
@@ -91,6 +92,7 @@ export interface CoverageTaskSummary {
     clipped_volume_cells_bin?: string | null;
     height_layers_manifest_json?: string | null;
     scene_glb?: string | null;
+    radar_platform_glb?: string | null;
   } | null;
   output_files: CoverageOutputFile[];
   model?: RadarModelMetadata | null;
@@ -337,7 +339,8 @@ function normalizeOutputs(payload: unknown): CoverageTaskSummary["outputs"] {
     clipped_volume_manifest_json: nullableString(payload.clipped_volume_manifest_json),
     clipped_volume_cells_bin: nullableString(payload.clipped_volume_cells_bin),
     height_layers_manifest_json: nullableString(payload.height_layers_manifest_json),
-    scene_glb: nullableString(payload.scene_glb)
+    scene_glb: nullableString(payload.scene_glb),
+    radar_platform_glb: nullableString(payload.radar_platform_glb)
   };
 }
 
@@ -437,6 +440,12 @@ function deriveOutputFilesFromOutputs(outputs: CoverageTaskSummary["outputs"]): 
       label: "Radar Maximum Detection Domain GLB",
       media_type: "model/gltf-binary",
       filename: "radar_detection_domain.glb"
+    },
+    {
+      kind: "radar_platform_glb",
+      label: "Radar Platform GLB",
+      media_type: "model/gltf-binary",
+      filename: "radar_platform.glb"
     }
   ];
   return specs.flatMap((spec) => {
@@ -554,7 +563,8 @@ function normalizeOutputKind(value: unknown): CoverageOutputKind | undefined {
     "clipped_volume_manifest_json",
     "clipped_volume_cells_bin",
     "height_layers_manifest_json",
-    "scene_glb"
+    "scene_glb",
+    "radar_platform_glb"
   ];
   return kinds.find((kind) => kind === value);
 }

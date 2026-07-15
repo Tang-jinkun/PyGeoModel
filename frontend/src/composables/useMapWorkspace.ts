@@ -40,6 +40,7 @@ export interface TaskOutputLayerState {
 }
 
 export type SceneGlbOverlayStatus = "idle" | "loading" | "visible" | "error";
+export type SceneGlbKind = "scene_glb" | "radar_platform_glb";
 
 export interface SceneGlbOverlayState {
   taskId: string;
@@ -54,6 +55,8 @@ export interface SceneGlbOverlayState {
 export interface SceneGlbLoadRequest {
   map: maplibregl.Map;
   taskId: string;
+  assetId: string;
+  kind: SceneGlbKind;
   modelId: string;
   url: string;
   signal: AbortSignal;
@@ -105,7 +108,7 @@ const DEFAULT_SCENE_GLB_ADAPTER: SceneGlbAdapter = {
       throw abortError();
     }
     try {
-      addSceneGlbLayer(request.map, request.taskId, asset, {
+      addSceneGlbLayer(request.map, request.assetId, asset, {
         onLost: request.onLayerLost
       });
     } catch (error) {
@@ -127,6 +130,10 @@ const SCENE_METADATA_MODEL_IDS: Record<ModelId, string> = {
   mobility: "mobility",
   airCorridor: "air_corridor"
 };
+const SCENE_GLB_KINDS: readonly SceneGlbKind[] = [
+  "scene_glb",
+  "radar_platform_glb"
+];
 
 export function useMapWorkspace(kind: SpatialInputKind, initialDraft?: SpatialDraft, options: UseMapWorkspaceOptions = {}) {
   const draft = shallowRef<SpatialDraft>(initialDraft ? structuredClone(initialDraft) : createSpatialDraft(kind));
@@ -267,8 +274,8 @@ export function useMapWorkspace(kind: SpatialInputKind, initialDraft?: SpatialDr
     return layer?.data ? focusBounds(map, layer.data) : false;
   }
 
-  function sceneGlbStateFor(taskId: string) {
-    return sceneGlbStates.value[taskId] ?? null;
+  function sceneGlbStateFor(taskId: string, kind: SceneGlbKind = "scene_glb") {
+    return sceneGlbStates.value[sceneAssetId(taskId, kind)] ?? null;
   }
 
   async function setSceneGlbVisibility<K extends ModelId>(
@@ -276,16 +283,18 @@ export function useMapWorkspace(kind: SpatialInputKind, initialDraft?: SpatialDr
     selectedDemId: string,
     modelId: K,
     task: ModelTaskSummary<K>,
-    visible: boolean
+    visible: boolean,
+    kind: SceneGlbKind = "scene_glb"
   ) {
     const taskId = task.task_id;
+    const assetId = sceneAssetId(taskId, kind);
     const demId = task.request?.dem_id ?? task.dem_id ?? "";
     ensureSceneGlbState(modelId, task, taskFiles(task));
     if (!visible) {
-      sceneGlbControllers.get(taskId)?.abort();
-      sceneGlbControllers.delete(taskId);
-      sceneGlb.remove(map, taskId);
-      updateSceneGlbState(taskId, {
+      sceneGlbControllers.get(assetId)?.abort();
+      sceneGlbControllers.delete(assetId);
+      sceneGlb.remove(map, assetId);
+      updateSceneGlbState(assetId, {
         status: "idle",
         visible: false,
         progress: null,
@@ -295,7 +304,7 @@ export function useMapWorkspace(kind: SpatialInputKind, initialDraft?: SpatialDr
     }
 
     if (demId !== selectedDemId) {
-      updateSceneGlbState(taskId, {
+      updateSceneGlbState(assetId, {
         status: "error",
         visible: false,
         progress: null,
@@ -304,11 +313,11 @@ export function useMapWorkspace(kind: SpatialInputKind, initialDraft?: SpatialDr
       return;
     }
     const file = taskFiles(task).find((candidate) => (
-      candidate.kind === "scene_glb" && candidate.exists
+      candidate.kind === kind && candidate.exists
     ));
     const url = resolveAssetUrl(file?.download_url || file?.url);
     if (!url) {
-      updateSceneGlbState(taskId, {
+      updateSceneGlbState(assetId, {
         status: "error",
         visible: false,
         progress: null,
@@ -316,12 +325,12 @@ export function useMapWorkspace(kind: SpatialInputKind, initialDraft?: SpatialDr
       });
       return;
     }
-    if (sceneGlbStates.value[taskId]?.status === "visible") return;
+    if (sceneGlbStates.value[assetId]?.status === "visible") return;
 
-    sceneGlbControllers.get(taskId)?.abort();
+    sceneGlbControllers.get(assetId)?.abort();
     const controller = new AbortController();
-    sceneGlbControllers.set(taskId, controller);
-    updateSceneGlbState(taskId, {
+    sceneGlbControllers.set(assetId, controller);
+    updateSceneGlbState(assetId, {
       status: "loading",
       visible: true,
       progress: null,
@@ -332,18 +341,20 @@ export function useMapWorkspace(kind: SpatialInputKind, initialDraft?: SpatialDr
       await sceneGlb.load({
         map,
         taskId,
+        assetId,
+        kind,
         modelId: sceneMetadataModelId(modelId),
         url,
         signal: controller.signal,
         onProgress(progress) {
-          if (sceneGlbControllers.get(taskId) === controller) {
-            updateSceneGlbState(taskId, { progress });
+          if (sceneGlbControllers.get(assetId) === controller) {
+            updateSceneGlbState(assetId, { progress });
           }
         },
         onLayerLost() {
-          const state = sceneGlbStates.value[taskId];
+          const state = sceneGlbStates.value[assetId];
           if (state?.status === "visible") {
-            updateSceneGlbState(taskId, {
+            updateSceneGlbState(assetId, {
               status: "idle",
               visible: false,
               progress: null,
@@ -352,25 +363,25 @@ export function useMapWorkspace(kind: SpatialInputKind, initialDraft?: SpatialDr
           }
         }
       });
-      if (sceneGlbControllers.get(taskId) !== controller || controller.signal.aborted) return;
-      updateSceneGlbState(taskId, {
+      if (sceneGlbControllers.get(assetId) !== controller || controller.signal.aborted) return;
+      updateSceneGlbState(assetId, {
         status: "visible",
         visible: true,
         progress: null,
         error: null
       });
     } catch (error) {
-      if (sceneGlbControllers.get(taskId) !== controller) return;
+      if (sceneGlbControllers.get(assetId) !== controller) return;
       if (isAbortError(error) || controller.signal.aborted) {
-        updateSceneGlbState(taskId, {
+        updateSceneGlbState(assetId, {
           status: "idle",
           visible: false,
           progress: null,
           error: null
         });
       } else {
-        sceneGlb.remove(map, taskId);
-        updateSceneGlbState(taskId, {
+        sceneGlb.remove(map, assetId);
+        updateSceneGlbState(assetId, {
           status: "error",
           visible: false,
           progress: null,
@@ -378,35 +389,41 @@ export function useMapWorkspace(kind: SpatialInputKind, initialDraft?: SpatialDr
         });
       }
     } finally {
-      if (sceneGlbControllers.get(taskId) === controller) {
-        sceneGlbControllers.delete(taskId);
+      if (sceneGlbControllers.get(assetId) === controller) {
+        sceneGlbControllers.delete(assetId);
       }
     }
   }
 
-  function focusSceneGlb(map: maplibregl.Map, taskId: string) {
-    return sceneGlb.focus(map, taskId);
+  function focusSceneGlb(
+    map: maplibregl.Map,
+    taskId: string,
+    kind: SceneGlbKind = "scene_glb"
+  ) {
+    return sceneGlb.focus(map, sceneAssetId(taskId, kind));
   }
 
   function removeIncompatibleSceneGlbs(map: maplibregl.Map, selectedDemId: string) {
     const next = { ...sceneGlbStates.value };
-    for (const [taskId, state] of Object.entries(next)) {
+    for (const [assetId, state] of Object.entries(next)) {
       if (state.demId === selectedDemId) continue;
-      sceneGlbControllers.get(taskId)?.abort();
-      sceneGlbControllers.delete(taskId);
-      sceneGlb.remove(map, taskId);
-      delete next[taskId];
+      sceneGlbControllers.get(assetId)?.abort();
+      sceneGlbControllers.delete(assetId);
+      sceneGlb.remove(map, assetId);
+      delete next[assetId];
     }
     sceneGlbStates.value = next;
   }
 
   function removeSceneGlb(map: maplibregl.Map, taskId: string) {
-    sceneGlbControllers.get(taskId)?.abort();
-    sceneGlbControllers.delete(taskId);
-    sceneGlb.remove(map, taskId);
-    if (!sceneGlbStates.value[taskId]) return;
     const next = { ...sceneGlbStates.value };
-    delete next[taskId];
+    for (const [assetId, state] of Object.entries(next)) {
+      if (state.taskId !== taskId) continue;
+      sceneGlbControllers.get(assetId)?.abort();
+      sceneGlbControllers.delete(assetId);
+      sceneGlb.remove(map, assetId);
+      delete next[assetId];
+    }
     sceneGlbStates.value = next;
   }
 
@@ -490,20 +507,22 @@ export function useMapWorkspace(kind: SpatialInputKind, initialDraft?: SpatialDr
     task: ModelTaskSummary<K>,
     files: readonly OutputFile[]
   ) {
-    if (!files.some((file) => file.kind === "scene_glb" && file.exists)) return;
-    if (sceneGlbStates.value[task.task_id]) return;
-    sceneGlbStates.value = {
-      ...sceneGlbStates.value,
-      [task.task_id]: {
-        taskId: task.task_id,
-        modelId,
-        demId: task.request?.dem_id ?? task.dem_id ?? "",
-        status: "idle",
-        visible: false,
-        progress: null,
-        error: null
-      }
-    };
+    const next = { ...sceneGlbStates.value };
+    for (const kind of SCENE_GLB_KINDS) {
+      if (!files.some((file) => file.kind === kind && file.exists)) continue;
+      const assetId = sceneAssetId(task.task_id, kind);
+      if (next[assetId]) continue;
+      next[assetId] = {
+          taskId: task.task_id,
+          modelId,
+          demId: task.request?.dem_id ?? task.dem_id ?? "",
+          status: "idle",
+          visible: false,
+          progress: null,
+          error: null
+      };
+    }
+    sceneGlbStates.value = next;
   }
 
   function updateSceneGlbState(taskId: string, patch: Partial<SceneGlbOverlayState>) {
@@ -514,6 +533,10 @@ export function useMapWorkspace(kind: SpatialInputKind, initialDraft?: SpatialDr
       [taskId]: { ...current, ...patch }
     };
   }
+}
+
+function sceneAssetId(taskId: string, kind: SceneGlbKind) {
+  return kind === "scene_glb" ? taskId : `${taskId}--${kind}`;
 }
 
 function createLayerState(
