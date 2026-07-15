@@ -9,6 +9,7 @@ import trimesh
 
 
 JSON_CHUNK = 0x4E4F534A
+BIN_CHUNK = 0x004E4942
 MAX_GLB_BYTES = 50_000_000
 
 
@@ -31,12 +32,28 @@ class SceneNode:
     children: list["SceneNode"] = field(default_factory=list)
 
 
+@dataclass(frozen=True)
+class AnimationTrack:
+    node_name: str
+    path: Literal["rotation", "scale"]
+    times: numpy.ndarray
+    values: numpy.ndarray
+    interpolation: Literal["LINEAR", "STEP"] = "LINEAR"
+
+
+@dataclass(frozen=True)
+class AnimationSpec:
+    name: str
+    tracks: list[AnimationTrack]
+
+
 def export_glb(
     path: Path,
     meshes: dict[str, tuple[trimesh.Trimesh, MaterialSpec]] | list[SceneNode],
     *,
     scene_metadata: dict,
     node_metadata: dict[str, dict] | None = None,
+    animations: list[AnimationSpec] | None = None,
 ) -> None:
     nodes = _normalize_scene_nodes(meshes, node_metadata)
     materials = _validate_scene_nodes(nodes)
@@ -50,6 +67,8 @@ def export_glb(
         _node_metadata(nodes),
         materials,
     )
+    if animations:
+        payload = inject_glb_animations(payload, animations)
     _ensure_glb_size_within_limit(payload)
     _validate_serialized_scene(payload, nodes)
 
@@ -307,6 +326,141 @@ def inject_glb_extras(
     ).encode("utf-8")
     encoded += b" " * ((-len(encoded)) % 4)
     chunks[json_index] = (JSON_CHUNK, encoded)
+    return _build_glb(chunks)
+
+
+def inject_glb_animations(
+    payload: bytes,
+    animations: list[AnimationSpec],
+) -> bytes:
+    version, chunks = _parse_glb(payload)
+    if version != 2:
+        raise ValueError("Only GLB version 2 is supported")
+    json_index = next(
+        (index for index, (kind, _chunk) in enumerate(chunks) if kind == JSON_CHUNK),
+        None,
+    )
+    bin_index = next(
+        (index for index, (kind, _chunk) in enumerate(chunks) if kind == BIN_CHUNK),
+        None,
+    )
+    if json_index is None or bin_index is None:
+        raise ValueError("Animated GLB requires JSON and BIN chunks")
+
+    document = json.loads(
+        chunks[json_index][1].decode("utf-8").rstrip(" \t\r\n\x00")
+    )
+    nodes_by_name = {
+        node.get("name"): (index, node)
+        for index, node in enumerate(document.get("nodes", []))
+        if node.get("name")
+    }
+    binary = bytearray(chunks[bin_index][1])
+    buffer_views = document.setdefault("bufferViews", [])
+    accessors = document.setdefault("accessors", [])
+    serialized_animations = document.setdefault("animations", [])
+
+    def append_accessor(values: numpy.ndarray, accessor_type: str, *, time: bool) -> int:
+        while len(binary) % 4:
+            binary.append(0)
+        offset = len(binary)
+        encoded = numpy.ascontiguousarray(values, dtype="<f4").tobytes()
+        binary.extend(encoded)
+        view_index = len(buffer_views)
+        buffer_views.append(
+            {
+                "buffer": 0,
+                "byteOffset": offset,
+                "byteLength": len(encoded),
+            }
+        )
+        accessor = {
+            "bufferView": view_index,
+            "componentType": 5126,
+            "count": int(values.shape[0]),
+            "type": accessor_type,
+        }
+        if time:
+            accessor["min"] = [float(values.min())]
+            accessor["max"] = [float(values.max())]
+        accessors.append(accessor)
+        return len(accessors) - 1
+
+    for animation in animations:
+        if not animation.name or not animation.tracks:
+            raise ValueError("GLB animation requires a name and tracks")
+        samplers = []
+        channels = []
+        for track in animation.tracks:
+            target = nodes_by_name.get(track.node_name)
+            if target is None:
+                raise ValueError(
+                    f"GLB animation references missing node: {track.node_name}"
+                )
+            times = numpy.asarray(track.times, dtype=numpy.float32)
+            values = numpy.asarray(track.values, dtype=numpy.float32)
+            component_count = 4 if track.path == "rotation" else 3
+            if (
+                times.ndim != 1
+                or len(times) < 2
+                or values.shape != (len(times), component_count)
+                or not numpy.isfinite(times).all()
+                or not numpy.isfinite(values).all()
+                or times[0] < 0
+                or numpy.any(numpy.diff(times) <= 0)
+            ):
+                raise ValueError(
+                    f"Invalid GLB animation track: {animation.name}/{track.node_name}"
+                )
+            if track.interpolation not in {"LINEAR", "STEP"}:
+                raise ValueError(
+                    f"Unsupported GLB animation interpolation: {track.interpolation}"
+                )
+            node_index, node = target
+            matrix = numpy.asarray(node.get("matrix", numpy.eye(4)), dtype=numpy.float64)
+            if matrix.shape != (4, 4) or not numpy.allclose(matrix, numpy.eye(4)):
+                raise ValueError(
+                    f"Animated GLB node transform must be identity: {track.node_name}"
+                )
+            node.pop("matrix", None)
+            node[track.path] = values[0].astype(float).tolist()
+            input_accessor = append_accessor(times, "SCALAR", time=True)
+            output_accessor = append_accessor(
+                values,
+                "VEC4" if component_count == 4 else "VEC3",
+                time=False,
+            )
+            sampler_index = len(samplers)
+            samplers.append(
+                {
+                    "input": input_accessor,
+                    "output": output_accessor,
+                    "interpolation": track.interpolation,
+                }
+            )
+            channels.append(
+                {
+                    "sampler": sampler_index,
+                    "target": {"node": node_index, "path": track.path},
+                }
+            )
+        serialized_animations.append(
+            {"name": animation.name, "samplers": samplers, "channels": channels}
+        )
+
+    while len(binary) % 4:
+        binary.append(0)
+    if len(document.get("buffers", [])) != 1:
+        raise ValueError("Animated GLB requires exactly one binary buffer")
+    document["buffers"][0]["byteLength"] = len(binary)
+    encoded = json.dumps(
+        document,
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    encoded += b" " * ((-len(encoded)) % 4)
+    chunks[json_index] = (JSON_CHUNK, encoded)
+    chunks[bin_index] = (BIN_CHUNK, bytes(binary))
     return _build_glb(chunks)
 
 

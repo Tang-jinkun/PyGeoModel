@@ -96,6 +96,39 @@ describe("scene GLB map layer", () => {
     }
   });
 
+  it("plays embedded animations from a shared wall-clock phase", () => {
+    const map = new FakeMap();
+    const asset = preparedAsset("task-a");
+    const rotor = asset.group.children[0];
+    rotor.name = "radar_turntable";
+    asset.animations = [new THREE.AnimationClip("radar_scan", 8, [
+      new THREE.QuaternionKeyframeTrack(
+        "radar_turntable.quaternion",
+        [0, 2, 4, 6, 8],
+        [
+          0, 0, 0, 1,
+          0, Math.SQRT1_2, 0, Math.SQRT1_2,
+          0, 1, 0, 0,
+          0, Math.SQRT1_2, 0, -Math.SQRT1_2,
+          0, 0, 0, -1
+        ]
+      )
+    ])];
+    const now = vi.spyOn(performance, "now").mockReturnValue(2_000);
+
+    try {
+      addSceneGlbLayer(map as never, "task-a", asset);
+      const layer = map.layers.get("scene-glb-task-a");
+      const render = layer?.render as ((gl: WebGLRenderingContext, matrix: number[]) => void);
+      render({} as WebGLRenderingContext, new THREE.Matrix4().identity().toArray());
+
+      expect(rotor.quaternion.y).toBeCloseTo(Math.SQRT1_2);
+      expect(rotor.quaternion.w).toBeCloseTo(Math.SQRT1_2);
+    } finally {
+      now.mockRestore();
+    }
+  });
+
   it("focuses transformed WGS84 bounds with a stable 3D camera", () => {
     const map = new FakeMap();
     addSceneGlbLayer(map as never, "task-a", preparedAsset("task-a"));
@@ -217,6 +250,7 @@ function preparedAsset(taskId: string, material: THREE.Material = new THREE.Mesh
       },
       axes: { x: "east", y: "up", z: "south" }
     },
+    animations: [],
     disposed: false
   };
 }

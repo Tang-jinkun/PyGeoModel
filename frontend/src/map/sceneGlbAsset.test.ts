@@ -82,15 +82,17 @@ describe("static scene GLB preparation", () => {
     expect(asset.group.position.toArray()).toEqual([0, 0, 0]);
   });
 
-  it("rejects animations and skinned meshes", () => {
-    expect(() => prepareStaticScene(
-      new THREE.Group(),
-      metadata,
-      [new THREE.AnimationClip("move", 1, [])]
-    )).toThrow("animated");
+  it("retains standard animations while rejecting skinned meshes", () => {
     const root = new THREE.Group();
-    root.add(new THREE.SkinnedMesh(new THREE.BoxGeometry(), new THREE.MeshBasicMaterial()));
-    expect(() => prepareStaticScene(root, metadata, [])).toThrow("skinned");
+    root.add(new THREE.Mesh(new THREE.BoxGeometry(), new THREE.MeshBasicMaterial()));
+    const animation = new THREE.AnimationClip("radar_scan", 8, []);
+
+    const animated = prepareStaticScene(root, metadata, [animation]);
+
+    expect(animated.animations).toEqual([animation]);
+    const skinnedRoot = new THREE.Group();
+    skinnedRoot.add(new THREE.SkinnedMesh(new THREE.BoxGeometry(), new THREE.MeshBasicMaterial()));
+    expect(() => prepareStaticScene(skinnedRoot, metadata, [])).toThrow("skinned");
   });
 
   it("preserves effective visibility when flattening a hidden parent", () => {

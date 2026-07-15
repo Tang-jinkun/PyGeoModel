@@ -22,6 +22,7 @@ export interface PreparedSceneGlb {
   anchor: [number, number, number];
   bounds: SceneGlbBounds;
   metadata: Scene3dMetadata;
+  animations: THREE.AnimationClip[];
   disposed: boolean;
 }
 
@@ -95,9 +96,6 @@ export function prepareStaticScene(
   metadata: Scene3dMetadata,
   animations: readonly THREE.AnimationClip[]
 ): PreparedSceneGlb {
-  if (animations.length > 0) {
-    throw new Error("GLB preview does not support animated scenes");
-  }
   root.updateMatrixWorld(true);
   let hasSkinnedMesh = false;
   root.traverse((object) => {
@@ -168,6 +166,7 @@ export function prepareStaticScene(
     anchor: [reference.anchor.x, reference.anchor.y, reference.anchor.z],
     bounds,
     metadata,
+    animations: [...animations],
     disposed: false
   };
 }

@@ -75,6 +75,58 @@ def test_export_glb_keeps_hierarchy_and_unlit_material(tmp_path: Path) -> None:
     assert material["emissiveFactor"] == pytest.approx([110 / 255, 24 / 255, 32 / 255])
 
 
+def test_export_glb_injects_standard_node_rotation_animation(tmp_path: Path) -> None:
+    path = tmp_path / "animated.glb"
+    animation = exporter.AnimationSpec(
+        name="radar_scan",
+        tracks=[
+            exporter.AnimationTrack(
+                node_name="radar_turntable",
+                path="rotation",
+                times=numpy.asarray([0, 2, 4], dtype=numpy.float32),
+                values=numpy.asarray(
+                    [
+                        [0, 0, 0, 1],
+                        [0, 1, 0, 0],
+                        [0, 0, 0, -1],
+                    ],
+                    dtype=numpy.float32,
+                ),
+                interpolation="LINEAR",
+            )
+        ],
+    )
+
+    export_glb(
+        path,
+        [
+            SceneNode(
+                name="radar_turntable",
+                mesh=marker_mesh(numpy.zeros(3), 4),
+                material=MaterialSpec("radar", (80, 90, 85, 255)),
+            )
+        ],
+        scene_metadata={"schema_version": 1},
+        animations=[animation],
+    )
+
+    document = glb_json(path)
+    node_index = next(
+        index
+        for index, node in enumerate(document["nodes"])
+        if node.get("name") == "radar_turntable"
+    )
+    serialized = document["animations"][0]
+    assert serialized["name"] == "radar_scan"
+    assert serialized["samplers"][0]["interpolation"] == "LINEAR"
+    assert serialized["channels"][0]["target"] == {
+        "node": node_index,
+        "path": "rotation",
+    }
+    assert document["accessors"][serialized["samplers"][0]["input"]]["count"] == 3
+    assert document["accessors"][serialized["samplers"][0]["output"]]["type"] == "VEC4"
+
+
 @pytest.mark.parametrize(
     ("nodes", "message"),
     [

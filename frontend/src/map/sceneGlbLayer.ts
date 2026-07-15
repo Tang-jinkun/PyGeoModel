@@ -101,6 +101,7 @@ function createCustomLayer(
   let camera: THREE.Camera | null = null;
   let scene: THREE.Scene | null = null;
   let renderer: THREE.WebGLRenderer | null = null;
+  let mixer: THREE.AnimationMixer | null = null;
   let canvas: HTMLCanvasElement | null = null;
   let contextLostQueued = false;
   let cleaned = false;
@@ -125,6 +126,10 @@ function createCustomLayer(
       scene = new THREE.Scene();
       scene.add(createSceneGlbLights());
       scene.add(asset.group);
+      if (asset.animations.length) {
+        mixer = new THREE.AnimationMixer(asset.group);
+        for (const clip of asset.animations) mixer.clipAction(clip).play();
+      }
       canvas = map.getCanvas();
       canvas.addEventListener("webglcontextlost", handleContextLost);
       renderer = new THREE.WebGLRenderer({ canvas, context: gl, antialias: true });
@@ -135,6 +140,7 @@ function createCustomLayer(
       const mapMatrix = new THREE.Matrix4().fromArray(matrix as unknown as number[]);
       const anchorMatrix = new THREE.Matrix4().makeTranslation(...asset.anchor);
       camera.projectionMatrix.copy(mapMatrix).multiply(anchorMatrix);
+      mixer?.setTime(performance.now() / 1_000);
       renderer.resetState();
       renderer.render(scene, camera);
     },
@@ -147,6 +153,8 @@ function createCustomLayer(
       canvas?.removeEventListener("webglcontextlost", handleContextLost);
       scene?.remove(asset.group);
       renderer?.dispose();
+      mixer?.stopAllAction();
+      if (mixer) mixer.uncacheRoot(asset.group);
       disposePreparedScene(asset);
       const registered = registry.get(map)?.get(taskId);
       if (registered?.layer === layer) registry.get(map)?.delete(taskId);
@@ -154,6 +162,7 @@ function createCustomLayer(
       camera = null;
       scene = null;
       renderer = null;
+      mixer = null;
       canvas = null;
     }
   };
