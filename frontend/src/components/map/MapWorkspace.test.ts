@@ -1,5 +1,6 @@
 import { mount } from "@vue/test-utils";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type maplibregl from "maplibre-gl";
 
 import { createSpatialDraft } from "../../map/spatialInput";
 import MapWorkspace from "./MapWorkspace.vue";
@@ -46,6 +47,48 @@ beforeEach(() => {
 });
 
 describe("MapWorkspace", () => {
+  it("passes a caller-provided local style object through unchanged", () => {
+    const explicitStyle: maplibregl.StyleSpecification = {
+      version: 8,
+      sources: {
+        workspace: {
+          type: "geojson",
+          data: {
+            type: "FeatureCollection",
+            features: []
+          }
+        }
+      },
+      layers: [{
+        id: "workspace-fill",
+        type: "fill",
+        source: "workspace",
+        paint: {
+          "fill-color": "#2563eb",
+          "fill-opacity": 0.15
+        }
+      }]
+    };
+    const wrapper = mount(MapWorkspace, {
+      props: {
+        kind: "point",
+        draft: createSpatialDraft("point"),
+        mapStyle: explicitStyle
+      }
+    });
+    const map = mapHarness.instances[0];
+    const style = (map.options as { style: unknown }).style;
+
+    expect(style).toBe(explicitStyle);
+    expect(style).not.toStrictEqual({
+      version: 8,
+      sources: {},
+      layers: []
+    });
+
+    wrapper.unmount();
+  });
+
   it("uses a local empty style by default instead of an external URL", () => {
     const wrapper = mount(MapWorkspace, {
       props: {

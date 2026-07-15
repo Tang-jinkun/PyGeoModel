@@ -19,7 +19,7 @@
 import { Check, Delete, RefreshLeft } from "@element-plus/icons-vue";
 import { ElButton, ElTooltip } from "element-plus";
 import maplibregl from "maplibre-gl";
-import { onBeforeUnmount, onMounted, ref, shallowRef, watch } from "vue";
+import { onBeforeUnmount, onMounted, ref, shallowRef, toRaw, watch } from "vue";
 
 import { demTerrainUrlTemplate, demTileUrlTemplate, type DemMetadata } from "../../api/dem";
 import {
@@ -85,7 +85,7 @@ onMounted(() => {
 
   const instance = new maplibregl.Map({
     container: mapContainer.value,
-    style: props.mapStyle,
+    style: typeof props.mapStyle === "string" ? props.mapStyle : toRaw(props.mapStyle),
     center: props.center,
     zoom: props.zoom
   });
