@@ -65,7 +65,8 @@ export type CoverageOutputKind =
   | "voxel_points_bin"
   | "clipped_volume_manifest_json"
   | "clipped_volume_cells_bin"
-  | "height_layers_manifest_json";
+  | "height_layers_manifest_json"
+  | "scene_glb";
 
 export interface CoverageTaskSummary {
   task_id: string;
@@ -89,6 +90,7 @@ export interface CoverageTaskSummary {
     clipped_volume_manifest_json?: string | null;
     clipped_volume_cells_bin?: string | null;
     height_layers_manifest_json?: string | null;
+    scene_glb?: string | null;
   } | null;
   output_files: CoverageOutputFile[];
   model?: RadarModelMetadata | null;
@@ -334,7 +336,8 @@ function normalizeOutputs(payload: unknown): CoverageTaskSummary["outputs"] {
     voxel_points_bin: nullableString(payload.voxel_points_bin),
     clipped_volume_manifest_json: nullableString(payload.clipped_volume_manifest_json),
     clipped_volume_cells_bin: nullableString(payload.clipped_volume_cells_bin),
-    height_layers_manifest_json: nullableString(payload.height_layers_manifest_json)
+    height_layers_manifest_json: nullableString(payload.height_layers_manifest_json),
+    scene_glb: nullableString(payload.scene_glb)
   };
 }
 
@@ -428,6 +431,12 @@ function deriveOutputFilesFromOutputs(outputs: CoverageTaskSummary["outputs"]): 
       label: "高度层清单",
       media_type: "application/json",
       filename: "height_layers_manifest.json"
+    },
+    {
+      kind: "scene_glb",
+      label: "Radar Maximum Detection Domain GLB",
+      media_type: "model/gltf-binary",
+      filename: "radar_detection_domain.glb"
     }
   ];
   return specs.flatMap((spec) => {
@@ -482,6 +491,9 @@ function normalizeModel(payload: unknown): CoverageTaskSummary["model"] {
     radar_equation_max_range_m: typeof payload.radar_equation_max_range_m === "number" ? payload.radar_equation_max_range_m : null,
     effective_max_range_m: numberOr(payload.effective_max_range_m, numberOr(payload.max_range_m, 0)),
     beam_clip_profile: normalizeBeamClipProfile(payload.beam_clip_profile),
+    range_basis: payload.range_basis === "radar_equation" ? "radar_equation" : "nominal",
+    reference_rcs_m2: numberOr(payload.reference_rcs_m2, 1),
+    scene3d: isRecord(payload.scene3d) ? payload.scene3d : null,
     gdal_viewshed_command: Array.isArray(payload.gdal_viewshed_command)
       ? payload.gdal_viewshed_command.filter((item): item is string => typeof item === "string")
       : []
@@ -541,7 +553,8 @@ function normalizeOutputKind(value: unknown): CoverageOutputKind | undefined {
     "voxel_points_bin",
     "clipped_volume_manifest_json",
     "clipped_volume_cells_bin",
-    "height_layers_manifest_json"
+    "height_layers_manifest_json",
+    "scene_glb"
   ];
   return kinds.find((kind) => kind === value);
 }

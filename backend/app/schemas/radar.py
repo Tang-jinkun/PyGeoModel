@@ -17,6 +17,7 @@ CoverageOutputKind = Literal[
     "clipped_volume_manifest_json",
     "clipped_volume_cells_bin",
     "height_layers_manifest_json",
+    "scene_glb",
 ]
 
 
@@ -27,7 +28,7 @@ class RadarInput(BaseModel):
 
 
 class TargetInput(BaseModel):
-    height_m: float = Field(ge=0)
+    height_m: float = Field(default=0, ge=0)
 
 
 class CoverageInput(BaseModel):
@@ -83,7 +84,7 @@ class ReservedRadarParams(BaseModel):
 class CoverageRequest(BaseModel):
     dem_id: str
     radar: RadarInput
-    target: TargetInput
+    target: TargetInput = Field(default_factory=TargetInput)
     coverage: CoverageInput
     advanced: AdvancedInput = Field(default_factory=AdvancedInput)
     reserved_radar_params: ReservedRadarParams = Field(default_factory=ReservedRadarParams)
@@ -134,6 +135,7 @@ class CoverageOutputs(BaseModel):
     clipped_volume_manifest_json: str | None = None
     clipped_volume_cells_bin: str | None = None
     height_layers_manifest_json: str | None = None
+    scene_glb: str | None = None
 
 
 class CoverageOutputFile(BaseModel):
@@ -177,6 +179,9 @@ class CoverageModelMetadata(BaseModel):
     radar_equation_max_range_m: float | None = None
     effective_max_range_m: float = 0
     beam_clip_profile: BeamClipProfile | None = None
+    range_basis: Literal["radar_equation", "nominal"] = "nominal"
+    reference_rcs_m2: float = 1
+    scene3d: dict[str, Any] | None = None
 
 
 class CoverageTaskSummary(BaseModel):

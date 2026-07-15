@@ -586,7 +586,15 @@ async function syncRadarLayers(context: SelectedTaskContext) {
   }
   const radarTask = context.task as RadarTask;
   const dem = demManager.dems.value.find(({ dem_id }) => dem_id === context.task.dem_id) ?? selectedDem.value;
-  await radarLayers.showTask(radarTask, dem?.bounds ?? []);
+  const hasSceneGlb = radarTask.output_files.some(
+    (file) => file.kind === "scene_glb" && file.exists
+  );
+  if (hasSceneGlb) {
+    radarLayers.clear();
+    radarLayerErrors.value = [];
+  } else {
+    await radarLayers.showTask(radarTask, dem?.bounds ?? []);
+  }
   const current = selectedTaskContext.value;
   if (workspace.selectedModel.value !== "radar"
     || current?.modelId !== "radar"
