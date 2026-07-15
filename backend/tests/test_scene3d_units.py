@@ -22,6 +22,7 @@ from app.scene3d.units import (
     UnitOmission,
     UnitSpec,
     build_unit_nodes,
+    derive_air_defense_display_profile,
 )
 
 
@@ -92,6 +93,18 @@ def material_names(node: SceneNode) -> set[str]:
 
 def child_by_role(root: SceneNode, role: str) -> SceneNode:
     return next(child for child in root.children if child.extras["role"] == role)
+
+
+def test_display_profile_uses_scene_extent_clamp() -> None:
+    assert derive_air_defense_display_profile(60_000).exaggeration == 10
+    assert derive_air_defense_display_profile(72_000).exaggeration == 12
+    assert derive_air_defense_display_profile(120_000).exaggeration == 15
+    assert derive_air_defense_display_profile(
+        72_000
+    ).display_dimensions_m.length == 144
+    assert derive_air_defense_display_profile(72_000).symbol_scale_m == pytest.approx(
+        316.8
+    )
 
 
 def test_air_defense_unit_binds_all_components_to_one_root() -> None:

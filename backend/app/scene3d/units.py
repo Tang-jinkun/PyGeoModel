@@ -1,4 +1,4 @@
-from dataclasses import dataclass, field
+from dataclasses import astuple, dataclass, field
 import re
 import unicodedata
 
@@ -65,6 +65,34 @@ class UnitDisplayOptions:
     label: bool = True
     warning_zone: bool = True
     kill_zone: bool = True
+
+
+@dataclass(frozen=True)
+class UnitDimensions:
+    length: float
+    width: float
+    chassis_height: float
+    equipment_top: float
+
+
+@dataclass(frozen=True)
+class UnitDisplayProfile:
+    actual_dimensions_m: UnitDimensions
+    display_dimensions_m: UnitDimensions
+    exaggeration: float
+    symbol_scale_m: float
+
+
+def derive_air_defense_display_profile(
+    scene_extent_m: float,
+) -> UnitDisplayProfile:
+    exaggeration = min(15.0, max(10.0, scene_extent_m / 6000.0))
+    actual = UnitDimensions(12.0, 3.2, 2.8, 7.5)
+    displayed = UnitDimensions(
+        *(value * exaggeration for value in astuple(actual))
+    )
+    symbol_scale = min(400.0, max(260.0, displayed.length * 2.2))
+    return UnitDisplayProfile(actual, displayed, exaggeration, symbol_scale)
 
 
 @dataclass(frozen=True)
