@@ -139,6 +139,7 @@ def build_radar_visibility_volume(
         vertices,
         faces,
         terrain_grid,
+        min_height_grid,
         valid_horizontal,
         origin=(x_min, y_min),
         pitch=(x_pitch, y_pitch, z_pitch),
@@ -150,6 +151,9 @@ def build_radar_visibility_volume(
         radar_z,
         origin=(x_min, y_min),
         pitch=(x_pitch, y_pitch),
+        radar_xy=(prepared.radar_x, prepared.radar_y),
+        effective_range_m=effective_range_m,
+        payload=payload,
     )
 
     return RadarVisibilityVolume(
@@ -267,6 +271,7 @@ def _terrain_contact_segments(
     vertices: numpy.ndarray,
     faces: numpy.ndarray,
     terrain_grid: numpy.ndarray,
+    min_height_grid: numpy.ndarray,
     valid_horizontal: numpy.ndarray,
     *,
     origin: tuple[float, float],
@@ -279,8 +284,10 @@ def _terrain_contact_segments(
     x_index = numpy.clip(x_index, 0, terrain_grid.shape[1] - 1)
     y_index = numpy.clip(y_index, 0, terrain_grid.shape[0] - 1)
     clearance = vertices[:, 2] - terrain_grid[y_index, x_index]
+    terrain_is_active_constraint = min_height_grid[y_index, x_index] <= 1e-6
     touches_terrain = (
         valid_horizontal[y_index, x_index]
+        & terrain_is_active_constraint
         & (numpy.abs(clearance) <= 0.75 * pitch[2])
     )
     edges = numpy.concatenate(
@@ -300,6 +307,9 @@ def _unknown_boundary_segments(
     *,
     origin: tuple[float, float],
     pitch: tuple[float, float],
+    radar_xy: tuple[float, float],
+    effective_range_m: float,
+    payload: CoverageRequest,
 ) -> numpy.ndarray:
     contours = measure.find_contours(valid_horizontal.astype(numpy.float32), 0.5)
     segments: list[numpy.ndarray] = []
@@ -317,7 +327,12 @@ def _unknown_boundary_segments(
         segments.extend(numpy.stack((points[:-1], points[1:]), axis=1))
     if not segments:
         return numpy.empty((0, 2, 3), dtype=numpy.float64)
-    return numpy.asarray(segments, dtype=numpy.float64)
+    result = numpy.asarray(segments, dtype=numpy.float64)
+    dx = result[:, :, 0] - radar_xy[0]
+    dy = result[:, :, 1] - radar_xy[1]
+    inside_range = dx * dx + dy * dy <= effective_range_m * effective_range_m
+    inside_sector = _sector_mask(dx, dy, payload)
+    return result[(inside_range & inside_sector).all(axis=1)]
 
 
 def _nearest_valid_height(
