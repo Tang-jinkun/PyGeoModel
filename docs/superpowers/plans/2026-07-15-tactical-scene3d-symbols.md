@@ -4,7 +4,7 @@
 
 **Goal:** Export a self-contained, tactically readable air-corridor GLB whose threat units, symbols, labels, routes, and risk zones retain their intended colors both offline and over the workbench DEM.
 
-**Architecture:** Extend the backend `scene3d` kernel with hierarchical scene nodes, standard unlit materials, and reusable tactical unit assemblies. The air-corridor adapter maps each threat and its sampled DEM elevation into that kernel; the frontend only preserves semantics during geographic flattening and supplies neutral baseline light for PBR content.
+**Architecture:** Extend the backend `scene3d` kernel with hierarchical scene nodes, standard unlit materials, and reusable tactical unit assemblies. The air-corridor adapter maps each threat and its sampled DEM elevation into that kernel; the frontend only preserves semantics during geographic flattening and supplies neutral baseline light for the moderately shaded PBR unit bodies while routes, symbols, labels, and influence overlays remain authored as unlit semantic geometry.
 
 **Tech Stack:** Python 3.12, NumPy, trimesh 4.12.2, rasterio 1.4.3, pytest 8.3.4, TypeScript 5.7.3, Three.js 0.171, MapLibre GL 4.7.1, Vitest 4.1.10, Docker Desktop.
 
@@ -522,7 +522,7 @@ git commit -m "fix: render tactical glb materials clearly"
 - [ ] **Step 1: Run complete backend and frontend verification**
 
 ```powershell
-docker run --rm -v "${PWD}\backend:/app" -w /app pygeomodel-glb-overlay-backend:latest pytest -q
+docker run --rm -v "${PWD}:/workspace" -w /workspace/backend pygeomodel-glb-overlay-backend:latest pytest -q
 Set-Location frontend
 npm test
 npm run build
@@ -571,9 +571,9 @@ Expected from `inspect_glb.py`: `valid=true`, `tactical_unit_count` equals the r
 
 - [ ] **Step 5: Perform independent and workbench desktop visual acceptance**
 
-Create a temporary standalone Three.js GLTFLoader page in the visualization workspace, outside the repository. It must contain only an orbit camera, neutral lights, a solid neutral background, and the generated GLB; it must not import PyGeoModel map or workbench code. Verify from four horizontal bearings that the body, crossed symbol, and short ID remain attached and recognizable, and that no semantic geometry is black.
+Create a temporary standalone Three.js GLTFLoader page in the visualization workspace, outside the repository. It must contain only an orbit camera, neutral lights, a solid neutral background, and the generated GLB; it must not import PyGeoModel map or workbench code. Verify from four horizontal bearings that the moderately shaded PBR unit body and the unlit crossed symbol plus short ID remain attached and recognizable, and that no semantic geometry is black.
 
-Then open `http://127.0.0.1:5174/PyGeoModel/`, select the new task, manually enable its `3D result`, and focus it over the DEM. At `1440x900`, capture a screenshot and run canvas pixel checks proving terrain and non-black green/amber/orange/red/light tactical pixels are simultaneously present. Pan, zoom, pitch, and rotate; confirm the GLB remains aligned, terrain exaggeration is `1.0`, no text or controls overlap, the browser console is clean, and no resource request fails.
+Then open `http://127.0.0.1:5174/PyGeoModel/`, select the new task, manually enable its `3D result`, and focus it over the DEM. At `1440x900`, capture a screenshot and run canvas pixel checks proving terrain and non-black green/amber/orange/red/light tactical pixels are simultaneously present. Pan, zoom, pitch, and rotate; confirm the GLB remains aligned, terrain exaggeration is `1.0`, no text or controls overlap, the browser console is clean, and no resource request fails other than local DEM `/tiles/` or `/terrain/` `net::ERR_ABORTED` cancellations that MapLibre triggers during navigation and records separately from unexpected service failures.
 
 Expected: both the standalone viewer and workbench satisfy every real-artifact criterion in the approved spec.
 

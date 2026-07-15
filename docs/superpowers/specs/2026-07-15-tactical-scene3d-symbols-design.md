@@ -3,8 +3,9 @@
 ## Status
 
 Approved section by section during brainstorming and approved as a written
-specification on 2026-07-15. Implementation follows the separately reviewed
-plan.
+specification on 2026-07-15. Implemented and accepted on 2026-07-15 for task
+`air_corridor_task_20260715_024451_ce911e89` after the rerun evidence pass
+recorded below.
 
 ## Goal
 
@@ -409,6 +410,39 @@ viewer:
 - DEM and GLB stay aligned at terrain exaggeration `1.0`;
 - desktop screenshots, canvas pixel checks, browser console, and failed request
   logs provide acceptance evidence.
+
+### Accepted Evidence
+
+- Accepted task: `air_corridor_task_20260715_024451_ce911e89`
+- Backend full suite: `273 passed, 34 warnings`
+- Frontend full suite: `30` files passed, `214` tests passed
+- Frontend production build: passed with the existing Vite chunk-size warning
+- Accepted GLB: `2,297,184` bytes with `10` tactical units and
+  `scene3d.omitted_units = []`
+- Artifact fingerprint: SHA-256
+  `C99703C9BFEB57B7EB9C05363C1487B87F5DB20DEF0D7ED0059C81EB692EDDA7`
+- Evidence directory:
+  `C:\Users\t\.codex\visualizations\2026\07\13\019f596d-afc2-71c1-800f-b5ec0b6ea06b\brainstorm-glb-rendering\session-1\task5-acceptance-20260715-1055\evidence-rerun-20260715-123057`
+- Key evidence files:
+  `rerun-acceptance-summary.json`,
+  `rerun-workbench-summary.json`,
+  `rerun-viewer-summary.json`,
+  `rerun-inspect-glb.json`,
+  `rerun-artifact-fingerprint.json`,
+  `rerun-glb-structure-roots.json`
+- Clean console/network classification:
+  no console errors; no external `demotiles.maplibre.org` requests; no HTTP
+  responses `>= 400`; no unexpected request failures; five local DEM
+  `/tiles/` or `/terrain/` `net::ERR_ABORTED` requests were recorded
+  separately as expected navigation cancellations
+- Runtime terrain evidence while the GLB was visible:
+  browser-only instrumentation captured live `map.getTerrain()` before and
+  after navigation as `{ source: "dem-terrain-source", exaggeration: 1 }`
+- Desktop visual evidence:
+  the standalone viewer remained non-black from four horizontal bearings, and
+  the workbench screenshots plus pixel buckets showed DEM terrain together with
+  non-black green, amber, orange, red, and light tactical colors before and
+  after pan/zoom/pitch/rotate with no visible control overlap
 
 ## Rollout
 
