@@ -1,13 +1,103 @@
 from pathlib import Path
 
 import numpy
+import pytest
 import rasterio
 from rasterio.coords import BoundingBox
 from rasterio.transform import from_origin
 
 from app.schemas.radar import CoverageRequest
-from app.scene3d.radar_volume import build_radar_visibility_volume
+from app.scene3d.radar_volume import (
+    _bounded_grid_shape,
+    _extract_surface,
+    _terrain_contact_segments,
+    _unknown_boundary_segments,
+    build_radar_visibility_volume,
+)
 from app.services.coverage_model import PreparedCoverageDem
+
+
+def test_default_grid_shape_follows_payload_preview_resolution() -> None:
+    payload = CoverageRequest.model_validate(
+        {
+            "dem_id": "dem_grid_shape",
+            "radar": {"lon": 79.0, "lat": 31.5, "height_m": 0},
+            "coverage": {"max_range_m": 1_000},
+            "advanced": {"voxel_grid_size": 48, "voxel_vertical_levels": 8},
+        }
+    )
+
+    assert _bounded_grid_shape(None, payload) == (64, 64, 32)
+    assert _bounded_grid_shape((7, 8, 9), payload) == (7, 8, 9)
+    assert _bounded_grid_shape((300, 300, 200), payload) == (256, 256, 128)
+
+
+def test_terrain_contacts_are_triangle_height_field_intersections() -> None:
+    vertices = numpy.asarray(
+        [
+            [0.0, 0.0, -1.0],
+            [1.0, 0.0, 1.0],
+            [1.0, 1.0, 1.0],
+            [0.0, 1.0, -1.0],
+        ]
+    )
+    faces = numpy.asarray([[0, 1, 2], [0, 2, 3]])
+    terrain = numpy.zeros((2, 2), dtype=numpy.float64)
+    segments = _terrain_contact_segments(
+        vertices,
+        faces,
+        terrain,
+        numpy.zeros_like(terrain),
+        numpy.ones_like(terrain, dtype=bool),
+        origin=(0.0, 0.0),
+        pitch=(1.0, 1.0, 2.0),
+    )
+
+    assert segments.shape == (2, 2, 3)
+    assert numpy.allclose(segments[:, :, 0], 0.5)
+    assert numpy.allclose(segments[:, :, 2], 0.0)
+    assert numpy.all(numpy.linalg.norm(segments[:, 1] - segments[:, 0], axis=1) > 0)
+    canonical = numpy.sort(numpy.round(segments, 12), axis=1)
+    assert len(numpy.unique(canonical.reshape(len(canonical), -1), axis=0)) == 2
+
+
+def test_unknown_boundaries_use_sampled_terrain_height() -> None:
+    payload = CoverageRequest.model_validate(
+        {
+            "dem_id": "dem_unknown_height",
+            "radar": {"lon": 79.0, "lat": 31.5, "height_m": 0},
+            "coverage": {"max_range_m": 10_000},
+        }
+    )
+    terrain = numpy.asarray([[10.0, 20.0], [30.0, 40.0]])
+    valid = numpy.asarray([[True, True], [True, False]])
+
+    segments = _unknown_boundary_segments(
+        valid,
+        terrain,
+        numpy.full_like(terrain, 500.0),
+        1_000.0,
+        origin=(0.0, 0.0),
+        pitch=(1.0, 1.0),
+        radar_xy=(0.0, 0.0),
+        effective_range_m=10_000.0,
+        payload=payload,
+    )
+
+    assert len(segments) > 0
+    assert set(segments[:, :, 2].ravel()).issubset({10.0, 20.0, 30.0})
+
+
+@pytest.mark.parametrize("occupied", [False, True])
+def test_empty_or_degenerate_occupancy_raises_clear_error(occupied: bool) -> None:
+    occupancy = numpy.full((3, 3, 3), occupied, dtype=bool)
+
+    with pytest.raises(ValueError, match="occupancy.*surface"):
+        _extract_surface(
+            occupancy,
+            spacing=(1.0, 1.0, 1.0),
+            origin=(0.0, 0.0, 0.0),
+        )
 
 
 def test_visibility_volume_carves_terrain_and_unknown_space(tmp_path: Path) -> None:

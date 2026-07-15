@@ -11,6 +11,8 @@ from app.services.coverage_range import effective_max_range
 
 
 MAX_GRID_SHAPE = (256, 256, 128)
+MIN_PREVIEW_GRID_SIZE = 64
+MIN_PREVIEW_VERTICAL_LEVELS = 32
 
 
 @dataclass(frozen=True)
@@ -31,7 +33,7 @@ def build_radar_visibility_volume(
     grid_shape: tuple[int, int, int] | None = None,
 ) -> RadarVisibilityVolume:
     """Build a terrain-carved nominal radar volume in projected XYZ coordinates."""
-    x_count, y_count, z_count = _bounded_grid_shape(grid_shape)
+    x_count, y_count, z_count = _bounded_grid_shape(grid_shape, payload)
     effective_range_m, _ = effective_max_range(payload)
 
     with rasterio.open(prepared.projected_dem) as dem_source, rasterio.open(
@@ -168,8 +170,21 @@ def build_radar_visibility_volume(
 
 def _bounded_grid_shape(
     grid_shape: tuple[int, int, int] | None,
+    payload: CoverageRequest,
 ) -> tuple[int, int, int]:
-    requested = MAX_GRID_SHAPE if grid_shape is None else grid_shape
+    """Resolve payload preview resolution while preserving explicit test shapes."""
+    requested = (
+        (
+            max(payload.advanced.voxel_grid_size, MIN_PREVIEW_GRID_SIZE),
+            max(payload.advanced.voxel_grid_size, MIN_PREVIEW_GRID_SIZE),
+            max(
+                payload.advanced.voxel_vertical_levels,
+                MIN_PREVIEW_VERTICAL_LEVELS,
+            ),
+        )
+        if grid_shape is None
+        else grid_shape
+    )
     if len(requested) != 3 or any(
         isinstance(value, bool) or not isinstance(value, (int, numpy.integer))
         for value in requested
@@ -248,9 +263,8 @@ def _extract_surface(
     origin: tuple[float, float, float],
 ) -> tuple[numpy.ndarray, numpy.ndarray]:
     if not occupancy.any() or occupancy.all():
-        return (
-            numpy.empty((0, 3), dtype=numpy.float64),
-            numpy.empty((0, 3), dtype=numpy.int64),
+        raise ValueError(
+            "Radar occupancy does not contain an extractable surface"
         )
     vertices_zyx, faces, _, _ = measure.marching_cubes(
         occupancy.astype(numpy.float32),
@@ -264,6 +278,8 @@ def _extract_surface(
             origin[2] + vertices_zyx[:, 0],
         )
     )
+    if len(vertices) == 0 or len(faces) == 0:
+        raise ValueError("Radar occupancy produced a degenerate surface")
     return vertices, numpy.asarray(faces, dtype=numpy.int64)
 
 
@@ -279,24 +295,94 @@ def _terrain_contact_segments(
 ) -> numpy.ndarray:
     if len(vertices) == 0 or len(faces) == 0:
         return numpy.empty((0, 2, 3), dtype=numpy.float64)
-    x_index = numpy.rint((vertices[:, 0] - origin[0]) / pitch[0]).astype(int)
-    y_index = numpy.rint((vertices[:, 1] - origin[1]) / pitch[1]).astype(int)
-    x_index = numpy.clip(x_index, 0, terrain_grid.shape[1] - 1)
-    y_index = numpy.clip(y_index, 0, terrain_grid.shape[0] - 1)
-    clearance = vertices[:, 2] - terrain_grid[y_index, x_index]
-    terrain_is_active_constraint = min_height_grid[y_index, x_index] <= 1e-6
-    touches_terrain = (
-        valid_horizontal[y_index, x_index]
-        & terrain_is_active_constraint
-        & (numpy.abs(clearance) <= 0.75 * pitch[2])
+    terrain_height, terrain_valid = _interpolate_height_field(
+        vertices,
+        terrain_grid,
+        valid_horizontal,
+        origin=origin,
+        pitch=pitch[:2],
     )
-    edges = numpy.concatenate(
-        (faces[:, (0, 1)], faces[:, (1, 2)], faces[:, (2, 0)]),
+    clearance = vertices[:, 2] - terrain_height
+    tolerance = max(1e-9, numpy.finfo(numpy.float64).eps * max(1.0, pitch[2]))
+    segments: list[numpy.ndarray] = []
+    for face in faces:
+        if not terrain_valid[face].all():
+            continue
+        face_clearance = clearance[face]
+        if numpy.all(numpy.abs(face_clearance) <= tolerance):
+            continue
+        intersections: list[numpy.ndarray] = []
+        for first, second in ((0, 1), (1, 2), (2, 0)):
+            first_clearance = face_clearance[first]
+            second_clearance = face_clearance[second]
+            first_vertex = vertices[face[first]]
+            second_vertex = vertices[face[second]]
+            if abs(first_clearance) <= tolerance:
+                intersections.append(first_vertex)
+            if abs(second_clearance) <= tolerance:
+                intersections.append(second_vertex)
+            if first_clearance * second_clearance < 0:
+                fraction = first_clearance / (first_clearance - second_clearance)
+                intersections.append(
+                    first_vertex + fraction * (second_vertex - first_vertex)
+                )
+        unique_points: list[numpy.ndarray] = []
+        for point in intersections:
+            if not any(
+                numpy.linalg.norm(point - existing) <= tolerance
+                for existing in unique_points
+            ):
+                unique_points.append(point)
+        if len(unique_points) == 2:
+            segment = numpy.asarray(unique_points, dtype=numpy.float64)
+            if numpy.linalg.norm(segment[1] - segment[0]) > tolerance:
+                segments.append(segment)
+    if not segments:
+        return numpy.empty((0, 2, 3), dtype=numpy.float64)
+    result = numpy.asarray(segments, dtype=numpy.float64)
+    dedupe_tolerance = max(tolerance, min(pitch) * 1e-9)
+    quantized = numpy.rint(result / dedupe_tolerance).astype(numpy.int64)
+    canonical = numpy.asarray(
+        [
+            (*min(map(tuple, segment)), *max(map(tuple, segment)))
+            for segment in quantized
+        ],
+        dtype=numpy.int64,
+    )
+    _, unique_index = numpy.unique(
+        canonical,
         axis=0,
+        return_index=True,
     )
-    edges = numpy.unique(numpy.sort(edges, axis=1), axis=0)
-    contact_edges = edges[touches_terrain[edges].all(axis=1)]
-    return numpy.asarray(vertices[contact_edges], dtype=numpy.float64)
+    return result[numpy.sort(unique_index)]
+
+
+def _interpolate_height_field(
+    vertices: numpy.ndarray,
+    height: numpy.ndarray,
+    valid: numpy.ndarray,
+    *,
+    origin: tuple[float, float],
+    pitch: tuple[float, float],
+) -> tuple[numpy.ndarray, numpy.ndarray]:
+    x = numpy.clip((vertices[:, 0] - origin[0]) / pitch[0], 0, height.shape[1] - 1)
+    y = numpy.clip((vertices[:, 1] - origin[1]) / pitch[1], 0, height.shape[0] - 1)
+    x0 = numpy.floor(x).astype(int)
+    y0 = numpy.floor(y).astype(int)
+    x1 = numpy.minimum(x0 + 1, height.shape[1] - 1)
+    y1 = numpy.minimum(y0 + 1, height.shape[0] - 1)
+    x_fraction = x - x0
+    y_fraction = y - y0
+    sampled = (
+        height[y0, x0] * (1 - x_fraction) * (1 - y_fraction)
+        + height[y0, x1] * x_fraction * (1 - y_fraction)
+        + height[y1, x0] * (1 - x_fraction) * y_fraction
+        + height[y1, x1] * x_fraction * y_fraction
+    )
+    sampled_valid = (
+        valid[y0, x0] & valid[y0, x1] & valid[y1, x0] & valid[y1, x1]
+    )
+    return sampled, sampled_valid
 
 
 def _unknown_boundary_segments(
@@ -313,7 +399,6 @@ def _unknown_boundary_segments(
 ) -> numpy.ndarray:
     contours = measure.find_contours(valid_horizontal.astype(numpy.float32), 0.5)
     segments: list[numpy.ndarray] = []
-    base_height = numpy.maximum(radar_z, terrain_grid + min_height_grid)
     for contour in contours:
         if len(contour) < 2:
             continue
@@ -321,18 +406,25 @@ def _unknown_boundary_segments(
         points[:, 0] = origin[0] + contour[:, 1] * pitch[0]
         points[:, 1] = origin[1] + contour[:, 0] * pitch[1]
         points[:, 2] = [
-            _nearest_valid_height(row, column, valid_horizontal, base_height, radar_z)
+            _nearest_valid_height(
+                row,
+                column,
+                valid_horizontal,
+                terrain_grid,
+                numpy.nan,
+            )
             for row, column in contour
         ]
         segments.extend(numpy.stack((points[:-1], points[1:]), axis=1))
     if not segments:
         return numpy.empty((0, 2, 3), dtype=numpy.float64)
     result = numpy.asarray(segments, dtype=numpy.float64)
+    finite_height = numpy.isfinite(result[:, :, 2]).all(axis=1)
     dx = result[:, :, 0] - radar_xy[0]
     dy = result[:, :, 1] - radar_xy[1]
     inside_range = dx * dx + dy * dy <= effective_range_m * effective_range_m
     inside_sector = _sector_mask(dx, dy, payload)
-    return result[(inside_range & inside_sector).all(axis=1)]
+    return result[finite_height & (inside_range & inside_sector).all(axis=1)]
 
 
 def _nearest_valid_height(

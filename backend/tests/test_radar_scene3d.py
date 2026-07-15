@@ -189,7 +189,7 @@ def test_target_independent_radar_glb_is_self_contained_and_open_at_nodata(
     assert visibility_volume["method"] == "marching_cubes"
     assert visibility_volume["nominal_elevation_deg"] == [0, 90]
     assert visibility_volume["scan_elevation_deg"] == [0.0, 36.0]
-    assert visibility_volume["grid_shape"] == [256, 256, 128]
+    assert visibility_volume["grid_shape"] == [128, 128, 32]
     assert visibility_volume["occupied_voxel_count"] > 0
     assert visibility_volume["face_count"] > 0
     assert visibility_volume["terrain_segment_count"] > 0
