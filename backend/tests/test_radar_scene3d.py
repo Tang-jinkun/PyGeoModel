@@ -125,6 +125,7 @@ def test_target_independent_radar_glb_is_self_contained_and_open_at_nodata(
         "radar_result/detectable_shell",
         "radar_result/detectable_fill",
         "radar_result/shell_grid",
+        "radar_result/ground_contact",
         "radar_result/diagnostics",
     } <= node_names
     scan_nodes = {
@@ -173,7 +174,7 @@ def test_target_independent_radar_glb_is_self_contained_and_open_at_nodata(
         "radar_platform/feed_arm",
     } <= platform_nodes
     assert platform_metadata["animation"]["period_s"] == 8
-    assert platform_metadata["dimensions_m"]["height"] <= 15
+    assert platform_metadata["dimensions_m"]["height"] == 123.5
     assert any(
         animation.get("name") == "radar_platform_scan"
         for animation in platform_document.get("animations", [])

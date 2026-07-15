@@ -21,6 +21,7 @@ from .primitives import tube_mesh
 
 
 SCAN_PERIOD_S = 8.0
+DISPLAY_SCALE = 10.0
 EQUIPMENT_MATERIAL = MaterialSpec("radar_equipment_olive", (72, 82, 68, 255))
 PEDESTAL_MATERIAL = MaterialSpec("radar_pedestal_metal", (70, 78, 80, 255))
 TURNTABLE_MATERIAL = MaterialSpec("radar_turntable_metal", (47, 56, 60, 255))
@@ -83,6 +84,9 @@ def write_radar_platform_glb(
     feed_arm = trimesh.util.concatenate([feed_arm, feed_horn])
     feed_arm.apply_translation(base)
 
+    for mesh in (cabinet, pedestal, turntable, dish, feed_arm):
+        mesh.apply_scale(DISPLAY_SCALE)
+
     rotating_names = [
         "radar_platform/azimuth_turntable",
         "radar_platform/antenna_dish",
@@ -90,7 +94,7 @@ def write_radar_platform_glb(
     ]
     root = SceneNode(
         name="radar_platform",
-        extras={"kind": "radar_platform", "display_scale": 1.0},
+        extras={"kind": "radar_platform", "display_scale": DISPLAY_SCALE},
         children=[
             SceneNode(
                 name="radar_platform/equipment_cabinet",
@@ -152,7 +156,11 @@ def write_radar_platform_glb(
             "asset_kind": "radar_platform",
             "radar_ground_elevation_amsl_m": ground_m,
             "analysis_origin_altitude_amsl_m": ground_m + payload.radar.height_m,
-            "dimensions_m": {"width": 5.5, "depth": 5.5, "height": 12.35},
+            "dimensions_m": {
+                "width": 5.5 * DISPLAY_SCALE,
+                "depth": 5.5 * DISPLAY_SCALE,
+                "height": 12.35 * DISPLAY_SCALE,
+            },
             "animation": {"name": animation.name, "period_s": SCAN_PERIOD_S},
         }
     )
