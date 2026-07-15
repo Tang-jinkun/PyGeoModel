@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import proj4 from "proj4";
 
 import {
   createSceneGeoReference,
@@ -68,4 +69,41 @@ describe("scene GLB georeference", () => {
     expect(result.latitude).toBeCloseTo(-33.86, 2);
     expect(result.altitudeAmslM).toBe(100);
   });
+
+  it.each([
+    { zone: 60, originLongitude: 179.9, vertexLongitude: -179.9, expected: 180.1 },
+    { zone: 1, originLongitude: -179.9, vertexLongitude: 179.9, expected: -180.1 }
+  ])(
+    "unwraps zone $zone Mercator x and longitude to the anchor world copy",
+    ({ zone, originLongitude, vertexLongitude, expected }) => {
+      const definition = utmDefinition(zone);
+      const forward = proj4("EPSG:4326", definition);
+      const [originX, originY] = forward.forward([originLongitude, 10]);
+      const [vertexX, vertexY] = forward.forward([vertexLongitude, 10]);
+      const reference = createSceneGeoReference(validateScene3dMetadata({
+        ...north,
+        source_crs: `EPSG:326${String(zone).padStart(2, "0")}`,
+        origin: {
+          projected_x: originX,
+          projected_y: originY,
+          longitude: originLongitude,
+          latitude: 10,
+          altitude_amsl_m: 0
+        }
+      }));
+
+      const result = reference.project([
+        vertexX - originX,
+        0,
+        -(vertexY - originY)
+      ]);
+
+      expect(result.longitude).toBeCloseTo(expected, 6);
+      expect(Math.abs(result.mercator[0])).toBeLessThan(0.01);
+    }
+  );
 });
+
+function utmDefinition(zone: number) {
+  return `+proj=utm +zone=${zone} +datum=WGS84 +units=m +no_defs`;
+}

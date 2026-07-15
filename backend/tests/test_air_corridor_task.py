@@ -8,17 +8,20 @@ import rasterio
 from rasterio.transform import from_origin
 
 from app.core.config import settings
+from app.core.errors import AppError
 from app.schemas.air_corridor import AirCorridorPlanningRequest
 from app.services.air_corridor_task_store import (
     create_air_corridor_task,
     get_air_corridor_task,
 )
 from app.workers.air_corridor_task import (
+    _commit_staged_outputs,
     _compute_air_corridor,
     _threat_ground_elevations,
     _write_air_corridor_outputs,
     run_air_corridor_task,
 )
+from app.services.air_corridor_output_files import AIR_CORRIDOR_OUTPUT_FILENAMES
 
 
 class Prepared:
@@ -182,7 +185,7 @@ def test_worker_stages_scene_glb_and_metadata(
     settings.data_dir = tmp_path
     settings.ensure_directories()
     output_dir = settings.outputs_dir / task_id
-    staging_dir = output_dir / ".staging-test"
+    staging_dir = settings.outputs_dir / f".{task_id}.staging-test"
     staging_dir.mkdir(parents=True)
     payload = AirCorridorPlanningRequest(
         dem_id="dem_a",
@@ -225,7 +228,7 @@ def test_worker_stages_scene_glb_and_metadata(
             task_id,
             staging_dir,
             output_dir,
-            prepared_dem(tmp_path),
+            prepared_dem(staging_dir),
             payload,
         )
     )
@@ -242,6 +245,9 @@ def test_worker_stages_scene_glb_and_metadata(
     assert metadata["model"]["scene3d"]["model_id"] == "air_corridor"
     assert metadata["model"]["scene3d"]["tactical_unit_count"] == 0
     assert metadata["model"]["scene3d"]["omitted_units"] == []
+    assert {
+        path.name for path in output_dir.iterdir()
+    } == set(AIR_CORRIDOR_OUTPUT_FILENAMES.values())
 
 
 def test_worker_propagates_scene_unit_omissions(
@@ -252,7 +258,7 @@ def test_worker_propagates_scene_unit_omissions(
     settings.data_dir = tmp_path
     settings.ensure_directories()
     output_dir = settings.outputs_dir / task_id
-    staging_dir = output_dir / ".staging-test"
+    staging_dir = settings.outputs_dir / f".{task_id}.staging-test"
     staging_dir.mkdir(parents=True)
     nodata = -9999.0
     dem = numpy.zeros((10, 10), dtype=numpy.float32)
@@ -459,3 +465,131 @@ def test_glb_export_failure_marks_task_failed_and_leaves_no_artifact(
     assert not (
         settings.outputs_dir / task.task_id / "air_corridor_result.glb"
     ).exists()
+
+
+def test_output_publication_uses_one_sibling_directory_rename(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    staging_dir = tmp_path / ".air_corridor_task_a.staging-test"
+    output_dir = tmp_path / "air_corridor_task_a"
+    staging_dir.mkdir()
+    for filename in AIR_CORRIDOR_OUTPUT_FILENAMES.values():
+        (staging_dir / filename).write_text(filename, encoding="utf-8")
+    original_replace = Path.replace
+    replacements: list[tuple[Path, Path]] = []
+
+    def track_replace(source: Path, target: Path) -> Path:
+        replacements.append((source, Path(target)))
+        return original_replace(source, target)
+
+    monkeypatch.setattr(Path, "replace", track_replace)
+
+    _commit_staged_outputs(staging_dir, output_dir)
+
+    assert replacements == [(staging_dir, output_dir)]
+    assert not staging_dir.exists()
+    assert {
+        path.name for path in output_dir.iterdir()
+    } == set(AIR_CORRIDOR_OUTPUT_FILENAMES.values())
+
+
+def test_output_publication_failure_leaves_no_partial_destination(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    staging_dir = tmp_path / ".air_corridor_task_a.staging-test"
+    output_dir = tmp_path / "air_corridor_task_a"
+    staging_dir.mkdir()
+    for filename in AIR_CORRIDOR_OUTPUT_FILENAMES.values():
+        (staging_dir / filename).write_text(filename, encoding="utf-8")
+    original_replace = Path.replace
+    replacements: list[tuple[Path, Path]] = []
+
+    def fail_publication(source: Path, target: Path) -> Path:
+        target_path = Path(target)
+        replacements.append((source, target_path))
+        if source == staging_dir or (
+            source.parent == staging_dir
+            and sum(item[0].parent == staging_dir for item in replacements) == 2
+        ):
+            raise OSError("injected directory publication failure")
+        return original_replace(source, target_path)
+
+    monkeypatch.setattr(Path, "replace", fail_publication)
+
+    with pytest.raises(OSError, match="injected directory publication failure"):
+        _commit_staged_outputs(staging_dir, output_dir)
+
+    assert replacements == [(staging_dir, output_dir)]
+    assert not output_dir.exists()
+    assert {
+        path.name for path in staging_dir.iterdir()
+    } == set(AIR_CORRIDOR_OUTPUT_FILENAMES.values())
+
+
+def test_output_publication_refuses_to_replace_existing_task_directory(
+    tmp_path: Path,
+) -> None:
+    staging_dir = tmp_path / ".air_corridor_task_a.staging-test"
+    output_dir = tmp_path / "air_corridor_task_a"
+    staging_dir.mkdir()
+    output_dir.mkdir()
+    (staging_dir / "new.txt").write_text("new", encoding="utf-8")
+    (output_dir / "legacy.txt").write_text("legacy", encoding="utf-8")
+
+    with pytest.raises(AppError, match="already exists"):
+        _commit_staged_outputs(staging_dir, output_dir)
+
+    assert (staging_dir / "new.txt").read_text(encoding="utf-8") == "new"
+    assert (output_dir / "legacy.txt").read_text(encoding="utf-8") == "legacy"
+
+
+def test_oversize_glb_failure_rolls_back_sibling_staging_directory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings.data_dir = tmp_path
+    settings.ensure_directories()
+    payload = AirCorridorPlanningRequest(
+        dem_id="dem_a",
+        start={"lon": 79.8, "lat": 31.48, "altitude_m": 300},
+        end={"lon": 79.81, "lat": 31.48, "altitude_m": 300},
+        altitude_layers_m=[300],
+        threats=[],
+    )
+    task = create_air_corridor_task(payload)
+    prepared = prepared_dem(tmp_path)
+    observed_staging_dirs: list[Path] = []
+    monkeypatch.setattr(
+        "app.workers.air_corridor_task.find_dem_file",
+        lambda _dem_id: tmp_path / "source.tif",
+    )
+
+    def fake_prepare(_source: Path, destination: Path, _payload):
+        observed_staging_dirs.append(destination.parent)
+        return prepared
+
+    monkeypatch.setattr(
+        "app.workers.air_corridor_task._prepare_air_corridor_dem",
+        fake_prepare,
+    )
+    monkeypatch.setattr(
+        "app.workers.air_corridor_task.write_air_corridor_glb",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            ValueError(
+                "GLB payload exceeds 50000000-byte hard limit: 50000001 bytes"
+            )
+        ),
+    )
+
+    run_air_corridor_task(task.task_id, payload)
+
+    detail = get_air_corridor_task(task.task_id)
+    output_dir = settings.outputs_dir / task.task_id
+    assert detail.status == "failed"
+    assert "50000000-byte hard limit" in detail.message
+    assert observed_staging_dirs[0].parent == settings.outputs_dir
+    assert observed_staging_dirs[0] != output_dir
+    assert not output_dir.exists()
+    assert not observed_staging_dirs[0].exists()

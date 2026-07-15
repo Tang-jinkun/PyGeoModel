@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import proj4 from "proj4";
 
 import {
   disposePreparedScene,
@@ -167,4 +168,53 @@ describe("static scene GLB preparation", () => {
     expect(buffer.byteLength).toBe(3);
     expect(progress).not.toHaveBeenCalled();
   });
+
+  it.each([
+    { zone: 60, originLongitude: 179.9, vertexLongitude: -179.9 },
+    { zone: 1, originLongitude: -179.9, vertexLongitude: 179.9 }
+  ])(
+    "keeps zone $zone antimeridian vertices and focus bounds in one world copy",
+    ({ zone, originLongitude, vertexLongitude }) => {
+      const definition = utmDefinition(zone);
+      const forward = proj4("EPSG:4326", definition);
+      const [originX, originY] = forward.forward([originLongitude, 10]);
+      const [vertexX, vertexY] = forward.forward([vertexLongitude, 10]);
+      const [northX, northY] = forward.forward([vertexLongitude, 10.01]);
+      const antimeridianMetadata: Scene3dMetadata = {
+        ...metadata,
+        source_crs: `EPSG:326${String(zone).padStart(2, "0")}`,
+        origin: {
+          projected_x: originX,
+          projected_y: originY,
+          longitude: originLongitude,
+          latitude: 10,
+          altitude_amsl_m: 0
+        }
+      };
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute("position", new THREE.Float32BufferAttribute([
+        0, 0, 0,
+        vertexX - originX, 0, -(vertexY - originY),
+        northX - originX, 100, -(northY - originY)
+      ], 3));
+      geometry.setIndex([0, 1, 2]);
+      const root = new THREE.Group();
+      root.add(new THREE.Mesh(geometry, new THREE.MeshBasicMaterial()));
+
+      const asset = prepareStaticScene(root, antimeridianMetadata, []);
+      const prepared = asset.group.children[0] as THREE.Mesh;
+      const positions = prepared.geometry.getAttribute("position");
+      const projectedXs = Array.from(
+        { length: positions.count },
+        (_value, index) => positions.getX(index)
+      );
+
+      expect(asset.bounds.east - asset.bounds.west).toBeLessThan(1);
+      expect(Math.max(...projectedXs) - Math.min(...projectedXs)).toBeLessThan(0.01);
+    }
+  );
 });
+
+function utmDefinition(zone: number) {
+  return `+proj=utm +zone=${zone} +datum=WGS84 +units=m +no_defs`;
+}

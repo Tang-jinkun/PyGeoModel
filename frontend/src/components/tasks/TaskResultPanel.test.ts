@@ -129,6 +129,21 @@ describe("TaskResultPanel", () => {
     expect(wrapper.text()).toContain("下载visible_geojson");
   });
 
+  it("renders downloads only for available output files", () => {
+    const wrapper = mount(OutputFileList, {
+      props: {
+        files: [
+          outputFile("available", "/available"),
+          { ...outputFile("missing", "/missing"), exists: false }
+        ]
+      }
+    });
+
+    expect(wrapper.text()).toContain("available");
+    expect(wrapper.text()).not.toContain("missing");
+    expect(wrapper.findAll("a")).toHaveLength(1);
+  });
+
   it("fetches result metadata in parallel and isolates each registered GeoJSON layer", async () => {
     const metricsPending = deferred<UavMetrics>();
     const outputsPending = deferred<OutputFile[]>();

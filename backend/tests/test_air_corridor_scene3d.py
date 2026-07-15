@@ -293,6 +293,98 @@ def test_invalid_threat_ground_omits_unit_but_keeps_route_and_terminals(
     assert not any(name.startswith("unit_a") for name in node_names)
 
 
+def test_explicit_zero_threat_radius_omits_the_complete_unit(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "air_corridor_result.glb"
+    payload = payload_with_one_threat()
+    payload.threats[0].warning_zone_radius_m = 0
+
+    metadata = write_air_corridor_glb(
+        output,
+        task_id="air_corridor_task_a",
+        target_epsg=32644,
+        path_points=[],
+        sample_features=[],
+        prepared_threat_xy={"a": (501_000, 3_500_000)},
+        threat_ground_elevations_m={"a": 6100},
+        start_ground_elevation_m=5900,
+        end_ground_elevation_m=6000,
+        payload=payload,
+        route_found=False,
+    )
+    document = read_glb_document(output.read_bytes())
+    node_names = {node["name"] for node in document["nodes"]}
+
+    assert metadata["tactical_unit_count"] == 0
+    assert metadata["omitted_units"] == [
+        {
+            "unit_id": "a",
+            "reason": "warning_zone outer radius must exceed inner radius",
+        }
+    ]
+    assert not any(name.startswith("unit_a") for name in node_names)
+
+
+def test_none_threat_radius_keeps_the_documented_fallback() -> None:
+    payload = payload_with_one_threat()
+    payload.threats[0].warning_zone_radius_m = None
+    payload.threats[0].kill_zone_radius_m = None
+
+    spec = air_corridor_scene._threat_unit_spec(
+        payload.threats[0],
+        0,
+        (501_000, 3_500_000),
+        6100,
+        payload.planning.corridor_width_m,
+    )
+
+    assert spec.warning_zone is not None
+    assert spec.warning_zone.outer_radius_m == payload.threats[0].max_range_m
+    assert spec.kill_zone is not None
+    assert spec.kill_zone.outer_radius_m == payload.threats[0].max_range_m * 0.7
+
+
+def test_omitted_distant_threat_does_not_influence_scene_origin(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "air_corridor_result.glb"
+    payload = payload_with_one_threat()
+    path_points = [
+        (500_000, 3_500_000, 6200),
+        (502_000, 3_500_000, 6400),
+    ]
+    to_target = Transformer.from_crs(
+        "EPSG:4326",
+        "EPSG:32644",
+        always_xy=True,
+    )
+    start_xy = to_target.transform(payload.start.lon, payload.start.lat)
+    end_xy = to_target.transform(payload.end.lon, payload.end.lat)
+    expected_x = (
+        min(start_xy[0], end_xy[0], *(point[0] for point in path_points))
+        + max(start_xy[0], end_xy[0], *(point[0] for point in path_points))
+    ) / 2
+
+    metadata = write_air_corridor_glb(
+        output,
+        task_id="air_corridor_task_a",
+        target_epsg=32644,
+        path_points=path_points,
+        sample_features=[],
+        prepared_threat_xy={"a": (50_000_000, 3_500_000)},
+        threat_ground_elevations_m={"a": None},
+        start_ground_elevation_m=5900,
+        end_ground_elevation_m=6000,
+        payload=payload,
+        route_found=True,
+    )
+
+    assert metadata["omitted_units"]
+    assert metadata["origin"]["projected_x"] == pytest.approx(expected_x)
+    assert metadata["origin"]["altitude_amsl_m"] == 6200
+
+
 def test_long_threat_names_use_request_order_labels_and_preserve_sources(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

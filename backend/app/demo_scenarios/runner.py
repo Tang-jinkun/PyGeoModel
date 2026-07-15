@@ -23,7 +23,12 @@ def _run_one(
         task_id = client.create_task(spec, scenario.request)
     client.wait_for_task(spec, task_id)
     metrics, outputs = client.task_result(spec, task_id)
-    errors = spec.validate(metrics, {str(item["kind"]) for item in outputs})
+    available_output_kinds = {
+        str(item["kind"])
+        for item in outputs
+        if item.get("exists") is True
+    }
+    errors = spec.validate(metrics, available_output_kinds)
     return ScenarioIndexEntry(
         scenario_id=scenario.scenario_id,
         model_id=scenario.model_id,

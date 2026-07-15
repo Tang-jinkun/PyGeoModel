@@ -9,6 +9,7 @@ import trimesh
 
 
 JSON_CHUNK = 0x4E4F534A
+MAX_GLB_BYTES = 50_000_000
 
 
 @dataclass(frozen=True)
@@ -49,6 +50,7 @@ def export_glb(
         _node_metadata(nodes),
         materials,
     )
+    _ensure_glb_size_within_limit(payload)
     _validate_serialized_scene(payload, nodes)
 
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -58,6 +60,14 @@ def export_glb(
     if missing_mesh_nodes:
         raise ValueError(
             f"Exported GLB lost semantic scene nodes: {sorted(missing_mesh_nodes)}"
+        )
+
+
+def _ensure_glb_size_within_limit(payload: bytes) -> None:
+    size = len(payload)
+    if size > MAX_GLB_BYTES:
+        raise ValueError(
+            f"GLB payload exceeds {MAX_GLB_BYTES}-byte hard limit: {size} bytes"
         )
 
 

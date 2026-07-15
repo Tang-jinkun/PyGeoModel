@@ -341,3 +341,47 @@ def test_export_glb_rejects_missing_serialized_hierarchy(
 
     with pytest.raises(ValueError, match="Exported GLB lost scene hierarchy: root -> child"):
         export_glb(tmp_path / "scene.glb", nodes, scene_metadata={})
+
+
+def test_glb_hard_limit_is_exactly_fifty_million_bytes() -> None:
+    assert exporter.MAX_GLB_BYTES == 50_000_000
+    exporter._ensure_glb_size_within_limit(b"\0" * exporter.MAX_GLB_BYTES)
+
+    with pytest.raises(
+        ValueError,
+        match="GLB payload exceeds 50000000-byte hard limit: 50000001 bytes",
+    ):
+        exporter._ensure_glb_size_within_limit(
+            b"\0" * (exporter.MAX_GLB_BYTES + 1)
+        )
+
+
+def test_export_glb_rejects_oversize_payload_before_writing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "oversize.glb"
+    oversized_payload = b"\0" * 50_000_001
+    monkeypatch.setattr(
+        exporter,
+        "inject_glb_extras",
+        lambda *_args, **_kwargs: oversized_payload,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="GLB payload exceeds 50000000-byte hard limit: 50000001 bytes",
+    ):
+        export_glb(
+            path,
+            [
+                SceneNode(
+                    name="mesh",
+                    mesh=marker_mesh(numpy.zeros(3), 4),
+                    material=MaterialSpec("material", (1, 2, 3, 255)),
+                )
+            ],
+            scene_metadata={},
+        )
+
+    assert not path.exists()

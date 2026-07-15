@@ -98,10 +98,33 @@ def write_air_corridor_glb(
     start_point = (float(start_xy[0]), float(start_xy[1]), start_altitude)
     end_point = (float(end_xy[0]), float(end_xy[1]), end_altitude)
 
-    frame_points = [start_point, end_point, *path_points]
     for threat in payload.threats:
         if threat.id not in prepared_threat_xy:
             raise ValueError(f"Missing projected threat coordinate: {threat.id}")
+    unit_specs = [
+        _threat_unit_spec(
+            threat,
+            index,
+            prepared_threat_xy[threat.id],
+            threat_ground_elevations_m.get(threat.id),
+            payload.planning.corridor_width_m,
+        )
+        for index, threat in enumerate(payload.threats)
+    ]
+    initial_frame = SceneFrame.from_projected_points(
+        target_epsg,
+        [start_point, end_point, *path_points],
+    )
+    unit_nodes, omissions = build_unit_nodes(unit_specs, initial_frame)
+    emitted_unit_ids = {
+        str(node.extras["unit_id"])
+        for node in unit_nodes
+    }
+
+    frame_points = [start_point, end_point, *path_points]
+    for threat in payload.threats:
+        if threat.id not in emitted_unit_ids:
+            continue
         threat_x, threat_y = prepared_threat_xy[threat.id]
         frame_points.extend(
             [
@@ -113,6 +136,7 @@ def write_air_corridor_glb(
         if ground_elevation is not None and numpy.isfinite(ground_elevation):
             frame_points.append((threat_x, threat_y, float(ground_elevation)))
     frame = SceneFrame.from_projected_points(target_epsg, frame_points)
+    _rebase_unit_nodes(unit_nodes, unit_specs, frame)
 
     nodes: list[SceneNode] = []
     marker_radius = max(30.0, payload.planning.corridor_width_m * 0.08)
@@ -183,17 +207,6 @@ def write_air_corridor_glb(
             ),
         ]
     )
-    unit_specs = [
-        _threat_unit_spec(
-            threat,
-            index,
-            prepared_threat_xy[threat.id],
-            threat_ground_elevations_m.get(threat.id),
-            payload.planning.corridor_width_m,
-        )
-        for index, threat in enumerate(payload.threats)
-    ]
-    unit_nodes, omissions = build_unit_nodes(unit_specs, frame)
     nodes.extend(unit_nodes)
     serialized_omissions = [
         {"unit_id": omission.unit_id, "reason": omission.reason}
@@ -321,15 +334,40 @@ def _threat_unit_spec(
         display_scale_m=min(1200.0, max(400.0, corridor_width_m)),
         warning_zone=InfluenceZoneSpec(
             threat.min_range_m,
-            threat.warning_zone_radius_m or threat.max_range_m,
+            (
+                threat.max_range_m
+                if threat.warning_zone_radius_m is None
+                else threat.warning_zone_radius_m
+            ),
             threat.min_altitude_m,
             threat.max_altitude_m,
         ),
         kill_zone=InfluenceZoneSpec(
             threat.min_range_m,
-            threat.kill_zone_radius_m or threat.max_range_m * 0.7,
+            (
+                threat.max_range_m * 0.7
+                if threat.kill_zone_radius_m is None
+                else threat.kill_zone_radius_m
+            ),
             threat.min_altitude_m,
             threat.max_altitude_m,
         ),
         source=threat.model_dump(),
     )
+
+
+def _rebase_unit_nodes(
+    nodes: list[SceneNode],
+    specs: list[UnitSpec],
+    frame: SceneFrame,
+) -> None:
+    specs_by_id = {spec.unit_id: spec for spec in specs}
+    for node in nodes:
+        spec = specs_by_id[str(node.extras["unit_id"])]
+        node.transform[:3, 3] = frame.to_gltf(
+            (
+                float(spec.position[0]),
+                float(spec.position[1]),
+                float(spec.altitude_amsl_m),
+            )
+        )

@@ -72,6 +72,7 @@ class FakeClient:
                 "kind": kind,
                 "filename": f"{kind}.geojson",
                 "media_type": "application/geo+json",
+                "exists": True,
             }
             for kind in spec.required_outputs
         ]
@@ -157,3 +158,38 @@ def test_runner_uses_next_candidate_after_acceptance_failure(
     assert watchpost["candidate_index"] == 1
     assert watchpost["candidate_attempts"] == 2
     assert client.created.count("watchpost") == 2
+
+
+def test_runner_acceptance_uses_only_existing_output_descriptors(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr("app.demo_scenarios.runner.generate_one", fake_scenario)
+    client = FakeClient()
+    original_result = client.task_result
+
+    def return_unavailable_watchpost_outputs(spec, task_id):
+        metrics, outputs = original_result(spec, task_id)
+        if spec.model_id == "watchpost":
+            outputs = [
+                {**output, "exists": output["kind"] != "visible_geojson"}
+                for output in outputs
+            ]
+            outputs.append(
+                {
+                    "kind": "blocked_geojson",
+                    "filename": "legacy-blocked.geojson",
+                    "media_type": "application/geo+json",
+                }
+            )
+        return metrics, outputs
+
+    client.task_result = return_unavailable_watchpost_outputs
+
+    index = run_scenarios(tmp_path, "dem_a", client, max_candidates=1)
+
+    watchpost = index["models"]["watchpost"]
+    assert watchpost["accepted"] is False
+    assert watchpost["failure_reason"] == "missing output: visible_geojson"
+    assert any(output.get("exists") is False for output in watchpost["outputs"])
+    assert any("exists" not in output for output in watchpost["outputs"])

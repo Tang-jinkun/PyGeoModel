@@ -95,17 +95,23 @@ export function createSceneGeoReference(metadata: Scene3dMetadata): SceneGeoRefe
         metadata.origin.projected_x + x,
         metadata.origin.projected_y - z
       ];
-      const [longitude, latitude] = inverse.forward(projected);
+      const [wrappedLongitude, latitude] = inverse.forward(projected);
+      const longitude = nearestPeriodicCopy(
+        wrappedLongitude,
+        metadata.origin.longitude,
+        360
+      );
       const altitudeAmslM = metadata.origin.altitude_amsl_m + y;
       const mercator = maplibregl.MercatorCoordinate.fromLngLat(
         { lng: longitude, lat: latitude },
         altitudeAmslM
       );
+      const mercatorX = nearestPeriodicCopy(mercator.x, anchor.x, 1);
       const values = [
         longitude,
         latitude,
         altitudeAmslM,
-        mercator.x,
+        mercatorX,
         mercator.y,
         mercator.z
       ];
@@ -118,13 +124,17 @@ export function createSceneGeoReference(metadata: Scene3dMetadata): SceneGeoRefe
         longitude,
         latitude,
         mercator: [
-          mercator.x - anchor.x,
+          mercatorX - anchor.x,
           mercator.y - anchor.y,
           mercator.z - anchor.z
         ]
       };
     }
   };
+}
+
+function nearestPeriodicCopy(value: number, anchor: number, period: number) {
+  return value + Math.round((anchor - value) / period) * period;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

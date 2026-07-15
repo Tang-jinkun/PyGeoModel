@@ -70,8 +70,15 @@ def run_air_corridor_task(task_id: str, payload: AirCorridorPlanningRequest) -> 
     try:
         mark_air_corridor_running(task_id, "Preparing DEM and air corridor projection.", 15)
         output_dir = settings.outputs_dir / task_id
-        output_dir.mkdir(parents=True, exist_ok=True)
-        staging_dir = output_dir / f".staging-{uuid4().hex}"
+        if output_dir.exists():
+            raise AppError(
+                "OUTPUT_DIRECTORY_EXISTS",
+                f"Air corridor output directory already exists: {task_id}.",
+                status_code=500,
+            )
+        staging_dir = output_dir.with_name(
+            f".{output_dir.name}.staging-{uuid4().hex}"
+        )
         staging_dir.mkdir(parents=True, exist_ok=False)
 
         try:
@@ -311,6 +318,8 @@ def _write_air_corridor_outputs(
             "warnings": warnings,
         },
     )
+    if prepared.projected_dem.parent == staging_dir:
+        prepared.projected_dem.unlink(missing_ok=True)
     _ensure_staged_outputs_exist(staging_dir)
     _commit_staged_outputs(staging_dir, output_dir)
     output_files = list_air_corridor_task_output_files(task_id)
@@ -642,10 +651,20 @@ def _ensure_staged_outputs_exist(staging_dir: Path) -> None:
 
 
 def _commit_staged_outputs(staging_dir: Path, output_dir: Path) -> None:
-    output_dir.mkdir(parents=True, exist_ok=True)
-    for filename in AIR_CORRIDOR_OUTPUT_FILENAMES.values():
-        (staging_dir / filename).replace(output_dir / filename)
-    _fsync_directory(output_dir)
+    if staging_dir.parent != output_dir.parent:
+        raise AppError(
+            "OUTPUT_STAGING_INVALID",
+            "Air corridor staging directory must be a sibling of its output directory.",
+            status_code=500,
+        )
+    if output_dir.exists():
+        raise AppError(
+            "OUTPUT_DIRECTORY_EXISTS",
+            f"Air corridor output directory already exists: {output_dir.name}.",
+            status_code=500,
+        )
+    staging_dir.replace(output_dir)
+    _fsync_directory(output_dir.parent)
 
 
 def _write_json_atomic(path: Path, payload: dict) -> None:
