@@ -47,7 +47,7 @@ class AdvancedInput(BaseModel):
     voxel_vertical_levels: int = Field(default=16, ge=4, le=64)
     voxel_max_height_m: float = Field(default=3000, ge=500, le=10000)
     min_elevation_deg: float = Field(default=-8, ge=-10, le=89)
-    max_elevation_deg: float = Field(default=24, ge=0, le=90)
+    max_elevation_deg: float = Field(default=90, ge=0, le=90)
     vertical_beam_width_deg: float = Field(default=32, ge=0, le=100)
     visual_dome_mode: bool = True
     height_layers_m: list[float] = Field(default_factory=list)
@@ -173,8 +173,8 @@ class CoverageModelMetadata(BaseModel):
     voxel_vertical_levels: int = 16
     voxel_max_height_m: float = 3000
     min_elevation_deg: float = 0
-    max_elevation_deg: float = 32
-    vertical_beam_width_deg: float = 32
+    max_elevation_deg: float = 90
+    vertical_beam_width_deg: float = 90
     visual_dome_mode: bool = True
     height_layers_m: list[float] = Field(default_factory=list)
     radar_equation_active: bool = False

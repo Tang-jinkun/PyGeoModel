@@ -34,8 +34,8 @@ const DEFAULT_COVERAGE_REQUEST: CoverageRequest = {
     voxel_vertical_levels: 16,
     voxel_max_height_m: 3000,
     min_elevation_deg: -8,
-    max_elevation_deg: 24,
-    vertical_beam_width_deg: 32,
+    max_elevation_deg: 90,
+    vertical_beam_width_deg: 98,
     visual_dome_mode: true,
     height_layers_m: []
   },
@@ -489,10 +489,10 @@ function normalizeModel(payload: unknown): CoverageTaskSummary["model"] {
     voxel_vertical_levels: numberOr(payload.voxel_vertical_levels, 16),
     voxel_max_height_m: numberOr(payload.voxel_max_height_m, 3000),
     min_elevation_deg: numberOr(payload.min_elevation_deg, 0),
-    max_elevation_deg: numberOr(payload.max_elevation_deg, 32),
+    max_elevation_deg: numberOr(payload.max_elevation_deg, 90),
     vertical_beam_width_deg: numberOr(
       payload.vertical_beam_width_deg,
-      numberOr(payload.max_elevation_deg, 32) - numberOr(payload.min_elevation_deg, 0)
+      numberOr(payload.max_elevation_deg, 90) - numberOr(payload.min_elevation_deg, 0)
     ),
     visual_dome_mode: booleanOr(payload.visual_dome_mode, true),
     height_layers_m: numberArray(payload.height_layers_m),

@@ -41,7 +41,8 @@ def test_target_independent_radar_glb_is_self_contained_and_open_at_nodata(
         }
     )
     assert defaults.advanced.min_elevation_deg == -8
-    assert defaults.advanced.max_elevation_deg == 24
+    assert defaults.advanced.max_elevation_deg == 90
+    assert defaults.advanced.vertical_beam_width_deg == 98
 
     dem_path = tmp_path / "radar-dem.tif"
     dem = numpy.full((21, 21), 1_000, dtype=numpy.float32)
@@ -97,7 +98,7 @@ def test_target_independent_radar_glb_is_self_contained_and_open_at_nodata(
             },
             "advanced": {
                 "min_elevation_deg": 0,
-                "max_elevation_deg": 36,
+                "max_elevation_deg": 90,
                 "use_curvature": True,
                 "curvature_coeff": 0.75,
             },
@@ -147,9 +148,9 @@ def test_target_independent_radar_glb_is_self_contained_and_open_at_nodata(
         "radar_result",
         "radar_result/radar_origin",
         "radar_result/detectable_shell",
+        "radar_result/detection_floor_boundary",
         "radar_result/terrain_contact",
         "radar_result/unknown_boundary",
-        "radar_result/detectable_fill",
         "radar_result/shell_grid",
         "radar_result/diagnostics",
     } <= node_names
@@ -158,11 +159,26 @@ def test_target_independent_radar_glb_is_self_contained_and_open_at_nodata(
         if isinstance(name, str) and name.startswith("radar_result/scan_slice_")
     }
     assert len(scan_nodes) == metadata["scan_animation"]["slice_count"]
-    assert metadata["interior_sample_count"] > 0
-    assert metadata["scan_animation"]["period_s"] == 8
-    assert max(metadata["scan_animation"]["max_range_m"]) > min(
-        metadata["scan_animation"]["max_range_m"]
+    assert "radar_result/detectable_fill" not in node_names
+    assert metadata["interior_sample_count"] == 0
+    assert metadata["scan_animation"]["period_s"] == 20
+    assert numpy.isclose(
+        metadata["ray_grid"]["azimuth_deg"][1]
+        - metadata["ray_grid"]["azimuth_deg"][0],
+        1.5,
     )
+    assert numpy.isclose(
+        metadata["ray_grid"]["elevation_deg"][1]
+        - metadata["ray_grid"]["elevation_deg"][0],
+        1.5,
+    )
+    actual_ray_ranges = [
+        radius
+        for row in metadata["ray_grid"]["radius_m"]
+        for radius in row
+        if radius > 0
+    ]
+    assert max(actual_ray_ranges) > min(actual_ray_ranges)
     assert any(
         animation.get("name") == "radar_detection_scan"
         for animation in document.get("animations", [])
@@ -186,14 +202,17 @@ def test_target_independent_radar_glb_is_self_contained_and_open_at_nodata(
         "terrain_segment_count",
         "unknown_segment_count",
     }
-    assert visibility_volume["method"] == "marching_cubes"
+    assert visibility_volume["method"] == "dem_height_field_envelope"
     assert visibility_volume["nominal_elevation_deg"] == [0, 90]
-    assert visibility_volume["scan_elevation_deg"] == [0.0, 36.0]
-    assert visibility_volume["grid_shape"] == [128, 128, 32]
+    assert visibility_volume["scan_elevation_deg"] == [0.0, 90.0]
+    assert visibility_volume["grid_shape"] == [128, 128, 2]
     assert visibility_volume["occupied_voxel_count"] > 0
     assert visibility_volume["face_count"] > 0
     assert visibility_volume["terrain_segment_count"] > 0
     assert visibility_volume["unknown_segment_count"] > 0
+    assert metadata["visual_dome"]["terrain_conforming"] is False
+    assert metadata["visual_dome"]["vertical_ratio"] == 1
+    assert set(metadata["visual_dome"]["radius_m"]) == {1_000}
     assert output.stat().st_size < 50_000_000
     assert document.get("buffers", [{}])[0].get("uri") is None
     assert all(image.get("uri") is None for image in document.get("images", []))

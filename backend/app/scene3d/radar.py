@@ -19,39 +19,39 @@ from .exporter import (
 )
 from .frame import SceneFrame
 from .primitives import tube_mesh
-from .radar_volume import RadarVisibilityVolume, build_radar_visibility_volume
+from .radar_volume import RadarVisibilityVolume, build_radar_visibility_envelope
 
 
 EARTH_RADIUS_M = 6_371_000.0
-AZIMUTH_STEP_DEG = 3.0
-ELEVATION_STEP_DEG = 3.0
-SCAN_PERIOD_S = 8.0
+AZIMUTH_STEP_DEG = 1.5
+ELEVATION_STEP_DEG = 1.5
+SCAN_PERIOD_S = 20.0
 VISUAL_DOME_ELEVATION_STEP_DEG = 5.0
-VISUAL_DOME_VERTICAL_RATIO = 0.72
+VISUAL_DOME_VERTICAL_RATIO = 1.0
 
 SHELL_MATERIAL = MaterialSpec(
     "radar_detectable_shell",
-    (35, 190, 176, 54),
+    (41, 74, 53, 34),
     shading="unlit",
-    emissive_rgb=(22, 93, 90),
+    emissive_rgb=(20, 44, 30),
 )
 GRID_MATERIAL = MaterialSpec(
     "radar_shell_grid",
-    (207, 250, 242, 132),
+    (145, 166, 96, 235),
     shading="unlit",
-    emissive_rgb=(97, 123, 119),
+    emissive_rgb=(82, 102, 50),
 )
-FILL_MATERIAL = MaterialSpec(
-    "radar_detectable_fill",
-    (28, 224, 218, 20),
+FLOOR_BOUNDARY_MATERIAL = MaterialSpec(
+    "radar_detection_floor_boundary",
+    (255, 176, 32, 255),
     shading="unlit",
-    emissive_rgb=(14, 112, 109),
+    emissive_rgb=(180, 96, 0),
 )
 SCAN_MATERIAL = MaterialSpec(
     "radar_active_scan",
-    (86, 242, 224, 82),
+    (69, 166, 107, 104),
     shading="unlit",
-    emissive_rgb=(43, 121, 112),
+    emissive_rgb=(35, 92, 56),
 )
 ORIGIN_MATERIAL = MaterialSpec(
     "radar_origin",
@@ -162,16 +162,13 @@ def write_radar_coverage_glb(
         ray_grid.append(row)
 
     visual_grid, visual_ray_grid, visual_radius_profile = _visual_dome_grid(
-        terrain,
-        valid,
-        transform,
-        nodata,
         prepared,
         azimuths,
-        ray_grid,
+        radar_altitude_m,
+        effective_range_m,
     )
     visibility_volume = (
-        build_radar_visibility_volume(prepared, payload, min_visible_height)
+        build_radar_visibility_envelope(prepared, payload, min_visible_height)
         if min_visible_height is not None
         else None
     )
@@ -213,7 +210,21 @@ def write_radar_coverage_glb(
         if visibility_volume is not None
         else _shell_mesh(local_grid, visual_ray_grid, wrap)
     )
-    grid = _grid_mesh(local_grid, visual_ray_grid, wrap)
+    grid = _grid_mesh(
+        actual_local_grid,
+        ray_grid,
+        wrap,
+        radius_m=max(3.0, min(45.0, effective_range_m * 0.0008)),
+    )
+    floor_boundary = (
+        _lower_surface_boundary_mesh(
+            visibility_volume,
+            frame,
+            radius_m=max(10.0, min(120.0, effective_range_m * 0.002)),
+        )
+        if visibility_volume is not None
+        else None
+    )
     contact_radius_m = max(10.0, min(40.0, effective_range_m * 0.0007))
     terrain_contact = (
         _visibility_segment_mesh(
@@ -251,16 +262,11 @@ def write_radar_coverage_glb(
         radius=max(10.0, min(60.0, effective_range_m * 0.002)),
     )
     origin_mesh.apply_translation(origin)
-    fill_mesh, interior_sample_count = _interior_fill_mesh(
-        origin,
-        local_grid,
-        visual_ray_grid,
-        marker_radius_m=max(1.5, min(6.0, effective_range_m * 0.00012)),
-    )
+    interior_sample_count = 0
     scan_nodes, scan_ranges_m, scan_animation = _scan_slice_nodes(
         origin,
-        local_grid,
-        visual_ray_grid,
+        actual_local_grid,
+        ray_grid,
         wrap=wrap,
     )
     diagnostic_mesh = _diagnostic_mesh(
@@ -287,19 +293,22 @@ def write_radar_coverage_glb(
                 extras={"kind": "detectable_shell"},
             ),
             SceneNode(
-                name="radar_result/detectable_fill",
-                mesh=fill_mesh,
-                material=FILL_MATERIAL,
-                extras={
-                    "kind": "detectable_fill",
-                    "sample_count": interior_sample_count,
-                },
-            ),
-            SceneNode(
                 name="radar_result/shell_grid",
                 mesh=grid,
                 material=GRID_MATERIAL,
                 extras={"kind": "shell_grid"},
+            ),
+            *(
+                [
+                    SceneNode(
+                        name="radar_result/detection_floor_boundary",
+                        mesh=floor_boundary,
+                        material=FLOOR_BOUNDARY_MATERIAL,
+                        extras={"kind": "detection_floor_boundary"},
+                    )
+                ]
+                if floor_boundary is not None
+                else []
             ),
             *(
                 [
@@ -391,9 +400,9 @@ def write_radar_coverage_glb(
                 "max_range_m": scan_ranges_m,
             },
             "visual_dome": {
-                "terrain_conforming": True,
+                "terrain_conforming": False,
                 "vertical_ratio": VISUAL_DOME_VERTICAL_RATIO,
-                "ground_contact": True,
+                "ground_contact": False,
                 "radius_m": visual_radius_profile,
             },
             "stage2_target_evaluation": "not_implemented",
@@ -401,7 +410,7 @@ def write_radar_coverage_glb(
     )
     if visibility_volume is not None:
         metadata["visibility_volume"] = {
-            "method": "marching_cubes",
+            "method": "dem_height_field_envelope",
             "nominal_elevation_deg": [0, 90],
             "scan_elevation_deg": [
                 payload.advanced.min_elevation_deg,
@@ -600,6 +609,39 @@ def _visibility_volume_mesh(
     return trimesh.Trimesh(vertices=vertices, faces=volume.faces, process=False)
 
 
+def _lower_surface_boundary_mesh(
+    volume: RadarVisibilityVolume,
+    frame: SceneFrame,
+    *,
+    radius_m: float,
+) -> trimesh.Trimesh | None:
+    edge_counts: dict[tuple[int, int], int] = {}
+    for face in volume.faces:
+        indices = [int(index) for index in face]
+        if any(index % 2 for index in indices):
+            continue
+        for first, second in ((indices[0], indices[1]), (indices[1], indices[2]), (indices[2], indices[0])):
+            edge = tuple(sorted((first, second)))
+            edge_counts[edge] = edge_counts.get(edge, 0) + 1
+
+    meshes = []
+    for (first, second), count in edge_counts.items():
+        if count != 1:
+            continue
+        path = numpy.asarray(
+            [
+                frame.to_gltf(tuple(volume.vertices[first])),
+                frame.to_gltf(tuple(volume.vertices[second])),
+            ],
+            dtype=numpy.float64,
+        )
+        if numpy.linalg.norm(path[1] - path[0]) > 0:
+            meshes.append(tube_mesh(path, radius_m=radius_m, sections=6))
+    if not meshes:
+        return None
+    return trimesh.util.concatenate(meshes)
+
+
 def _visibility_segment_mesh(
     segments: numpy.ndarray,
     frame: SceneFrame,
@@ -619,48 +661,12 @@ def _visibility_segment_mesh(
 
 
 def _visual_dome_grid(
-    terrain,
-    valid,
-    transform,
-    nodata,
     prepared,
     azimuths,
-    ray_grid,
+    radar_altitude_m,
+    effective_range_m,
 ):
-    raw_radius = [
-        max(
-            (
-                row[azimuth_index].radius_m
-                for row in ray_grid
-                if row[azimuth_index].closed and row[azimuth_index].radius_m > 0
-            ),
-            default=0.0,
-        )
-        for azimuth_index in range(len(azimuths))
-    ]
-    wrap = len(azimuths) > 2 and math.isclose(
-        (azimuths[-1] - azimuths[0]) % 360,
-        360 - AZIMUTH_STEP_DEG,
-        abs_tol=0.1,
-    )
-    radius_profile = []
-    for index, radius in enumerate(raw_radius):
-        if radius <= 0:
-            radius_profile.append(0.0)
-            continue
-        neighbors = []
-        for offset in range(-2, 3):
-            neighbor = index + offset
-            if wrap:
-                neighbor %= len(raw_radius)
-            elif not 0 <= neighbor < len(raw_radius):
-                continue
-            if raw_radius[neighbor] > 0:
-                neighbors.append(raw_radius[neighbor])
-        median = float(numpy.median(neighbors)) if neighbors else radius
-        radius_profile.append(float(radius * 0.35 + median * 0.65))
-
-    dome_height_m = max(radius_profile, default=0.0) * VISUAL_DOME_VERTICAL_RATIO
+    radius_profile = [float(effective_range_m)] * len(azimuths)
     visual_angles = numpy.arange(
         0,
         90 + VISUAL_DOME_ELEVATION_STEP_DEG,
@@ -672,26 +678,20 @@ def _visual_dome_grid(
         angle = math.radians(float(visual_angle_deg))
         points = []
         results = []
-        for azimuth_deg, radius_m in zip(azimuths, radius_profile):
+        for azimuth_deg in azimuths:
             azimuth = math.radians(azimuth_deg)
-            horizontal = radius_m * math.cos(angle)
+            horizontal = effective_range_m * math.cos(angle)
             x = prepared.radar_x + horizontal * math.sin(azimuth)
             y = prepared.radar_y + horizontal * math.cos(azimuth)
-            ground = _sample_terrain(terrain, valid, transform, nodata, x, y)
-            closed = radius_m > 0 and ground is not None
-            altitude = (
-                float(ground) + dome_height_m * math.sin(angle)
-                if closed
-                else 0.0
-            )
+            altitude = radar_altitude_m + effective_range_m * math.sin(angle)
             point = (x, y, altitude)
             points.append(point)
             results.append(
                 RayResult(
-                    radius_m=radius_m if closed else 0.0,
+                    radius_m=effective_range_m,
                     point=point,
-                    termination="nominal" if closed else "nodata",
-                    closed=closed,
+                    termination="nominal",
+                    closed=True,
                 )
             )
         projected_grid.append(points)
@@ -747,11 +747,17 @@ def _ground_contact_mesh(local_grid, ray_grid, wrap: bool, *, radius_m: float):
     )
 
 
-def _grid_mesh(local_grid, ray_grid, wrap: bool) -> trimesh.Trimesh:
+def _grid_mesh(
+    local_grid,
+    ray_grid,
+    wrap: bool,
+    *,
+    radius_m: float = 2.0,
+) -> trimesh.Trimesh:
     paths: list[numpy.ndarray] = []
     azimuth_count = len(local_grid[0])
-    azimuth_stride = max(1, round(12 / AZIMUTH_STEP_DEG))
-    elevation_stride = max(1, round(6 / ELEVATION_STEP_DEG))
+    azimuth_stride = max(1, round(6 / AZIMUTH_STEP_DEG))
+    elevation_stride = max(1, round(5 / VISUAL_DOME_ELEVATION_STEP_DEG))
     for azimuth_index in range(0, azimuth_count, azimuth_stride):
         _append_closed_paths(
             paths,
@@ -765,7 +771,7 @@ def _grid_mesh(local_grid, ray_grid, wrap: bool) -> trimesh.Trimesh:
             points.append(points[0])
             results.append(results[0])
         _append_closed_paths(paths, points, results)
-    meshes = [tube_mesh(path, radius_m=2.0, sections=6) for path in paths]
+    meshes = [tube_mesh(path, radius_m=radius_m, sections=6) for path in paths]
     if not meshes:
         raise ValueError("Radar ray grid produced no shell grid lines")
     return trimesh.util.concatenate(meshes)
