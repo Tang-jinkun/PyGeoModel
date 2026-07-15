@@ -67,6 +67,46 @@ def test_download_air_corridor_scene_glb(tmp_path: Path) -> None:
     assert response.content == b"glTF-test"
 
 
+def test_delete_air_corridor_task_removes_only_its_stale_stages(
+    tmp_path: Path,
+) -> None:
+    settings.data_dir = tmp_path
+    settings.ensure_directories()
+    task_id = "air_corridor_task_delete"
+    other_task_id = "air_corridor_task_other"
+    write_air_corridor_task(tmp_path, task_id, "failed")
+    matching_stages = [
+        tmp_path / "outputs" / f".{task_id}.staging-first",
+        tmp_path / "outputs" / f".{task_id}.staging-second",
+    ]
+    other_stage = tmp_path / "outputs" / f".{other_task_id}.staging-first"
+    unrelated_hidden = tmp_path / "outputs" / ".unrelated-cache"
+    final_output = tmp_path / "outputs" / task_id
+    for directory in [
+        *matching_stages,
+        other_stage,
+        unrelated_hidden,
+        final_output,
+    ]:
+        directory.mkdir(parents=True)
+        (directory / "content.txt").write_text("content", encoding="utf-8")
+
+    response = TestClient(app).delete(
+        f"/api/air-corridor/planning/{task_id}"
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "task_id": task_id,
+        "deleted_task_record": True,
+        "deleted_output_dir": True,
+    }
+    assert all(not path.exists() for path in matching_stages)
+    assert not final_output.exists()
+    assert other_stage.exists()
+    assert unrelated_hidden.exists()
+
+
 def write_air_corridor_task(root: Path, task_id: str, status: str, metrics: dict | None = None) -> None:
     task_dir = root / "tasks"
     task_dir.mkdir(parents=True, exist_ok=True)

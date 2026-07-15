@@ -125,6 +125,7 @@ def delete_air_corridor_task(task_id: str) -> AirCorridorPlanningTaskDeleteResul
         task = get_air_corridor_task(task_id)
         if task.status in {"pending", "running"}:
             raise AppError("TASK_ACTIVE", "Pending or running air corridor tasks cannot be deleted.", status_code=409)
+        _remove_task_staging_dirs(task_id)
         task_path = _task_path(task_id)
         output_dir = _task_output_dir(task_id)
         deleted_task_record = False
@@ -153,6 +154,7 @@ def recover_interrupted_air_corridor_tasks() -> int:
                 continue
             if task.status not in {"pending", "running"}:
                 continue
+            _remove_task_staging_dirs(task.task_id)
             task.status = "failed"
             task.progress = 100
             task.message = "Task was interrupted before completion and marked failed on service startup."
@@ -204,6 +206,29 @@ def _task_output_dir(task_id: str) -> Path:
     if path != outputs_dir and outputs_dir not in path.parents:
         raise AppError("INVALID_OUTPUT_PATH", "Resolved output path escapes output directory.", status_code=400)
     return path
+
+
+def _remove_task_staging_dirs(task_id: str) -> None:
+    validate_air_corridor_task_id(task_id)
+    outputs_dir = settings.outputs_dir.resolve()
+    prefix = f".{task_id}.staging-"
+    for candidate in settings.outputs_dir.glob(f"{prefix}*"):
+        if (
+            not candidate.name.startswith(prefix)
+            or len(candidate.name) == len(prefix)
+        ):
+            continue
+        try:
+            resolved = candidate.resolve(strict=True)
+        except (OSError, RuntimeError):
+            continue
+        if (
+            resolved.parent != outputs_dir
+            or resolved.name != candidate.name
+            or not resolved.is_dir()
+        ):
+            continue
+        shutil.rmtree(resolved)
 
 
 def _read_task_data(path: Path) -> dict:
