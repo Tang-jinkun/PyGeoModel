@@ -9,3 +9,4 @@ Pillow==11.0.0
 httpx==0.28.1
 pytest==8.3.4
 trimesh==4.12.2
+scikit-image==0.25.2
