@@ -425,11 +425,19 @@ viewer:
   `C:\Users\t\.codex\visualizations\2026\07\13\019f596d-afc2-71c1-800f-b5ec0b6ea06b\brainstorm-glb-rendering\session-1\task5-acceptance-20260715-1055\evidence-rerun-20260715-123057`
 - Key evidence files:
   `rerun-acceptance-summary.json`,
+  `rerun-backend-task-detail.json`,
   `rerun-workbench-summary.json`,
   `rerun-viewer-summary.json`,
   `rerun-inspect-glb.json`,
   `rerun-artifact-fingerprint.json`,
   `rerun-glb-structure-roots.json`
+- Fresh backend restart evidence:
+  after rebuilding `pygeomodel-glb-overlay-backend:latest` from current head
+  and replacing only the feature backend container on `127.0.0.1:8001`,
+  `rerun-backend-task-detail.json` still reported
+  `status = finished`, `warnings = []`, `outputs.scene_glb` present,
+  `tactical_unit_count = 10`, `omitted_units = []`, and the accepted GLB still
+  existed at `2,297,184` bytes
 - Clean console/network classification:
   no console errors; no external `demotiles.maplibre.org` requests; no HTTP
   responses `>= 400`; no unexpected request failures; five local DEM
