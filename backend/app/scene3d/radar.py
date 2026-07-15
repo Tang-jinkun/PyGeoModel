@@ -10,7 +10,13 @@ from app.schemas.radar import CoverageRequest
 from app.services.coverage_model import PreparedCoverageDem
 from app.services.coverage_range import effective_max_range, radar_equation_max_range
 
-from .exporter import MaterialSpec, SceneNode, export_glb
+from .exporter import (
+    AnimationSpec,
+    AnimationTrack,
+    MaterialSpec,
+    SceneNode,
+    export_glb,
+)
 from .frame import SceneFrame
 from .primitives import tube_mesh
 
@@ -18,6 +24,7 @@ from .primitives import tube_mesh
 EARTH_RADIUS_M = 6_371_000.0
 AZIMUTH_STEP_DEG = 3.0
 ELEVATION_STEP_DEG = 3.0
+SCAN_PERIOD_S = 8.0
 
 SHELL_MATERIAL = MaterialSpec(
     "radar_detectable_shell",
@@ -30,6 +37,18 @@ GRID_MATERIAL = MaterialSpec(
     (207, 250, 242, 132),
     shading="unlit",
     emissive_rgb=(97, 123, 119),
+)
+FILL_MATERIAL = MaterialSpec(
+    "radar_detectable_fill",
+    (28, 224, 218, 72),
+    shading="unlit",
+    emissive_rgb=(14, 112, 109),
+)
+SCAN_MATERIAL = MaterialSpec(
+    "radar_active_scan",
+    (86, 242, 224, 108),
+    shading="unlit",
+    emissive_rgb=(43, 121, 112),
 )
 ORIGIN_MATERIAL = MaterialSpec(
     "radar_origin",
@@ -145,6 +164,18 @@ def write_radar_coverage_glb(
         radius=max(10.0, min(60.0, effective_range_m * 0.002)),
     )
     origin_mesh.apply_translation(origin)
+    fill_mesh, interior_sample_count = _interior_fill_mesh(
+        origin,
+        local_grid,
+        ray_grid,
+        marker_radius_m=max(2.0, min(14.0, effective_range_m * 0.0003)),
+    )
+    scan_nodes, scan_ranges_m, scan_animation = _scan_slice_nodes(
+        origin,
+        local_grid,
+        ray_grid,
+        wrap=payload.coverage.scan_mode == "omni",
+    )
     diagnostic_mesh = _diagnostic_mesh(
         local_grid,
         ray_grid,
@@ -169,6 +200,15 @@ def write_radar_coverage_glb(
                 extras={"kind": "detectable_shell"},
             ),
             SceneNode(
+                name="radar_result/detectable_fill",
+                mesh=fill_mesh,
+                material=FILL_MATERIAL,
+                extras={
+                    "kind": "detectable_fill",
+                    "sample_count": interior_sample_count,
+                },
+            ),
+            SceneNode(
                 name="radar_result/shell_grid",
                 mesh=grid,
                 material=GRID_MATERIAL,
@@ -183,6 +223,7 @@ def write_radar_coverage_glb(
                     "terrain_stop_count": terminations["terrain"],
                 },
             ),
+            *scan_nodes,
         ],
     )
     metadata = frame.metadata(task_id, "radar")
@@ -220,10 +261,21 @@ def write_radar_coverage_glb(
             },
             "terminations": terminations,
             "open_ray_count": terminations["dem_boundary"] + terminations["nodata"],
+            "interior_sample_count": interior_sample_count,
+            "scan_animation": {
+                "period_s": SCAN_PERIOD_S,
+                "slice_count": len(scan_nodes),
+                "max_range_m": scan_ranges_m,
+            },
             "stage2_target_evaluation": "not_implemented",
         }
     )
-    export_glb(path, [root], scene_metadata=metadata)
+    export_glb(
+        path,
+        [root],
+        scene_metadata=metadata,
+        animations=[scan_animation],
+    )
     return metadata
 
 
@@ -479,3 +531,140 @@ def _diagnostic_mesh(local_grid, ray_grid, *, fallback, radius):
         marker.apply_translation(point)
         meshes.append(marker)
     return trimesh.util.concatenate(meshes)
+
+
+def _interior_fill_mesh(origin, local_grid, ray_grid, *, marker_radius_m):
+    origin = numpy.asarray(origin, dtype=numpy.float64)
+    centers = []
+    for elevation_index in range(0, len(local_grid), 2):
+        for azimuth_index in range(0, len(local_grid[elevation_index]), 2):
+            result = ray_grid[elevation_index][azimuth_index]
+            if not result.closed or result.radius_m <= 0:
+                continue
+            endpoint = numpy.asarray(
+                local_grid[elevation_index][azimuth_index],
+                dtype=numpy.float64,
+            )
+            for fraction in (0.2, 0.4, 0.6, 0.8):
+                centers.append(origin + (endpoint - origin) * fraction)
+    if not centers:
+        centers = [origin]
+
+    offsets = numpy.asarray(
+        [
+            [marker_radius_m, 0, 0],
+            [-marker_radius_m, 0, 0],
+            [0, marker_radius_m, 0],
+            [0, -marker_radius_m, 0],
+            [0, 0, marker_radius_m],
+            [0, 0, -marker_radius_m],
+        ],
+        dtype=numpy.float64,
+    )
+    local_faces = numpy.asarray(
+        [
+            [0, 2, 4], [4, 2, 1], [1, 2, 5], [5, 2, 0],
+            [4, 3, 0], [1, 3, 4], [5, 3, 1], [0, 3, 5],
+        ],
+        dtype=numpy.int64,
+    )
+    vertices = numpy.vstack([center + offsets for center in centers])
+    faces = numpy.vstack(
+        [local_faces + index * len(offsets) for index in range(len(centers))]
+    )
+    return trimesh.Trimesh(vertices=vertices, faces=faces, process=False), len(centers)
+
+
+def _scan_slice_nodes(origin, local_grid, ray_grid, *, wrap):
+    origin = numpy.asarray(origin, dtype=numpy.float64)
+    azimuth_count = len(local_grid[0])
+    cell_count = azimuth_count if wrap else azimuth_count - 1
+    nodes = []
+    ranges_m = []
+    for azimuth_index in range(cell_count):
+        next_azimuth = (azimuth_index + 1) % azimuth_count
+        mesh = _scan_slice_mesh(
+            origin,
+            local_grid,
+            ray_grid,
+            azimuth_index,
+            next_azimuth,
+        )
+        if mesh is None:
+            continue
+        closed_ranges = [
+            result.radius_m
+            for row in ray_grid
+            for result in (row[azimuth_index], row[next_azimuth])
+            if result.closed and result.radius_m > 0
+        ]
+        name = f"radar_result/scan_slice_{len(nodes):03d}"
+        nodes.append(
+            SceneNode(
+                name=name,
+                mesh=mesh,
+                material=SCAN_MATERIAL,
+                extras={
+                    "kind": "scan_slice",
+                    "azimuth_index": azimuth_index,
+                },
+            )
+        )
+        ranges_m.append(float(max(closed_ranges)))
+
+    if not nodes:
+        raise ValueError("Radar ray grid produced no animated scan slices")
+    times = numpy.linspace(0, SCAN_PERIOD_S, len(nodes) + 1, dtype=numpy.float32)
+    tracks = []
+    for node_index, node in enumerate(nodes):
+        values = numpy.zeros((len(times), 3), dtype=numpy.float32)
+        for frame_index in range(len(times)):
+            phase = frame_index % len(nodes)
+            if phase in {node_index, (node_index + 1) % len(nodes)}:
+                values[frame_index] = 1
+        tracks.append(
+            AnimationTrack(
+                node_name=node.name,
+                path="scale",
+                times=times,
+                values=values,
+                interpolation="STEP",
+            )
+        )
+    return nodes, ranges_m, AnimationSpec("radar_detection_scan", tracks)
+
+
+def _scan_slice_mesh(origin, local_grid, ray_grid, azimuth_index, next_azimuth):
+    elevation_count = len(local_grid)
+    side_a = [numpy.asarray(row[azimuth_index]) for row in local_grid]
+    side_b = [numpy.asarray(row[next_azimuth]) for row in local_grid]
+    vertices = numpy.vstack([origin, *side_a, *side_b])
+    faces = []
+    side_b_offset = 1 + elevation_count
+    for elevation_index in range(elevation_count - 1):
+        a0 = ray_grid[elevation_index][azimuth_index]
+        a1 = ray_grid[elevation_index + 1][azimuth_index]
+        b0 = ray_grid[elevation_index][next_azimuth]
+        b1 = ray_grid[elevation_index + 1][next_azimuth]
+        if a0.closed and a1.closed and a0.radius_m > 0 and a1.radius_m > 0:
+            faces.append([0, 1 + elevation_index, 2 + elevation_index])
+        if b0.closed and b1.closed and b0.radius_m > 0 and b1.radius_m > 0:
+            faces.append([0, side_b_offset + elevation_index + 1, side_b_offset + elevation_index])
+        corners = [a0, a1, b0, b1]
+        termination_kinds = {item.termination for item in corners}
+        if (
+            all(item.closed and item.radius_m > 0 for item in corners)
+            and not ("terrain" in termination_kinds and len(termination_kinds) > 1)
+        ):
+            a = 1 + elevation_index
+            c = a + 1
+            b = side_b_offset + elevation_index
+            d = b + 1
+            faces.extend([[a, c, b], [b, c, d]])
+    if not faces:
+        return None
+    return trimesh.Trimesh(
+        vertices=vertices,
+        faces=numpy.asarray(faces, dtype=numpy.int64),
+        process=False,
+    )

@@ -33,6 +33,7 @@ from app.services.geometry import make_range_geometry, project_geometry
 from app.services.output_files import OUTPUT_FILENAMES, describe_output_files, list_task_output_files
 from app.services.task_store import mark_failed, mark_finished, mark_running
 from app.scene3d.radar import write_radar_coverage_glb
+from app.scene3d.radar_platform import write_radar_platform_glb
 
 COVERAGE_MASK_ROW_CHUNK_SIZE = 256
 
@@ -71,6 +72,12 @@ def run_coverage_task(task_id: str, payload: CoverageRequest) -> None:
             mark_running(task_id, "Generating target-independent radar GLB.", 80)
             scene_metadata = write_radar_coverage_glb(
                 staging_dir / OUTPUT_FILENAMES["scene_glb"],
+                task_id=task_id,
+                prepared=prepared,
+                payload=payload,
+            )
+            write_radar_platform_glb(
+                staging_dir / OUTPUT_FILENAMES["radar_platform_glb"],
                 task_id=task_id,
                 prepared=prepared,
                 payload=payload,
@@ -708,6 +715,7 @@ def _write_vector_outputs(
         clipped_volume_cells_bin=f"/outputs/{task_id}/clipped_volume_cells.bin",
         height_layers_manifest_json=f"/outputs/{task_id}/height_layers_manifest.json",
         scene_glb=f"/outputs/{task_id}/{OUTPUT_FILENAMES['scene_glb']}",
+        radar_platform_glb=f"/outputs/{task_id}/{OUTPUT_FILENAMES['radar_platform_glb']}",
     )
     height_layers = payload.advanced.height_layers_m or [0, 100, 300, 500, 1000, 2000, 3000]
     model = CoverageModelMetadata(

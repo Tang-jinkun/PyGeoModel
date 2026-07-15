@@ -1,3 +1,4 @@
+import importlib
 from pathlib import Path
 
 import numpy
@@ -122,9 +123,24 @@ def test_target_independent_radar_glb_is_self_contained_and_open_at_nodata(
         "radar_result",
         "radar_result/radar_origin",
         "radar_result/detectable_shell",
+        "radar_result/detectable_fill",
         "radar_result/shell_grid",
         "radar_result/diagnostics",
     } <= node_names
+    scan_nodes = {
+        name for name in node_names
+        if isinstance(name, str) and name.startswith("radar_result/scan_slice_")
+    }
+    assert len(scan_nodes) == metadata["scan_animation"]["slice_count"]
+    assert metadata["interior_sample_count"] > 0
+    assert metadata["scan_animation"]["period_s"] == 8
+    assert max(metadata["scan_animation"]["max_range_m"]) > min(
+        metadata["scan_animation"]["max_range_m"]
+    )
+    assert any(
+        animation.get("name") == "radar_detection_scan"
+        for animation in document.get("animations", [])
+    )
     assert metadata["model_id"] == "radar"
     assert metadata["range_basis"] == "nominal"
     assert metadata["reference_rcs_m2"] == 1
@@ -137,3 +153,30 @@ def test_target_independent_radar_glb_is_self_contained_and_open_at_nodata(
     assert all(image.get("uri") is None for image in document.get("images", []))
     assert OUTPUT_FILENAMES["scene_glb"] == "radar_detection_domain.glb"
     assert OUTPUT_MEDIA_TYPES["scene_glb"] == "model/gltf-binary"
+
+    radar_platform = importlib.import_module("app.scene3d.radar_platform")
+    platform_output = tmp_path / "radar_platform.glb"
+    platform_metadata = radar_platform.write_radar_platform_glb(
+        platform_output,
+        task_id="radar_task_demo",
+        prepared=prepared,
+        payload=payload,
+    )
+    platform_document = read_glb_document(platform_output.read_bytes())
+    platform_nodes = {node.get("name") for node in platform_document["nodes"]}
+    assert {
+        "radar_platform",
+        "radar_platform/equipment_cabinet",
+        "radar_platform/pedestal",
+        "radar_platform/azimuth_turntable",
+        "radar_platform/antenna_dish",
+        "radar_platform/feed_arm",
+    } <= platform_nodes
+    assert platform_metadata["animation"]["period_s"] == 8
+    assert platform_metadata["dimensions_m"]["height"] <= 15
+    assert any(
+        animation.get("name") == "radar_platform_scan"
+        for animation in platform_document.get("animations", [])
+    )
+    assert OUTPUT_FILENAMES["radar_platform_glb"] == "radar_platform.glb"
+    assert OUTPUT_MEDIA_TYPES["radar_platform_glb"] == "model/gltf-binary"

@@ -18,6 +18,7 @@ CoverageOutputKind = Literal[
     "clipped_volume_cells_bin",
     "height_layers_manifest_json",
     "scene_glb",
+    "radar_platform_glb",
 ]
 
 
@@ -136,6 +137,7 @@ class CoverageOutputs(BaseModel):
     clipped_volume_cells_bin: str | None = None
     height_layers_manifest_json: str | None = None
     scene_glb: str | None = None
+    radar_platform_glb: str | None = None
 
 
 class CoverageOutputFile(BaseModel):
