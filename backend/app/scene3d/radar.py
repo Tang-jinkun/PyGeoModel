@@ -37,9 +37,9 @@ SHELL_MATERIAL = MaterialSpec(
 )
 GRID_MATERIAL = MaterialSpec(
     "radar_shell_grid",
-    (145, 166, 96, 235),
+    (255, 255, 255, 255),
     shading="unlit",
-    emissive_rgb=(82, 102, 50),
+    emissive_rgb=(180, 180, 180),
 )
 FLOOR_BOUNDARY_MATERIAL = MaterialSpec(
     "radar_detection_floor_boundary",

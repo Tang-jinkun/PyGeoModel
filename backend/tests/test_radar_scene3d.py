@@ -8,7 +8,13 @@ from rasterio.transform import from_origin
 
 from app.schemas.radar import CoverageRequest
 from app.scene3d.exporter import read_glb_document
-from app.scene3d.radar import RayResult, _shell_mesh, _trace_ray, write_radar_coverage_glb
+from app.scene3d.radar import (
+    GRID_MATERIAL,
+    RayResult,
+    _shell_mesh,
+    _trace_ray,
+    write_radar_coverage_glb,
+)
 from app.services.coverage_model import PreparedCoverageDem
 from app.services.output_files import OUTPUT_FILENAMES, OUTPUT_MEDIA_TYPES
 
@@ -28,6 +34,11 @@ def test_shell_does_not_bridge_terrain_shadow_to_full_range() -> None:
     )
 
     assert len(mesh.faces) == 2
+
+
+def test_shell_grid_material_is_opaque_white() -> None:
+    assert GRID_MATERIAL.rgba == (255, 255, 255, 255)
+    assert GRID_MATERIAL.emissive_rgb == (180, 180, 180)
 
 
 def test_target_independent_radar_glb_is_self_contained_and_open_at_nodata(
