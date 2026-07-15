@@ -46,6 +46,26 @@ beforeEach(() => {
 });
 
 describe("MapWorkspace", () => {
+  it("uses a local empty style by default instead of an external URL", () => {
+    const wrapper = mount(MapWorkspace, {
+      props: {
+        kind: "point",
+        draft: createSpatialDraft("point")
+      }
+    });
+    const map = mapHarness.instances[0];
+    const style = (map.options as { style: unknown }).style;
+
+    expect(style).toStrictEqual({
+      version: 8,
+      sources: {},
+      layers: []
+    });
+    expect(JSON.stringify(style)).not.toContain("https://");
+
+    wrapper.unmount();
+  });
+
   it("creates one map, emits normalized route edits, resizes after transitions, and removes on unmount", async () => {
     const host = document.createElement("div");
     host.className = "workspace-shell";

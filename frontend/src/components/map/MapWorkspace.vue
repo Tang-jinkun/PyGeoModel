@@ -53,7 +53,11 @@ const props = withDefaults(defineProps<{
   editTarget: "auto",
   activeThreatId: null,
   dem: null,
-  mapStyle: "https://demotiles.maplibre.org/style.json",
+  mapStyle: (): maplibregl.StyleSpecification => ({
+    version: 8,
+    sources: {},
+    layers: []
+  }),
   center: () => [79.80513693057287, 31.4827708959419],
   zoom: 8
 });

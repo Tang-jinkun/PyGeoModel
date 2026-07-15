@@ -50,7 +50,7 @@ export function addOrUpdateRadarVolume(
 
 export function removeRadarVolume(map: maplibregl.Map) {
   removeLayerIfPresent(map, RADAR_VOLUME_LAYER_ID);
-  for (const layer of map.getStyle().layers ?? []) {
+  for (const layer of map.getStyle()?.layers ?? []) {
     if (layer.id.startsWith(RADAR_VOLUME_LEGACY_LAYER_PREFIX)) {
       removeLayerIfPresent(map, layer.id);
     }
