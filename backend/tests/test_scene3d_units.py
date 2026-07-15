@@ -1,5 +1,5 @@
 from collections.abc import Iterator
-from dataclasses import replace
+from dataclasses import FrozenInstanceError, replace
 from math import pi
 from pathlib import Path
 
@@ -96,15 +96,20 @@ def child_by_role(root: SceneNode, role: str) -> SceneNode:
 
 
 def test_display_profile_uses_scene_extent_clamp() -> None:
+    profile = derive_air_defense_display_profile(72_000)
+
     assert derive_air_defense_display_profile(60_000).exaggeration == 10
-    assert derive_air_defense_display_profile(72_000).exaggeration == 12
+    assert profile.exaggeration == 12
     assert derive_air_defense_display_profile(120_000).exaggeration == 15
-    assert derive_air_defense_display_profile(
-        72_000
-    ).display_dimensions_m.length == 144
-    assert derive_air_defense_display_profile(72_000).symbol_scale_m == pytest.approx(
-        316.8
-    )
+    assert profile.display_dimensions_m.length == 144
+    assert profile.display_dimensions_m.width == pytest.approx(38.4)
+    assert profile.display_dimensions_m.chassis_height == pytest.approx(33.6)
+    assert profile.display_dimensions_m.equipment_top == 90
+    assert profile.symbol_scale_m == pytest.approx(316.8)
+    with pytest.raises(FrozenInstanceError):
+        setattr(profile, "exaggeration", 13)
+    with pytest.raises(FrozenInstanceError):
+        setattr(profile.display_dimensions_m, "width", 40)
 
 
 def test_air_defense_unit_binds_all_components_to_one_root() -> None:

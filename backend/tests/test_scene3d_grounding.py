@@ -6,6 +6,7 @@ import numpy
 import pytest
 import rasterio
 from rasterio.transform import from_origin
+from rasterio.warp import transform as transform_points
 
 from app.scene3d.grounding import sample_terrain_anchor
 
@@ -46,6 +47,58 @@ def write_dem(
         crs="EPSG:32644",
         transform=DEM_TRANSFORM,
         nodata=nodata,
+    ) as dataset:
+        dataset.write(elevation, 1)
+    return path
+
+
+def write_geographic_plane_dem(
+    path: Path,
+    center_elevation_m: float,
+    x_slope: float,
+    y_slope: float,
+) -> Path:
+    longitude, latitude = transform_points(
+        "EPSG:32644",
+        "EPSG:4326",
+        [TARGET_POSITION[0]],
+        [TARGET_POSITION[1]],
+    )
+    shape = (160, 160)
+    pixel_size_deg = 0.00002
+    geo_transform = from_origin(
+        longitude[0] - shape[1] * pixel_size_deg / 2,
+        latitude[0] + shape[0] * pixel_size_deg / 2,
+        pixel_size_deg,
+        pixel_size_deg,
+    )
+    rows, columns = numpy.indices(shape, dtype=numpy.float64)
+    source_x = geo_transform.c + (columns + 0.5) * geo_transform.a
+    source_y = geo_transform.f + (rows + 0.5) * geo_transform.e
+    target_x, target_y = transform_points(
+        "EPSG:4326",
+        "EPSG:32644",
+        source_x.ravel().tolist(),
+        source_y.ravel().tolist(),
+    )
+    target_x_array = numpy.asarray(target_x).reshape(shape)
+    target_y_array = numpy.asarray(target_y).reshape(shape)
+    elevation = (
+        center_elevation_m
+        + x_slope * (target_x_array - TARGET_POSITION[0])
+        + y_slope * (target_y_array - TARGET_POSITION[1])
+    )
+
+    with rasterio.open(
+        path,
+        "w",
+        driver="GTiff",
+        width=shape[1],
+        height=shape[0],
+        count=1,
+        dtype="float64",
+        crs="EPSG:4326",
+        transform=geo_transform,
     ) as dataset:
         dataset.write(elevation, 1)
     return path
@@ -93,6 +146,37 @@ def test_sample_terrain_anchor_fits_sloped_original_dem(tmp_path: Path) -> None:
     assert anchor.ground_elevation_amsl_m == pytest.approx(1_000, abs=0.01)
     assert anchor.normal_enu == pytest.approx(normal, abs=1e-10)
     assert anchor.slope_deg == pytest.approx(expected_slope, abs=0.1)
+    assert anchor.fit_rmse_m <= 0.01
+    assert anchor.max_residual_m <= 0.01
+
+
+def test_sample_terrain_anchor_transforms_target_coordinates_to_source_crs(
+    tmp_path: Path,
+) -> None:
+    x_slope = 0.04
+    y_slope = -0.025
+    path = write_geographic_plane_dem(
+        tmp_path / "geographic-plane.tif",
+        center_elevation_m=875,
+        x_slope=x_slope,
+        y_slope=y_slope,
+    )
+
+    anchor = sample_terrain_anchor(
+        path,
+        32644,
+        TARGET_POSITION,
+        25,
+        144,
+        38.4,
+    )
+
+    normal = numpy.asarray((-x_slope, -y_slope, 1), dtype=numpy.float64)
+    normal /= numpy.linalg.norm(normal)
+    expected_slope = degrees(atan(hypot(x_slope, y_slope)))
+    assert anchor.ground_elevation_amsl_m == pytest.approx(875, abs=0.01)
+    assert anchor.normal_enu == pytest.approx(normal, abs=1e-5)
+    assert anchor.slope_deg == pytest.approx(expected_slope, abs=0.01)
     assert anchor.fit_rmse_m <= 0.01
     assert anchor.max_residual_m <= 0.01
 
