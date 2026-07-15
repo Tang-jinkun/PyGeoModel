@@ -75,6 +75,7 @@ def run_coverage_task(task_id: str, payload: CoverageRequest) -> None:
                 task_id=task_id,
                 prepared=prepared,
                 payload=payload,
+                min_visible_height=min_visible_height,
             )
             write_radar_platform_glb(
                 staging_dir / OUTPUT_FILENAMES["radar_platform_glb"],

@@ -19,6 +19,7 @@ from .exporter import (
 )
 from .frame import SceneFrame
 from .primitives import tube_mesh
+from .radar_volume import RadarVisibilityVolume, build_radar_visibility_volume
 
 
 EARTH_RADIUS_M = 6_371_000.0
@@ -70,6 +71,12 @@ GROUND_CONTACT_MATERIAL = MaterialSpec(
     shading="unlit",
     emissive_rgb=(180, 18, 18),
 )
+UNKNOWN_BOUNDARY_MATERIAL = MaterialSpec(
+    "radar_unknown_boundary",
+    (112, 119, 124, 255),
+    shading="unlit",
+    emissive_rgb=(56, 60, 62),
+)
 
 
 @dataclass(frozen=True)
@@ -86,6 +93,7 @@ def write_radar_coverage_glb(
     task_id: str,
     prepared: PreparedCoverageDem,
     payload: CoverageRequest,
+    min_visible_height: Path | None = None,
 ) -> dict:
     effective_range_m, radar_equation_range_m = effective_max_range(payload)
     range_basis = (
@@ -162,10 +170,33 @@ def write_radar_coverage_glb(
         azimuths,
         ray_grid,
     )
+    visibility_volume = (
+        build_radar_visibility_volume(prepared, payload, min_visible_height)
+        if min_visible_height is not None
+        else None
+    )
     all_points = [
         (prepared.radar_x, prepared.radar_y, radar_altitude_m),
         *(result.point for row in ray_grid for result in row),
         *(point for row in visual_grid for point in row),
+        *(
+            (tuple(point) for point in visibility_volume.vertices)
+            if visibility_volume is not None
+            else ()
+        ),
+        *(
+            (
+                tuple(point)
+                for segments in (
+                    visibility_volume.terrain_segments,
+                    visibility_volume.unknown_segments,
+                )
+                for segment in segments
+                for point in segment
+            )
+            if visibility_volume is not None
+            else ()
+        )
     ]
     frame = SceneFrame.from_projected_points(prepared.target_epsg, all_points)
     actual_local_grid = [
@@ -177,13 +208,40 @@ def write_radar_coverage_glb(
         for row in visual_grid
     ]
     wrap = payload.coverage.scan_mode == "omni"
-    shell = _shell_mesh(local_grid, visual_ray_grid, wrap)
+    shell = (
+        _visibility_volume_mesh(visibility_volume, frame)
+        if visibility_volume is not None
+        else _shell_mesh(local_grid, visual_ray_grid, wrap)
+    )
     grid = _grid_mesh(local_grid, visual_ray_grid, wrap)
-    ground_contact = _ground_contact_mesh(
-        local_grid,
-        visual_ray_grid,
-        wrap,
-        radius_m=max(10.0, min(40.0, effective_range_m * 0.0007)),
+    contact_radius_m = max(10.0, min(40.0, effective_range_m * 0.0007))
+    terrain_contact = (
+        _visibility_segment_mesh(
+            visibility_volume.terrain_segments,
+            frame,
+            radius_m=contact_radius_m,
+        )
+        if visibility_volume is not None
+        else None
+    )
+    unknown_boundary = (
+        _visibility_segment_mesh(
+            visibility_volume.unknown_segments,
+            frame,
+            radius_m=contact_radius_m,
+        )
+        if visibility_volume is not None
+        else None
+    )
+    ground_contact = (
+        None
+        if visibility_volume is not None
+        else _ground_contact_mesh(
+            local_grid,
+            visual_ray_grid,
+            wrap,
+            radius_m=contact_radius_m,
+        )
     )
     origin = frame.to_gltf(
         (prepared.radar_x, prepared.radar_y, radar_altitude_m)
@@ -243,11 +301,41 @@ def write_radar_coverage_glb(
                 material=GRID_MATERIAL,
                 extras={"kind": "shell_grid"},
             ),
-            SceneNode(
-                name="radar_result/ground_contact",
-                mesh=ground_contact,
-                material=GROUND_CONTACT_MATERIAL,
-                extras={"kind": "ground_contact"},
+            *(
+                [
+                    SceneNode(
+                        name="radar_result/terrain_contact",
+                        mesh=terrain_contact,
+                        material=GROUND_CONTACT_MATERIAL,
+                        extras={"kind": "terrain_contact"},
+                    )
+                ]
+                if terrain_contact is not None
+                else []
+            ),
+            *(
+                [
+                    SceneNode(
+                        name="radar_result/unknown_boundary",
+                        mesh=unknown_boundary,
+                        material=UNKNOWN_BOUNDARY_MATERIAL,
+                        extras={"kind": "unknown_boundary"},
+                    )
+                ]
+                if unknown_boundary is not None
+                else []
+            ),
+            *(
+                [
+                    SceneNode(
+                        name="radar_result/ground_contact",
+                        mesh=ground_contact,
+                        material=GROUND_CONTACT_MATERIAL,
+                        extras={"kind": "ground_contact"},
+                    )
+                ]
+                if ground_contact is not None
+                else []
             ),
             SceneNode(
                 name="radar_result/diagnostics",
@@ -311,6 +399,20 @@ def write_radar_coverage_glb(
             "stage2_target_evaluation": "not_implemented",
         }
     )
+    if visibility_volume is not None:
+        metadata["visibility_volume"] = {
+            "method": "marching_cubes",
+            "nominal_elevation_deg": [0, 90],
+            "scan_elevation_deg": [
+                payload.advanced.min_elevation_deg,
+                payload.advanced.max_elevation_deg,
+            ],
+            "grid_shape": list(visibility_volume.grid_shape),
+            "occupied_voxel_count": visibility_volume.occupied_voxel_count,
+            "face_count": len(visibility_volume.faces),
+            "terrain_segment_count": len(visibility_volume.terrain_segments),
+            "unknown_segment_count": len(visibility_volume.unknown_segments),
+        }
     export_glb(
         path,
         [root],
@@ -485,6 +587,35 @@ def _sample_terrain(terrain, valid, transform, nodata, x, y):
     if nodata is not None and math.isclose(value, float(nodata)):
         return None
     return value
+
+
+def _visibility_volume_mesh(
+    volume: RadarVisibilityVolume,
+    frame: SceneFrame,
+) -> trimesh.Trimesh:
+    vertices = numpy.asarray(
+        [frame.to_gltf(tuple(point)) for point in volume.vertices],
+        dtype=numpy.float64,
+    )
+    return trimesh.Trimesh(vertices=vertices, faces=volume.faces, process=False)
+
+
+def _visibility_segment_mesh(
+    segments: numpy.ndarray,
+    frame: SceneFrame,
+    *,
+    radius_m: float,
+) -> trimesh.Trimesh | None:
+    meshes: list[trimesh.Trimesh] = []
+    for segment in segments:
+        path = numpy.asarray(
+            [frame.to_gltf(tuple(point)) for point in segment],
+            dtype=numpy.float64,
+        )
+        meshes.append(tube_mesh(path, radius_m=radius_m, sections=6))
+    if not meshes:
+        return None
+    return trimesh.util.concatenate(meshes)
 
 
 def _visual_dome_grid(

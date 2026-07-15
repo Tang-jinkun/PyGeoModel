@@ -62,6 +62,29 @@ def test_target_independent_radar_glb_is_self_contained_and_open_at_nodata(
     ) as dataset:
         dataset.write(dem, 1)
 
+    min_visible_height_path = tmp_path / "minimum_visible_height.tif"
+    min_visible_height = numpy.zeros_like(dem)
+    min_visible_height[:, 15:] = numpy.linspace(
+        0,
+        300,
+        dem.shape[1] - 15,
+        dtype=numpy.float32,
+    )
+    min_visible_height[dem == -9999] = -9999
+    with rasterio.open(
+        min_visible_height_path,
+        "w",
+        driver="GTiff",
+        width=min_visible_height.shape[1],
+        height=min_visible_height.shape[0],
+        count=1,
+        dtype=min_visible_height.dtype,
+        crs="EPSG:32644",
+        transform=transform,
+        nodata=-9999,
+    ) as dataset:
+        dataset.write(min_visible_height, 1)
+
     payload = CoverageRequest.model_validate(
         {
             "dem_id": "dem_radar",
@@ -115,6 +138,7 @@ def test_target_independent_radar_glb_is_self_contained_and_open_at_nodata(
         task_id="radar_task_demo",
         prepared=prepared,
         payload=payload,
+        min_visible_height=min_visible_height_path,
     )
 
     document = read_glb_document(output.read_bytes())
@@ -123,9 +147,10 @@ def test_target_independent_radar_glb_is_self_contained_and_open_at_nodata(
         "radar_result",
         "radar_result/radar_origin",
         "radar_result/detectable_shell",
+        "radar_result/terrain_contact",
+        "radar_result/unknown_boundary",
         "radar_result/detectable_fill",
         "radar_result/shell_grid",
-        "radar_result/ground_contact",
         "radar_result/diagnostics",
     } <= node_names
     scan_nodes = {
@@ -150,6 +175,26 @@ def test_target_independent_radar_glb_is_self_contained_and_open_at_nodata(
     assert metadata["terminations"]["terrain"] > 0
     assert metadata["terminations"]["nodata"] > 0
     assert metadata["open_ray_count"] > 0
+    visibility_volume = metadata["visibility_volume"]
+    assert set(visibility_volume) == {
+        "method",
+        "nominal_elevation_deg",
+        "scan_elevation_deg",
+        "grid_shape",
+        "occupied_voxel_count",
+        "face_count",
+        "terrain_segment_count",
+        "unknown_segment_count",
+    }
+    assert visibility_volume["method"] == "marching_cubes"
+    assert visibility_volume["nominal_elevation_deg"] == [0, 90]
+    assert visibility_volume["scan_elevation_deg"] == [0.0, 36.0]
+    assert visibility_volume["grid_shape"] == [256, 256, 128]
+    assert visibility_volume["occupied_voxel_count"] > 0
+    assert visibility_volume["face_count"] > 0
+    assert visibility_volume["terrain_segment_count"] > 0
+    assert visibility_volume["unknown_segment_count"] > 0
+    assert output.stat().st_size < 50_000_000
     assert document.get("buffers", [{}])[0].get("uri") is None
     assert all(image.get("uri") is None for image in document.get("images", []))
     assert OUTPUT_FILENAMES["scene_glb"] == "radar_detection_domain.glb"

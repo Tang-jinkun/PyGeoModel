@@ -13,6 +13,7 @@ from app.core.errors import AppError
 from app.schemas.radar import CoverageMetrics, CoverageModelMetadata, CoverageOutputFile, CoverageRequest
 from app.services.coverage_model import PreparedCoverageDem
 from app.services.output_files import OUTPUT_FILENAMES, describe_output_files
+from app.workers import coverage_task
 from app.workers.coverage_task import (
     _beam_clip_profile_for_range,
     _build_coverage_metrics,
@@ -28,6 +29,82 @@ from app.workers.coverage_task import (
     _write_text_atomic,
     _write_vector_outputs,
 )
+
+
+def test_run_coverage_task_passes_staged_minimum_visible_height_to_radar_glb(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings.data_dir = tmp_path
+    settings.ensure_directories()
+    payload = CoverageRequest.model_validate(
+        {
+            "dem_id": "dem_worker",
+            "radar": {"lon": 79.0, "lat": 31.5, "height_m": 30},
+            "coverage": {"max_range_m": 1_000},
+        }
+    )
+    prepared = PreparedCoverageDem(
+        source_dem=tmp_path / "source.tif",
+        projected_dem=tmp_path / "projected.tif",
+        target_epsg=32644,
+        radar_x=0,
+        radar_y=0,
+        projected_bounds=BoundingBox(-1_000, -1_000, 1_000, 1_000),
+        resolution_m=(100, 100),
+        dem_coverage_ratio=1,
+    )
+    ground_viewshed_path: Path | None = None
+    writer_min_height_path: Path | None = None
+    writer_saw_staged_raster = False
+
+    def fake_viewshed(dem, output, radar_x, radar_y, request, *, mode):
+        nonlocal ground_viewshed_path
+        output.touch()
+        if mode == "GROUND":
+            ground_viewshed_path = output
+        return ["gdal_viewshed", mode]
+
+    def spy_radar_writer(path, **kwargs):
+        nonlocal writer_min_height_path, writer_saw_staged_raster
+        writer_min_height_path = kwargs.get("min_visible_height")
+        writer_saw_staged_raster = (
+            writer_min_height_path is not None and writer_min_height_path.exists()
+        )
+        return {}
+
+    monkeypatch.setattr(coverage_task, "mark_running", lambda *args, **kwargs: None)
+    monkeypatch.setattr(coverage_task, "mark_finished", lambda *args, **kwargs: None)
+    monkeypatch.setattr(coverage_task, "mark_failed", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        coverage_task,
+        "find_dem_file",
+        lambda dem_id: tmp_path / "source.tif",
+    )
+    monkeypatch.setattr(coverage_task, "prepare_coverage_dem", lambda *args: prepared)
+    monkeypatch.setattr(coverage_task, "_run_gdal_viewshed", fake_viewshed)
+    monkeypatch.setattr(coverage_task, "_generate_height_layers", lambda *args: None)
+    monkeypatch.setattr(coverage_task, "_generate_voxels", lambda *args: None)
+    monkeypatch.setattr(coverage_task, "_generate_clipped_volume", lambda *args: None)
+    monkeypatch.setattr(coverage_task, "write_radar_coverage_glb", spy_radar_writer)
+    monkeypatch.setattr(
+        coverage_task,
+        "write_radar_platform_glb",
+        lambda *args, **kwargs: {},
+    )
+    monkeypatch.setattr(
+        coverage_task,
+        "_write_vector_outputs",
+        lambda *args: (None, None, None, None, None, None),
+    )
+
+    coverage_task.run_coverage_task("task_worker_glb", payload)
+
+    assert writer_min_height_path == ground_viewshed_path
+    assert writer_min_height_path is not None
+    assert writer_min_height_path.name == "min_visible_height.tif"
+    assert writer_min_height_path.parent.name.startswith(".staging-")
+    assert writer_saw_staged_raster
 
 
 def test_coverage_masks_partition_unknown_from_blocked() -> None:
