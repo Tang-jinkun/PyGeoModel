@@ -297,6 +297,7 @@ def test_target_independent_radar_glb_is_self_contained_and_open_at_nodata(
         "floor_face_count",
         "blocked_face_count",
         "blocked_ground_face_count",
+        "blocked_contact_segment_count",
         "terrain_segment_count",
         "unknown_segment_count",
     }
@@ -309,6 +310,7 @@ def test_target_independent_radar_glb_is_self_contained_and_open_at_nodata(
     assert visibility_volume["shell_face_count"] > 0
     assert visibility_volume["floor_face_count"] > 0
     assert visibility_volume["blocked_face_count"] > 0
+    assert visibility_volume["blocked_contact_segment_count"] > 0
     assert visibility_volume["terrain_segment_count"] > 0
     assert visibility_volume["unknown_segment_count"] > 0
     assert metadata["visual_dome"]["terrain_conforming"] is False

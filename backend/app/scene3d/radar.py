@@ -287,13 +287,14 @@ def write_radar_coverage_glb(
     )
     contact_radius_m = max(10.0, min(40.0, effective_range_m * 0.0007))
     blocked_contact = (
-        _blocked_ground_contact_mesh(
-            visibility_volume,
+        _visibility_segment_mesh(
+            visibility_volume.blocked_contact_segments,
             frame,
             radius_m=max(12.0, min(50.0, effective_range_m * 0.0008)),
             altitude_offset_m=BLOCKED_GROUND_OFFSET_M,
         )
         if visibility_volume is not None
+        and visibility_volume.blocked_contact_segments is not None
         else None
     )
     terrain_contact = (
@@ -560,6 +561,11 @@ def write_radar_coverage_glb(
             ),
             "blocked_ground_face_count": int(
                 numpy.count_nonzero(blocked_lower_faces)
+            ),
+            "blocked_contact_segment_count": (
+                len(visibility_volume.blocked_contact_segments)
+                if visibility_volume.blocked_contact_segments is not None
+                else 0
             ),
             "terrain_segment_count": len(visibility_volume.terrain_segments),
             "unknown_segment_count": len(visibility_volume.unknown_segments),
@@ -833,24 +839,6 @@ def _lower_surface_boundary_mesh(
     )
 
 
-def _blocked_ground_contact_mesh(
-    volume: RadarVisibilityVolume,
-    frame: SceneFrame,
-    *,
-    radius_m: float,
-    altitude_offset_m: float,
-) -> trimesh.Trimesh | None:
-    if volume.blocked_vertices is None or volume.blocked_faces is None:
-        return None
-    return _lower_face_boundary_mesh(
-        volume.blocked_vertices,
-        volume.blocked_faces,
-        frame,
-        radius_m=radius_m,
-        altitude_offset_m=altitude_offset_m,
-    )
-
-
 def _lower_face_boundary_mesh(
     vertices: numpy.ndarray,
     faces: numpy.ndarray,
@@ -897,11 +885,17 @@ def _visibility_segment_mesh(
     frame: SceneFrame,
     *,
     radius_m: float,
+    altitude_offset_m: float = 0.0,
 ) -> trimesh.Trimesh | None:
     meshes: list[trimesh.Trimesh] = []
     for segment in segments:
         path = numpy.asarray(
-            [frame.to_gltf(tuple(point)) for point in segment],
+            [
+                frame.to_gltf(
+                    tuple(point + (0.0, 0.0, altitude_offset_m))
+                )
+                for point in segment
+            ],
             dtype=numpy.float64,
         )
         meshes.append(continuous_tube_mesh(path, radius_m=radius_m, sections=6))

@@ -25,6 +25,7 @@ class RadarVisibilityVolume:
     occupied_voxel_count: int
     blocked_vertices: numpy.ndarray | None = None
     blocked_faces: numpy.ndarray | None = None
+    blocked_contact_segments: numpy.ndarray | None = None
 
 
 def build_radar_visibility_volume(
@@ -162,6 +163,13 @@ def build_radar_visibility_volume(
     x_pitch = (2 * effective_range_m) / (x_count - 1)
     y_pitch = (2 * effective_range_m) / (y_count - 1)
     z_pitch = (z_max - z_min) / (z_count - 1)
+    blocked_contact_segments = _terrain_shadow_boundary_segments(
+        min_height_grid,
+        terrain_grid,
+        vertical_domain,
+        origin=(x_min, y_min),
+        pitch=(x_pitch, y_pitch),
+    )
     vertices, faces = _extract_surface(
         occupancy,
         spacing=(z_pitch, y_pitch, x_pitch),
@@ -195,6 +203,7 @@ def build_radar_visibility_volume(
         unknown_segments=unknown_segments,
         grid_shape=(x_count, y_count, z_count),
         occupied_voxel_count=occupied_voxel_count,
+        blocked_contact_segments=blocked_contact_segments,
     )
 
 
@@ -338,6 +347,13 @@ def build_radar_visibility_envelope(
         blocked_faces = numpy.empty((0, 3), dtype=numpy.int64)
     x_pitch = (2 * effective_range_m) / (x_count - 1)
     y_pitch = (2 * effective_range_m) / (y_count - 1)
+    blocked_contact_segments = _terrain_shadow_boundary_segments(
+        min_height_grid,
+        terrain_grid,
+        valid_horizontal & inside_range & sector,
+        origin=(x_min, y_min),
+        pitch=(x_pitch, y_pitch),
+    )
     vertical_span = max(1.0, float(upper_surface[envelope_valid].max() - lower_surface[envelope_valid].min()))
     terrain_segments = _terrain_contact_segments(
         vertices,
@@ -368,6 +384,7 @@ def build_radar_visibility_envelope(
         occupied_voxel_count=int(numpy.count_nonzero(envelope_valid)),
         blocked_vertices=blocked_vertices,
         blocked_faces=blocked_faces,
+        blocked_contact_segments=blocked_contact_segments,
     )
 
 
@@ -697,6 +714,45 @@ def _unknown_boundary_segments(
     inside_range = dx * dx + dy * dy <= effective_range_m * effective_range_m
     inside_sector = _sector_mask(dx, dy, payload)
     return result[finite_height & (inside_range & inside_sector).all(axis=1)]
+
+
+def _terrain_shadow_boundary_segments(
+    min_height_grid: numpy.ndarray,
+    terrain_grid: numpy.ndarray,
+    valid_horizontal: numpy.ndarray,
+    *,
+    origin: tuple[float, float],
+    pitch: tuple[float, float],
+) -> numpy.ndarray:
+    shadow = min_height_grid > 1e-6
+    contours = measure.find_contours(
+        shadow.astype(numpy.float32),
+        0.5,
+        mask=valid_horizontal,
+    )
+    segments: list[numpy.ndarray] = []
+    for contour in contours:
+        if len(contour) < 2:
+            continue
+        points = numpy.empty((len(contour), 3), dtype=numpy.float64)
+        points[:, 0] = origin[0] + contour[:, 1] * pitch[0]
+        points[:, 1] = origin[1] + contour[:, 0] * pitch[1]
+        points[:, 2] = [
+            _nearest_valid_height(
+                row,
+                column,
+                valid_horizontal,
+                terrain_grid,
+                numpy.nan,
+            )
+            for row, column in contour
+        ]
+        contour_segments = numpy.stack((points[:-1], points[1:]), axis=1)
+        finite = numpy.isfinite(contour_segments).all(axis=(1, 2))
+        segments.extend(contour_segments[finite])
+    if not segments:
+        return numpy.empty((0, 2, 3), dtype=numpy.float64)
+    return numpy.asarray(segments, dtype=numpy.float64)
 
 
 def _nearest_valid_height(

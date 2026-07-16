@@ -11,6 +11,7 @@ from app.scene3d.radar_volume import (
     _bounded_grid_shape,
     _extract_surface,
     _terrain_contact_segments,
+    _terrain_shadow_boundary_segments,
     _unknown_boundary_segments,
     build_radar_visibility_volume,
 )
@@ -59,6 +60,34 @@ def test_terrain_contacts_are_triangle_height_field_intersections() -> None:
     assert numpy.all(numpy.linalg.norm(segments[:, 1] - segments[:, 0], axis=1) > 0)
     canonical = numpy.sort(numpy.round(segments, 12), axis=1)
     assert len(numpy.unique(canonical.reshape(len(canonical), -1), axis=0)) == 2
+
+
+def test_terrain_shadow_boundary_excludes_analysis_perimeter() -> None:
+    terrain = numpy.full((5, 5), 100.0)
+    valid = numpy.ones((5, 5), dtype=bool)
+    min_visible_height = numpy.zeros((5, 5), dtype=numpy.float64)
+    min_visible_height[:, 3:] = 250.0
+
+    segments = _terrain_shadow_boundary_segments(
+        min_visible_height,
+        terrain,
+        valid,
+        origin=(0.0, 0.0),
+        pitch=(10.0, 10.0),
+    )
+
+    assert len(segments) > 0
+    assert numpy.allclose(segments[:, :, 0], 25.0)
+    assert numpy.allclose(segments[:, :, 2], 100.0)
+
+    fully_blocked = _terrain_shadow_boundary_segments(
+        numpy.full((5, 5), 250.0),
+        terrain,
+        valid,
+        origin=(0.0, 0.0),
+        pitch=(10.0, 10.0),
+    )
+    assert fully_blocked.shape == (0, 2, 3)
 
 
 def test_unknown_boundaries_use_sampled_terrain_height() -> None:
