@@ -18,7 +18,7 @@ from .exporter import (
     export_glb,
 )
 from .frame import SceneFrame
-from .primitives import tube_mesh
+from .primitives import continuous_tube_mesh
 from .radar_volume import RadarVisibilityVolume, build_radar_visibility_envelope
 
 
@@ -28,6 +28,7 @@ ELEVATION_STEP_DEG = 1.5
 SCAN_PERIOD_S = 20.0
 VISUAL_DOME_ELEVATION_STEP_DEG = 5.0
 VISUAL_DOME_VERTICAL_RATIO = 1.0
+DIAGNOSTIC_MAX_MARKERS = 256
 
 SHELL_MATERIAL = MaterialSpec(
     "radar_detectable_shell",
@@ -427,6 +428,7 @@ def write_radar_coverage_glb(
         [root],
         scene_metadata=metadata,
         animations=[scan_animation],
+        include_normals=False,
     )
     return metadata
 
@@ -636,7 +638,9 @@ def _lower_surface_boundary_mesh(
             dtype=numpy.float64,
         )
         if numpy.linalg.norm(path[1] - path[0]) > 0:
-            meshes.append(tube_mesh(path, radius_m=radius_m, sections=6))
+            meshes.append(
+                continuous_tube_mesh(path, radius_m=radius_m, sections=6)
+            )
     if not meshes:
         return None
     return trimesh.util.concatenate(meshes)
@@ -654,7 +658,7 @@ def _visibility_segment_mesh(
             [frame.to_gltf(tuple(point)) for point in segment],
             dtype=numpy.float64,
         )
-        meshes.append(tube_mesh(path, radius_m=radius_m, sections=6))
+        meshes.append(continuous_tube_mesh(path, radius_m=radius_m, sections=6))
     if not meshes:
         return None
     return trimesh.util.concatenate(meshes)
@@ -743,7 +747,10 @@ def _ground_contact_mesh(local_grid, ray_grid, wrap: bool, *, radius_m: float):
     if not paths:
         raise ValueError("Radar visual dome produced no ground contact line")
     return trimesh.util.concatenate(
-        [tube_mesh(path, radius_m=radius_m, sections=8) for path in paths]
+        [
+            continuous_tube_mesh(path, radius_m=radius_m, sections=8)
+            for path in paths
+        ]
     )
 
 
@@ -777,7 +784,10 @@ def _grid_mesh(
             points.append(points[0])
             results.append(results[0])
         _append_closed_paths(paths, points, results)
-    meshes = [tube_mesh(path, radius_m=radius_m, sections=6) for path in paths]
+    meshes = [
+        continuous_tube_mesh(path, radius_m=radius_m, sections=6)
+        for path in paths
+    ]
     if not meshes:
         raise ValueError("Radar ray grid produced no shell grid lines")
     return trimesh.util.concatenate(meshes)
@@ -805,6 +815,14 @@ def _diagnostic_mesh(local_grid, ray_grid, *, fallback, radius):
     ]
     if not points:
         points = [fallback]
+    elif len(points) > DIAGNOSTIC_MAX_MARKERS:
+        indices = numpy.linspace(
+            0,
+            len(points) - 1,
+            DIAGNOSTIC_MAX_MARKERS,
+            dtype=numpy.int64,
+        )
+        points = [points[index] for index in indices]
     meshes = []
     for point in points:
         marker = trimesh.creation.icosphere(subdivisions=1, radius=radius)

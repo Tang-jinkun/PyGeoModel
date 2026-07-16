@@ -9,8 +9,10 @@ from rasterio.transform import from_origin
 from app.schemas.radar import CoverageRequest
 from app.scene3d.exporter import read_glb_document
 from app.scene3d.radar import (
+    DIAGNOSTIC_MAX_MARKERS,
     GRID_MATERIAL,
     RayResult,
+    _diagnostic_mesh,
     _grid_strides,
     _scan_slice_nodes,
     _shell_mesh,
@@ -70,6 +72,24 @@ def test_scan_animation_uses_sparse_visibility_keyframes() -> None:
 
 def test_shell_grid_decouples_visual_spacing_from_ray_precision() -> None:
     assert _grid_strides() == (4, 3)
+
+
+def test_diagnostic_markers_are_bounded_without_changing_ray_results() -> None:
+    marker_count = DIAGNOSTIC_MAX_MARKERS + 50
+    local_grid = [[numpy.array([index, 0, 0]) for index in range(marker_count)]]
+    ray_grid = [[
+        RayResult(1_000, tuple(point), "terrain", True)
+        for point in local_grid[0]
+    ]]
+
+    mesh = _diagnostic_mesh(
+        local_grid,
+        ray_grid,
+        fallback=numpy.zeros(3),
+        radius=1,
+    )
+
+    assert len(mesh.faces) == DIAGNOSTIC_MAX_MARKERS * 80
 
 
 def test_target_independent_radar_glb_is_self_contained_and_open_at_nodata(
@@ -185,6 +205,11 @@ def test_target_independent_radar_glb_is_self_contained_and_open_at_nodata(
     )
 
     document = read_glb_document(output.read_bytes())
+    assert all(
+        "NORMAL" not in primitive.get("attributes", {})
+        for mesh in document.get("meshes", [])
+        for primitive in mesh.get("primitives", [])
+    )
     node_names = {node.get("name") for node in document["nodes"]}
     assert {
         "radar_result",

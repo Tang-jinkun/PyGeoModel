@@ -2,7 +2,12 @@ import numpy
 import pytest
 
 import app.scene3d.primitives as primitives
-from app.scene3d.primitives import annular_prism_mesh, ribbon_mesh, tube_mesh
+from app.scene3d.primitives import (
+    annular_prism_mesh,
+    continuous_tube_mesh,
+    ribbon_mesh,
+    tube_mesh,
+)
 
 
 def test_tube_and_ribbon_are_finite_bounded_meshes() -> None:
@@ -17,6 +22,19 @@ def test_tube_and_ribbon_are_finite_bounded_meshes() -> None:
     assert len(ribbon.vertices) == 6 and len(ribbon.faces) == 4
     assert numpy.isfinite(tube.vertices).all()
     assert numpy.isfinite(ribbon.vertices).all()
+
+
+def test_continuous_tube_shares_cross_sections_between_segments() -> None:
+    points = numpy.asarray(
+        [[0, 0, 0], [100, 20, 0], [200, 20, 50], [300, 0, 50]],
+        dtype=float,
+    )
+
+    mesh = continuous_tube_mesh(points, radius_m=10, sections=6)
+
+    assert len(mesh.vertices) == len(points) * 6 + 2
+    assert len(mesh.faces) == (len(points) - 1) * 12 + 12
+    assert numpy.isfinite(mesh.vertices).all()
 
 
 def test_annular_prism_preserves_inner_gap_and_height() -> None:

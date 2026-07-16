@@ -51,6 +51,99 @@ def tube_mesh(
     return trimesh.util.concatenate(pieces)
 
 
+def continuous_tube_mesh(
+    points: Iterable[Iterable[float]],
+    radius_m: float,
+    sections: int = 8,
+) -> trimesh.Trimesh:
+    values = _points(points, 2)
+    if radius_m <= 0 or sections < 3:
+        raise ValueError("Tube radius must be positive and sections at least three")
+    keep = numpy.concatenate(
+        ([True], numpy.linalg.norm(numpy.diff(values, axis=0), axis=1) > 1e-9)
+    )
+    values = values[keep]
+    if len(values) < 2:
+        raise ValueError("Tube path requires at least two distinct points")
+
+    tangents = numpy.empty_like(values)
+    tangents[0] = values[1] - values[0]
+    tangents[-1] = values[-1] - values[-2]
+    if len(values) > 2:
+        tangents[1:-1] = values[2:] - values[:-2]
+    tangent_lengths = numpy.linalg.norm(tangents, axis=1)
+    for index in numpy.flatnonzero(tangent_lengths <= 1e-9):
+        tangents[index] = values[index + 1] - values[index]
+    tangents /= numpy.linalg.norm(tangents, axis=1)[:, numpy.newaxis]
+
+    # Parallel transport keeps adjacent cross sections aligned at shared joints.
+    normals = numpy.empty_like(values)
+    binormals = numpy.empty_like(values)
+    axes = numpy.eye(3)
+    for index, tangent in enumerate(tangents):
+        if index == 0:
+            axis = axes[numpy.argmin(numpy.abs(axes @ tangent))]
+            normal = numpy.cross(tangent, axis)
+        else:
+            normal = normals[index - 1] - tangent * numpy.dot(
+                normals[index - 1], tangent
+            )
+            if numpy.linalg.norm(normal) <= 1e-9:
+                axis = axes[numpy.argmin(numpy.abs(axes @ tangent))]
+                normal = numpy.cross(tangent, axis)
+        normals[index] = normal / numpy.linalg.norm(normal)
+        binormals[index] = numpy.cross(tangent, normals[index])
+
+    angles = numpy.linspace(0, 2 * numpy.pi, sections, endpoint=False)
+    rings = numpy.asarray(
+        [
+            point
+            + radius_m
+            * (
+                numpy.cos(angle) * normal
+                + numpy.sin(angle) * binormal
+            )
+            for point, normal, binormal in zip(values, normals, binormals)
+            for angle in angles
+        ]
+    )
+    vertices = numpy.vstack([rings, values[0], values[-1]])
+    start_center = len(rings)
+    end_center = start_center + 1
+    faces: list[list[int]] = []
+    for point_index in range(len(values) - 1):
+        current = point_index * sections
+        following = current + sections
+        for section_index in range(sections):
+            next_section = (section_index + 1) % sections
+            faces.extend(
+                [
+                    [
+                        current + section_index,
+                        following + section_index,
+                        current + next_section,
+                    ],
+                    [
+                        current + next_section,
+                        following + section_index,
+                        following + next_section,
+                    ],
+                ]
+            )
+    last_ring = (len(values) - 1) * sections
+    for section_index in range(sections):
+        next_section = (section_index + 1) % sections
+        faces.append([start_center, next_section, section_index])
+        faces.append(
+            [end_center, last_ring + section_index, last_ring + next_section]
+        )
+    return trimesh.Trimesh(
+        vertices=vertices,
+        faces=numpy.asarray(faces, dtype=numpy.int64),
+        process=False,
+    )
+
+
 def ribbon_mesh(
     points: Iterable[Iterable[float]],
     width_m: float,

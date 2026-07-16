@@ -54,13 +54,17 @@ def export_glb(
     scene_metadata: dict,
     node_metadata: dict[str, dict] | None = None,
     animations: list[AnimationSpec] | None = None,
+    include_normals: bool = True,
 ) -> None:
     nodes = _normalize_scene_nodes(meshes, node_metadata)
     materials = _validate_scene_nodes(nodes)
 
     scene = trimesh.Scene()
     _add_scene_nodes(scene, nodes, parent=None)
-    payload = trimesh.exchange.gltf.export_glb(scene, include_normals=True)
+    payload = trimesh.exchange.gltf.export_glb(
+        scene,
+        include_normals=include_normals,
+    )
     payload = inject_glb_extras(
         payload,
         scene_metadata,
