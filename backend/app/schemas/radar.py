@@ -32,6 +32,13 @@ class TargetInput(BaseModel):
     height_m: float = Field(default=0, ge=0)
 
 
+class TargetEvaluationRequest(BaseModel):
+    x: float = Field(ge=-180, le=180, description="WGS84 longitude")
+    y: float = Field(ge=-90, le=90, description="WGS84 latitude")
+    z: float = Field(allow_inf_nan=False, description="Altitude AMSL in metres")
+    target_type: str | None = Field(default=None, max_length=64)
+
+
 class CoverageInput(BaseModel):
     max_range_m: float = Field(gt=0, le=100_000)
     scan_mode: Literal["omni", "sector"] = "omni"
@@ -241,6 +248,47 @@ class CoverageProfileResult(BaseModel):
     required_height_delta_m: float
     reason: str
     samples: list[CoverageProfileSample] = Field(default_factory=list)
+
+
+TargetEvaluationReason = Literal[
+    "detectable",
+    "outside_range",
+    "outside_sector",
+    "below_min_elevation",
+    "above_max_elevation",
+    "outside_dem",
+    "dem_nodata",
+    "below_terrain",
+    "terrain_blocked",
+]
+
+
+class TargetEvaluationResult(BaseModel):
+    task_id: str
+    detectable: bool
+    reason: TargetEvaluationReason
+    target_type: str | None = None
+    target_crs: Literal["EPSG:4326"] = "EPSG:4326"
+    projected_crs: str
+    input_x: float
+    input_y: float
+    input_z: float
+    projected_x: float
+    projected_y: float
+    distance_m: float
+    slant_range_m: float
+    azimuth_deg: float
+    elevation_deg: float
+    radar_altitude_m: float
+    terrain_elevation_m: float | None = None
+    target_height_agl_m: float | None = None
+    minimum_detectable_altitude_m: float | None = None
+    maximum_detectable_altitude_m: float
+    within_range: bool
+    within_beam: bool
+    within_elevation: bool
+    within_dem: bool
+    terrain_blocked: bool
 
 
 class FusionRequest(BaseModel):

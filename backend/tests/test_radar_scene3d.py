@@ -253,6 +253,16 @@ def test_target_independent_radar_glb_is_self_contained_and_open_at_nodata(
     assert metadata["model_id"] == "radar"
     assert metadata["range_basis"] == "nominal"
     assert metadata["reference_rcs_m2"] == 1
+    assert metadata["stage2_target_evaluation"] == {
+        "status": "available",
+        "endpoint": "/api/radar/coverage/radar_task_demo/evaluate-target",
+        "coordinates": {
+            "x": "longitude_deg_wgs84",
+            "y": "latitude_deg_wgs84",
+            "z": "altitude_m_amsl",
+        },
+        "target_type_optional": True,
+    }
     assert metadata["ray_grid"]["azimuth_count"] > 2
     assert metadata["ray_grid"]["elevation_count"] > 2
     assert metadata["terminations"]["terrain"] > 0

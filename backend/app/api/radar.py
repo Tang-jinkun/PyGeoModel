@@ -13,6 +13,8 @@ from app.schemas.radar import (
     CoverageTaskSummary,
     FusionRequest,
     FusionResult,
+    TargetEvaluationRequest,
+    TargetEvaluationResult,
 )
 from app.services.output_files import list_task_output_files, resolve_task_output_path
 from app.services.coverage_model import validate_coverage_extent
@@ -20,6 +22,7 @@ from app.services.dem_store import find_dem_file, read_dem_metadata
 from app.services.fusion_analysis import analyze_fusion
 from app.services.profile_analysis import analyze_coverage_profile
 from app.services.task_store import create_task, delete_task, get_task, list_tasks
+from app.services.target_evaluation import evaluate_coverage_target
 from app.workers.coverage_task import run_coverage_task
 
 router = APIRouter()
@@ -75,6 +78,23 @@ def read_coverage_profile(task_id: str, lon: float, lat: float, samples: int = 1
         return analyze_coverage_profile(task_id, lon, lat, samples=samples)
     except AppError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.as_detail()) from exc
+
+
+@router.post(
+    "/coverage/{task_id}/evaluate-target",
+    response_model=TargetEvaluationResult,
+)
+def evaluate_target(
+    task_id: str,
+    payload: TargetEvaluationRequest,
+) -> TargetEvaluationResult:
+    try:
+        return evaluate_coverage_target(task_id, payload)
+    except AppError as exc:
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail=exc.as_detail(),
+        ) from exc
 
 
 @router.delete("/coverage/{task_id}", response_model=CoverageTaskDeleteResult)
