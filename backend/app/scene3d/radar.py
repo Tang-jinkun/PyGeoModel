@@ -808,11 +808,17 @@ def _append_closed_paths(paths, points, results) -> None:
         if result.closed and result.radius_m > 0:
             current.append(point)
         else:
-            if len(current) >= 2:
-                paths.append(numpy.asarray(current))
+            _append_distinct_path(paths, current)
             current = []
-    if len(current) >= 2:
-        paths.append(numpy.asarray(current))
+    _append_distinct_path(paths, current)
+
+
+def _append_distinct_path(paths, points) -> None:
+    if len(points) < 2:
+        return
+    values = numpy.asarray(points)
+    if numpy.any(numpy.linalg.norm(numpy.diff(values, axis=0), axis=1) > 1e-9):
+        paths.append(values)
 
 
 def _diagnostic_mesh(local_grid, ray_grid, *, fallback, radius):
