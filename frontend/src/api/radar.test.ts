@@ -1,9 +1,17 @@
 import { describe, expect, it } from "vitest";
 
-import { normalizeCoverageTaskStatus } from "./radar";
+import { defaultCoverageRequest, normalizeCoverageTaskStatus } from "./radar";
 
 
 describe("radar task normalization", () => {
+  it("defaults ground radar scanning below and above the local horizon", () => {
+    const request = defaultCoverageRequest();
+
+    expect(request.advanced.min_elevation_deg).toBe(-8);
+    expect(request.advanced.max_elevation_deg).toBe(90);
+    expect(request.advanced.vertical_beam_width_deg).toBe(98);
+  });
+
   it("normalizes DEM clip metrics and profile", () => {
     const task = normalizeCoverageTaskStatus({
       task_id: "task_a",
@@ -62,5 +70,7 @@ describe("radar task normalization", () => {
     expect(task.metrics?.unknown_area_m2).toBe(0);
     expect(task.model?.coverage_contract_version).toBe(1);
     expect(task.model?.beam_clip_profile).toBeNull();
+    expect(task.model?.min_elevation_deg).toBe(0);
+    expect(task.model?.max_elevation_deg).toBe(90);
   });
 });

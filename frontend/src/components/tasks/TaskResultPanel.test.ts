@@ -1,7 +1,11 @@
 import { flushPromises, mount } from "@vue/test-utils";
 import { describe, expect, it, vi } from "vitest";
 
-import { useMapWorkspace, type TaskOutputLayerState } from "../../composables/useMapWorkspace";
+import {
+  useMapWorkspace,
+  type SceneGlbOverlayState,
+  type TaskOutputLayerState
+} from "../../composables/useMapWorkspace";
 import { MODEL_REGISTRY } from "../../models/registry";
 import type { OutputFile, TaskSummary } from "../../models/shared";
 import type { UavMetrics, UavRequest } from "../../models/uav/types";
@@ -125,6 +129,21 @@ describe("TaskResultPanel", () => {
     expect(wrapper.text()).toContain("下载visible_geojson");
   });
 
+  it("renders downloads only for available output files", () => {
+    const wrapper = mount(OutputFileList, {
+      props: {
+        files: [
+          outputFile("available", "/available"),
+          { ...outputFile("missing", "/missing"), exists: false }
+        ]
+      }
+    });
+
+    expect(wrapper.text()).toContain("available");
+    expect(wrapper.text()).not.toContain("missing");
+    expect(wrapper.findAll("a")).toHaveLength(1);
+  });
+
   it("fetches result metadata in parallel and isolates each registered GeoJSON layer", async () => {
     const metricsPending = deferred<UavMetrics>();
     const outputsPending = deferred<OutputFile[]>();
@@ -200,6 +219,76 @@ describe("TaskResultPanel", () => {
     expect(workspace.taskMetrics.value).toEqual({ visible_area_m2: 22 });
     expect(fetchGeoJson).not.toHaveBeenCalledWith("/old-visible");
     expect(workspace.outputFiles.value[0].url).toBe("/new-visible");
+  });
+
+  it("shows independent radar scene and platform GLBs in Layers", async () => {
+    const sceneGlbFile = outputFile("scene_glb", "/view-scene", "/download-scene");
+    sceneGlbFile.media_type = "model/gltf-binary";
+    sceneGlbFile.filename = "result.glb";
+    const platformGlbFile = outputFile(
+      "radar_platform_glb",
+      "/view-platform",
+      "/download-platform"
+    );
+    platformGlbFile.label = "Radar Platform GLB";
+    platformGlbFile.media_type = "model/gltf-binary";
+    platformGlbFile.filename = "radar_platform.glb";
+    const state: SceneGlbOverlayState = {
+      taskId: finishedUavTask.task_id,
+      modelId: "uav",
+      demId: "dem-a",
+      status: "idle",
+      visible: false,
+      progress: null,
+      error: null
+    };
+    const platformState: SceneGlbOverlayState = {
+      ...state,
+      status: "visible",
+      visible: true
+    };
+    const wrapper = mount(TaskResultPanel, {
+      props: {
+        modelId: "uav",
+        task: { ...finishedUavTask, output_files: [sceneGlbFile, platformGlbFile] },
+        sceneGlbState: state,
+        radarPlatformGlbState: platformState
+      }
+    });
+
+    expect(wrapper.find('[data-scene-glb-row]').exists()).toBe(false);
+    await wrapper.get('[data-tab="layers"]').trigger("click");
+    expect(wrapper.findAll('[data-scene-glb-row]')).toHaveLength(2);
+    const toggles = wrapper.findAll('[data-scene-glb-toggle] input[role="switch"]');
+    await toggles[0].trigger("click");
+    await toggles[1].trigger("click");
+    expect(wrapper.emitted("scene-glb-visibility")?.[0]).toEqual(["scene_glb", true]);
+    expect(wrapper.emitted("scene-glb-visibility")?.[1]).toEqual(["radar_platform_glb", false]);
+    await wrapper.get('[data-tab="files"]').trigger("click");
+    expect(wrapper.find('[data-scene-glb-row]').exists()).toBe(false);
+    expect(wrapper.get('a[href="/download-scene"]')).toBeTruthy();
+    expect(wrapper.get('a[href="/download-platform"]')).toBeTruthy();
+  });
+
+  it("does not show a scene control without an existing scene_glb file", async () => {
+    const wrapper = mount(TaskResultPanel, {
+      props: {
+        modelId: "uav",
+        task: finishedUavTask,
+        sceneGlbState: {
+          taskId: finishedUavTask.task_id,
+          modelId: "uav",
+          demId: "dem-a",
+          status: "idle",
+          visible: false,
+          progress: null,
+          error: null
+        }
+      }
+    });
+
+    await wrapper.get('[data-tab="layers"]').trigger("click");
+    expect(wrapper.find('[data-scene-glb-row]').exists()).toBe(false);
   });
 
   it("awaits async history restore and confirms destructive deletion explicitly", async () => {

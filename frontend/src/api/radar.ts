@@ -33,9 +33,9 @@ const DEFAULT_COVERAGE_REQUEST: CoverageRequest = {
     voxel_grid_size: 128,
     voxel_vertical_levels: 16,
     voxel_max_height_m: 3000,
-    min_elevation_deg: 0,
-    max_elevation_deg: 32,
-    vertical_beam_width_deg: 32,
+    min_elevation_deg: -8,
+    max_elevation_deg: 90,
+    vertical_beam_width_deg: 98,
     visual_dome_mode: true,
     height_layers_m: []
   },
@@ -65,7 +65,9 @@ export type CoverageOutputKind =
   | "voxel_points_bin"
   | "clipped_volume_manifest_json"
   | "clipped_volume_cells_bin"
-  | "height_layers_manifest_json";
+  | "height_layers_manifest_json"
+  | "scene_glb"
+  | "radar_platform_glb";
 
 export interface CoverageTaskSummary {
   task_id: string;
@@ -89,6 +91,8 @@ export interface CoverageTaskSummary {
     clipped_volume_manifest_json?: string | null;
     clipped_volume_cells_bin?: string | null;
     height_layers_manifest_json?: string | null;
+    scene_glb?: string | null;
+    radar_platform_glb?: string | null;
   } | null;
   output_files: CoverageOutputFile[];
   model?: RadarModelMetadata | null;
@@ -334,7 +338,9 @@ function normalizeOutputs(payload: unknown): CoverageTaskSummary["outputs"] {
     voxel_points_bin: nullableString(payload.voxel_points_bin),
     clipped_volume_manifest_json: nullableString(payload.clipped_volume_manifest_json),
     clipped_volume_cells_bin: nullableString(payload.clipped_volume_cells_bin),
-    height_layers_manifest_json: nullableString(payload.height_layers_manifest_json)
+    height_layers_manifest_json: nullableString(payload.height_layers_manifest_json),
+    scene_glb: nullableString(payload.scene_glb),
+    radar_platform_glb: nullableString(payload.radar_platform_glb)
   };
 }
 
@@ -428,6 +434,18 @@ function deriveOutputFilesFromOutputs(outputs: CoverageTaskSummary["outputs"]): 
       label: "高度层清单",
       media_type: "application/json",
       filename: "height_layers_manifest.json"
+    },
+    {
+      kind: "scene_glb",
+      label: "Radar Maximum Detection Domain GLB",
+      media_type: "model/gltf-binary",
+      filename: "radar_detection_domain.glb"
+    },
+    {
+      kind: "radar_platform_glb",
+      label: "Radar Platform GLB",
+      media_type: "model/gltf-binary",
+      filename: "radar_platform.glb"
     }
   ];
   return specs.flatMap((spec) => {
@@ -471,10 +489,10 @@ function normalizeModel(payload: unknown): CoverageTaskSummary["model"] {
     voxel_vertical_levels: numberOr(payload.voxel_vertical_levels, 16),
     voxel_max_height_m: numberOr(payload.voxel_max_height_m, 3000),
     min_elevation_deg: numberOr(payload.min_elevation_deg, 0),
-    max_elevation_deg: numberOr(payload.max_elevation_deg, 32),
+    max_elevation_deg: numberOr(payload.max_elevation_deg, 90),
     vertical_beam_width_deg: numberOr(
       payload.vertical_beam_width_deg,
-      numberOr(payload.max_elevation_deg, 32) - numberOr(payload.min_elevation_deg, 0)
+      numberOr(payload.max_elevation_deg, 90) - numberOr(payload.min_elevation_deg, 0)
     ),
     visual_dome_mode: booleanOr(payload.visual_dome_mode, true),
     height_layers_m: numberArray(payload.height_layers_m),
@@ -482,6 +500,9 @@ function normalizeModel(payload: unknown): CoverageTaskSummary["model"] {
     radar_equation_max_range_m: typeof payload.radar_equation_max_range_m === "number" ? payload.radar_equation_max_range_m : null,
     effective_max_range_m: numberOr(payload.effective_max_range_m, numberOr(payload.max_range_m, 0)),
     beam_clip_profile: normalizeBeamClipProfile(payload.beam_clip_profile),
+    range_basis: payload.range_basis === "radar_equation" ? "radar_equation" : "nominal",
+    reference_rcs_m2: numberOr(payload.reference_rcs_m2, 1),
+    scene3d: isRecord(payload.scene3d) ? payload.scene3d : null,
     gdal_viewshed_command: Array.isArray(payload.gdal_viewshed_command)
       ? payload.gdal_viewshed_command.filter((item): item is string => typeof item === "string")
       : []
@@ -541,7 +562,9 @@ function normalizeOutputKind(value: unknown): CoverageOutputKind | undefined {
     "voxel_points_bin",
     "clipped_volume_manifest_json",
     "clipped_volume_cells_bin",
-    "height_layers_manifest_json"
+    "height_layers_manifest_json",
+    "scene_glb",
+    "radar_platform_glb"
   ];
   return kinds.find((kind) => kind === value);
 }

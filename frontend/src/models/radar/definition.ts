@@ -11,7 +11,7 @@ export const radarDefinition = {
     radar: { lon: 79.80513693057287, lat: 31.4827708959419, height_m: 10 },
     target: { height_m: 0 },
     coverage: { max_range_m: 50000, scan_mode: "omni", azimuth_deg: 90, beam_width_deg: 120 },
-    advanced: { use_curvature: true, curvature_coeff: 0.75, output_simplify_tolerance_m: 30, voxel_grid_size: 128, voxel_vertical_levels: 16, voxel_max_height_m: 3000, min_elevation_deg: 0, max_elevation_deg: 32, vertical_beam_width_deg: 32, visual_dome_mode: true, height_layers_m: [] },
+    advanced: { use_curvature: true, curvature_coeff: 0.75, output_simplify_tolerance_m: 30, voxel_grid_size: 128, voxel_vertical_levels: 16, voxel_max_height_m: 3000, min_elevation_deg: -8, max_elevation_deg: 90, vertical_beam_width_deg: 98, visual_dome_mode: true, height_layers_m: [] },
     reserved_radar_params: { frequency_hz: null, transmit_power_w: null, antenna_gain_db: null, receiver_sensitivity_dbm: null, target_rcs_m2: null, system_loss_db: null, pulse_width_s: null, prf_hz: null, noise_figure_db: null, detection_probability: null, false_alarm_probability: null }
   }),
   validate: (request: RadarRequest): ValidationIssue[] => {

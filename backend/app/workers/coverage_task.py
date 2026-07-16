@@ -32,6 +32,8 @@ from app.services.coverage_range import effective_max_range as _effective_max_ra
 from app.services.geometry import make_range_geometry, project_geometry
 from app.services.output_files import OUTPUT_FILENAMES, describe_output_files, list_task_output_files
 from app.services.task_store import mark_failed, mark_finished, mark_running
+from app.scene3d.radar import write_radar_coverage_glb
+from app.scene3d.radar_platform import write_radar_platform_glb
 
 COVERAGE_MASK_ROW_CHUNK_SIZE = 256
 
@@ -67,6 +69,21 @@ def run_coverage_task(task_id: str, payload: CoverageRequest) -> None:
             _generate_voxels(staging_dir, min_visible_height, prepared, payload)
             _generate_clipped_volume(staging_dir, min_visible_height, prepared, payload)
 
+            mark_running(task_id, "Generating target-independent radar GLB.", 80)
+            scene_metadata = write_radar_coverage_glb(
+                staging_dir / OUTPUT_FILENAMES["scene_glb"],
+                task_id=task_id,
+                prepared=prepared,
+                payload=payload,
+                min_visible_height=min_visible_height,
+            )
+            write_radar_platform_glb(
+                staging_dir / OUTPUT_FILENAMES["radar_platform_glb"],
+                task_id=task_id,
+                prepared=prepared,
+                payload=payload,
+            )
+
             mark_running(task_id, "Vectorizing viewshed outputs.", 85)
             outputs, output_files, metrics, model, diagnostics, warnings = _write_vector_outputs(
                 task_id,
@@ -77,6 +94,7 @@ def run_coverage_task(task_id: str, payload: CoverageRequest) -> None:
                 viewshed,
                 min_visible_height,
                 gdal_command,
+                scene_metadata,
             )
         finally:
             if staging_dir.exists():
@@ -588,6 +606,7 @@ def _write_vector_outputs(
     viewshed: Path,
     min_visible_height: Path,
     gdal_command: list[str],
+    scene_metadata: dict | None = None,
 ) -> tuple[CoverageOutputs, list[CoverageOutputFile], CoverageMetrics, CoverageModelMetadata, CoverageDiagnostics, list[str]]:
     requested_range_geom = make_range_geometry(
         prepared.radar_x,
@@ -696,6 +715,8 @@ def _write_vector_outputs(
         clipped_volume_manifest_json=f"/outputs/{task_id}/clipped_volume_manifest.json",
         clipped_volume_cells_bin=f"/outputs/{task_id}/clipped_volume_cells.bin",
         height_layers_manifest_json=f"/outputs/{task_id}/height_layers_manifest.json",
+        scene_glb=f"/outputs/{task_id}/{OUTPUT_FILENAMES['scene_glb']}",
+        radar_platform_glb=f"/outputs/{task_id}/{OUTPUT_FILENAMES['radar_platform_glb']}",
     )
     height_layers = payload.advanced.height_layers_m or [0, 100, 300, 500, 1000, 2000, 3000]
     model = CoverageModelMetadata(
@@ -728,6 +749,11 @@ def _write_vector_outputs(
         radar_equation_max_range_m=diagnostics.radar_equation_max_range_m,
         effective_max_range_m=effective_range,
         beam_clip_profile=_beam_clip_profile_for_range(prepared, effective_range),
+        range_basis=(
+            "radar_equation" if radar_equation_range is not None else "nominal"
+        ),
+        reference_rcs_m2=payload.reserved_radar_params.target_rcs_m2 or 1.0,
+        scene3d=scene_metadata,
     )
     warnings = _build_model_warnings(prepared, requested_range_geom, diagnostics, dem_coverage_ratio)
     _write_json_atomic(

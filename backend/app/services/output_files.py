@@ -19,6 +19,8 @@ OUTPUT_FILENAMES: dict[CoverageOutputKind, str] = {
     "clipped_volume_manifest_json": "clipped_volume_manifest.json",
     "clipped_volume_cells_bin": "clipped_volume_cells.bin",
     "height_layers_manifest_json": "height_layers_manifest.json",
+    "scene_glb": "radar_detection_domain.glb",
+    "radar_platform_glb": "radar_platform.glb",
 }
 
 OUTPUT_MEDIA_TYPES: dict[CoverageOutputKind, str] = {
@@ -34,6 +36,8 @@ OUTPUT_MEDIA_TYPES: dict[CoverageOutputKind, str] = {
     "clipped_volume_manifest_json": "application/json",
     "clipped_volume_cells_bin": "application/octet-stream",
     "height_layers_manifest_json": "application/json",
+    "scene_glb": "model/gltf-binary",
+    "radar_platform_glb": "model/gltf-binary",
 }
 
 OUTPUT_LABELS: dict[CoverageOutputKind, str] = {
@@ -49,6 +53,8 @@ OUTPUT_LABELS: dict[CoverageOutputKind, str] = {
     "clipped_volume_manifest_json": "Clipped Volume Manifest JSON",
     "clipped_volume_cells_bin": "Clipped Volume Cells Binary",
     "height_layers_manifest_json": "Height Layers Manifest JSON",
+    "scene_glb": "Radar Maximum Detection Domain GLB",
+    "radar_platform_glb": "Radar Platform GLB",
 }
 
 

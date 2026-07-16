@@ -12,6 +12,7 @@ AIR_CORRIDOR_OUTPUT_FILENAMES: dict[AirCorridorOutputKind, str] = {
     "threat_zones_geojson": "threat_zones.geojson",
     "risk_samples_geojson": "risk_samples.geojson",
     "cost_summary_json": "cost_summary.json",
+    "scene_glb": "air_corridor_result.glb",
     "model_metadata_json": "model_metadata.json",
     "output_manifest_json": "output_manifest.json",
 }
@@ -22,6 +23,7 @@ AIR_CORRIDOR_OUTPUT_MEDIA_TYPES: dict[AirCorridorOutputKind, str] = {
     "threat_zones_geojson": "application/geo+json",
     "risk_samples_geojson": "application/geo+json",
     "cost_summary_json": "application/json",
+    "scene_glb": "model/gltf-binary",
     "model_metadata_json": "application/json",
     "output_manifest_json": "application/json",
 }
@@ -32,6 +34,7 @@ AIR_CORRIDOR_OUTPUT_LABELS: dict[AirCorridorOutputKind, str] = {
     "threat_zones_geojson": "Air Defense Threat Zones GeoJSON",
     "risk_samples_geojson": "Air Corridor Risk Samples GeoJSON",
     "cost_summary_json": "Air Corridor Cost Summary JSON",
+    "scene_glb": "Air Corridor 3D Result GLB",
     "model_metadata_json": "Air Corridor Model Metadata JSON",
     "output_manifest_json": "Air Corridor Output Manifest JSON",
 }

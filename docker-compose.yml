@@ -4,10 +4,9 @@ services:
       context: .
       dockerfile: backend/Dockerfile
       args:
-        DEBIAN_MIRROR: http://mirrors.tencentyun.com/debian
-        DEBIAN_SECURITY_MIRROR: http://mirrors.tencentyun.com/debian-security
-        PIP_INDEX_URL: http://mirrors.tencentyun.com/pypi/simple
-        PIP_TRUSTED_HOST: mirrors.tencentyun.com
+        DEBIAN_MIRROR: https://mirrors.cloud.tencent.com/debian
+        DEBIAN_SECURITY_MIRROR: https://mirrors.cloud.tencent.com/debian-security
+        PIP_INDEX_URL: https://pypi.org/simple
     environment:
       PYGEOMODEL_DATA_DIR: /workspace/data
     ports:

@@ -19,7 +19,7 @@
 import { Check, Delete, RefreshLeft } from "@element-plus/icons-vue";
 import { ElButton, ElTooltip } from "element-plus";
 import maplibregl from "maplibre-gl";
-import { onBeforeUnmount, onMounted, ref, shallowRef, watch } from "vue";
+import { onBeforeUnmount, onMounted, ref, shallowRef, toRaw, watch } from "vue";
 
 import { demTerrainUrlTemplate, demTileUrlTemplate, type DemMetadata } from "../../api/dem";
 import {
@@ -53,7 +53,11 @@ const props = withDefaults(defineProps<{
   editTarget: "auto",
   activeThreatId: null,
   dem: null,
-  mapStyle: "https://demotiles.maplibre.org/style.json",
+  mapStyle: (): maplibregl.StyleSpecification => ({
+    version: 8,
+    sources: {},
+    layers: []
+  }),
   center: () => [79.80513693057287, 31.4827708959419],
   zoom: 8
 });
@@ -73,13 +77,15 @@ const map = shallowRef<maplibregl.Map | null>(null);
 let resizeObserver: ResizeObserver | null = null;
 let transitionTarget: Element | null = null;
 let styleLoaded = false;
+let lastSyncedDemId: string | null = null;
+let lastSyncedTerrainUrl: string | null = null;
 
 onMounted(() => {
   if (!mapContainer.value || map.value) return;
 
   const instance = new maplibregl.Map({
     container: mapContainer.value,
-    style: props.mapStyle,
+    style: typeof props.mapStyle === "string" ? props.mapStyle : toRaw(props.mapStyle),
     center: props.center,
     zoom: props.zoom
   });
@@ -123,10 +129,16 @@ function syncDem(instance: maplibregl.Map, dem: DemMetadata | null) {
   if (!dem || dem.bounds.length !== 4) {
     removeDemTerrain(instance);
     removeDemRasterLayer(instance);
+    lastSyncedDemId = null;
+    lastSyncedTerrainUrl = null;
     return;
   }
+  const terrainUrl = demTerrainUrlTemplate(dem.dem_id);
+  if (lastSyncedDemId === dem.dem_id && lastSyncedTerrainUrl === terrainUrl) return;
   addOrUpdateDemRasterLayer(instance, demTileUrlTemplate(dem.dem_id), dem.bounds);
-  addOrUpdateDemTerrain(instance, demTerrainUrlTemplate(dem.dem_id), dem.bounds);
+  addOrUpdateDemTerrain(instance, terrainUrl, dem.bounds);
+  lastSyncedDemId = dem.dem_id;
+  lastSyncedTerrainUrl = terrainUrl;
 }
 
 function handleMapClick(event: maplibregl.MapMouseEvent) {

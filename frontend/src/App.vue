@@ -115,9 +115,13 @@
             :metrics="mapWorkspace.taskMetrics.value"
             :output-files="mapWorkspace.outputFiles.value"
             :layer-states="mapWorkspace.layerStates.value"
+            :scene-glb-state="mapWorkspace.sceneGlbStateFor(selectedTaskContext.task.task_id)"
+            :radar-platform-glb-state="mapWorkspace.sceneGlbStateFor(selectedTaskContext.task.task_id, 'radar_platform_glb')"
             @layer-visibility="setLayerVisibility"
             @layer-opacity="setLayerOpacity"
             @layer-focus="focusLayer"
+            @scene-glb-visibility="setSceneGlbVisibility"
+            @scene-glb-focus="focusSceneGlb"
           />
         </div>
       </div>
@@ -135,6 +139,7 @@
     @close="historyOpen = false"
     @restore="restoreRequest"
     @focus="focusTask"
+    @deleted="removeDeletedTaskScene"
     @error="showError"
   />
 </template>
@@ -159,7 +164,7 @@ import RadarLayerControls, {
 } from "./components/tasks/RadarLayerControls.vue";
 import TaskResultPanel from "./components/tasks/TaskResultPanel.vue";
 import { useDemManager } from "./composables/useDemManager";
-import { useMapWorkspace } from "./composables/useMapWorkspace";
+import { useMapWorkspace, type SceneGlbKind } from "./composables/useMapWorkspace";
 import { useModelWorkspace, type ActiveDraft } from "./composables/useModelWorkspace";
 import { useTaskManager } from "./composables/useTaskManager";
 import type { SpatialDraftAction } from "./map/spatialInput";
@@ -342,9 +347,16 @@ onBeforeUnmount(() => {
   radarAnalysis.dispose();
   radarLayers.dispose();
   if (map.value) {
+    mapWorkspace.removeAllSceneGlbs(map.value);
     removeProfileLayer(map.value);
     removeFusionLayers(map.value);
     removeRadarMarker(map.value);
+    if (import.meta.env.DEV) {
+      const devWindow = window as Window & { __PYGEOMODEL_MAP__?: maplibregl.Map };
+      if (devWindow.__PYGEOMODEL_MAP__ === map.value) {
+        delete devWindow.__PYGEOMODEL_MAP__;
+      }
+    }
   }
   clearTaskLayers();
   taskManager.dispose();
@@ -380,6 +392,9 @@ watch(selectedTaskContext, async (context) => {
 }, { immediate: true });
 
 watch(() => mapWorkspace.layerStates.value, renderTaskLayers, { deep: true });
+watch(() => demManager.selectedDem.value, (nextDemId) => {
+  if (map.value) mapWorkspace.removeIncompatibleSceneGlbs(map.value, nextDemId ?? "");
+});
 watch(() => workspace.drafts.radar, () => {
   if (workspace.selectedModel.value !== "radar") return;
   radarLayers.clear();
@@ -471,7 +486,14 @@ function syncSpatialDraft() {
 }
 
 function setMap(instance: maplibregl.Map) {
+  if (map.value && map.value !== instance) {
+    mapWorkspace.resetSceneGlbStates();
+  }
   map.value = instance;
+  if (import.meta.env.DEV) {
+    (window as Window & { __PYGEOMODEL_MAP__?: maplibregl.Map })
+      .__PYGEOMODEL_MAP__ = instance;
+  }
   instance.on("load", handleMapLoad);
   instance.on("click", handleRadarMapClick);
   if (mapReady(instance)) handleMapLoad();
@@ -495,6 +517,38 @@ function setLayerOpacity(kind: string, opacity: number) {
 
 function focusLayer(kind: string) {
   if (map.value) mapWorkspace.focusTaskLayer(map.value, kind);
+}
+
+function removeDeletedTaskScene(_modelId: ModelId, taskId: string) {
+  if (map.value) mapWorkspace.removeSceneGlb(map.value, taskId);
+}
+
+async function setSceneGlbVisibility(
+  kindOrVisible: SceneGlbKind | boolean,
+  nextVisible?: boolean
+) {
+  const instance = map.value;
+  const context = selectedTaskContext.value;
+  const selectedDemId = demManager.selectedDem.value;
+  if (!instance || !context || !selectedDemId) return;
+  const kind = typeof kindOrVisible === "boolean" ? "scene_glb" : kindOrVisible;
+  const visible = typeof kindOrVisible === "boolean" ? kindOrVisible : Boolean(nextVisible);
+  await mapWorkspace.setSceneGlbVisibility(
+    instance,
+    selectedDemId,
+    context.modelId,
+    context.task as never,
+    visible,
+    kind
+  );
+}
+
+function focusSceneGlb(kind: SceneGlbKind = "scene_glb") {
+  const instance = map.value;
+  const context = selectedTaskContext.value;
+  if (instance && context) {
+    mapWorkspace.focusSceneGlb(instance, context.task.task_id, kind);
+  }
 }
 
 function renderTaskLayers() {
@@ -539,7 +593,15 @@ async function syncRadarLayers(context: SelectedTaskContext) {
   }
   const radarTask = context.task as RadarTask;
   const dem = demManager.dems.value.find(({ dem_id }) => dem_id === context.task.dem_id) ?? selectedDem.value;
-  await radarLayers.showTask(radarTask, dem?.bounds ?? []);
+  const hasSceneGlb = radarTask.output_files.some(
+    (file) => file.kind === "scene_glb" && file.exists
+  );
+  if (hasSceneGlb) {
+    radarLayers.clear();
+    radarLayerErrors.value = [];
+  } else {
+    await radarLayers.showTask(radarTask, dem?.bounds ?? []);
+  }
   const current = selectedTaskContext.value;
   if (workspace.selectedModel.value !== "radar"
     || current?.modelId !== "radar"

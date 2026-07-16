@@ -10,15 +10,19 @@ def radar_equation_max_range(payload: CoverageRequest) -> float | None:
         params.transmit_power_w,
         params.antenna_gain_db,
         params.receiver_sensitivity_dbm,
-        params.target_rcs_m2,
     ]
     if any(value is None for value in required):
         return None
     if (
         params.frequency_hz <= 0
         or params.transmit_power_w <= 0
-        or params.target_rcs_m2 <= 0
     ):
+        return None
+
+    reference_rcs_m2 = (
+        1.0 if params.target_rcs_m2 is None else params.target_rcs_m2
+    )
+    if reference_rcs_m2 <= 0:
         return None
 
     light_speed = 299_792_458.0
@@ -30,7 +34,14 @@ def radar_equation_max_range(payload: CoverageRequest) -> float | None:
     if threshold_w <= 0 or loss <= 0:
         return None
 
-    numerator = params.transmit_power_w * gain * gain * wavelength * wavelength * params.target_rcs_m2
+    numerator = (
+        params.transmit_power_w
+        * gain
+        * gain
+        * wavelength
+        * wavelength
+        * reference_rcs_m2
+    )
     denominator = ((4 * math.pi) ** 3) * threshold_w * loss
     if numerator <= 0 or denominator <= 0:
         return None

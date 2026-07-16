@@ -1,0 +1,658 @@
+from collections.abc import Iterator
+from dataclasses import FrozenInstanceError, replace
+from math import pi
+from pathlib import Path
+
+import numpy
+import pytest
+import trimesh
+
+from app.scene3d.exporter import SceneNode, export_glb, read_glb_document
+from app.scene3d.frame import SceneFrame
+from app.scene3d.grounding import TerrainAnchor
+from app.scene3d.tactical_glyphs import (
+    ALLOWED_LABEL_CHARACTERS,
+    GLYPH_MAP,
+    crossed_air_defense_symbol_nodes,
+    crossed_label_nodes,
+    sanitize_short_label,
+)
+from app.scene3d.units import (
+    InfluenceZoneSpec,
+    UnitDisplayOptions,
+    UnitOmission,
+    UnitSpec,
+    build_unit_nodes,
+    derive_air_defense_display_profile,
+)
+
+
+def frame() -> SceneFrame:
+    return SceneFrame(
+        target_epsg=32648,
+        origin_x=500_000,
+        origin_y=3_500_000,
+        origin_altitude_m=5_000,
+        origin_longitude=105,
+        origin_latitude=31.6,
+    )
+
+
+def unit(**changes: object) -> UnitSpec:
+    values = {
+        "unit_id": "ad-05",
+        "unit_type": "air_defense",
+        "position": (500_000, 3_500_000),
+        "altitude_amsl_m": 5_900,
+        "heading_deg": 45,
+        "status": "active",
+        "short_label": "AD-05",
+        "display_scale_m": 800,
+        "warning_zone": InfluenceZoneSpec(0, 7_750, 0, 6_600),
+        "kill_zone": InfluenceZoneSpec(0, 4_500, 0, 6_600),
+        "source": {"threat_level": "high", "max_range_m": 8_000},
+    }
+    values.update(changes)
+    return UnitSpec(**values)
+
+
+def walk_nodes(node: SceneNode) -> Iterator[SceneNode]:
+    yield node
+    for child in node.children:
+        yield from walk_nodes(child)
+
+
+def transformed_vertices(
+    node: SceneNode,
+    parent_transform: numpy.ndarray | None = None,
+) -> Iterator[numpy.ndarray]:
+    transform = (
+        node.transform
+        if parent_transform is None
+        else parent_transform @ node.transform
+    )
+    if node.mesh is not None:
+        yield trimesh.transform_points(node.mesh.vertices, transform)
+    for child in node.children:
+        yield from transformed_vertices(child, transform)
+
+
+def bounds(node: SceneNode) -> numpy.ndarray:
+    vertices = list(transformed_vertices(node))
+    assert vertices
+    combined = numpy.vstack(vertices)
+    return numpy.asarray([combined.min(axis=0), combined.max(axis=0)])
+
+
+def material_names(node: SceneNode) -> set[str]:
+    return {
+        item.material.name
+        for item in walk_nodes(node)
+        if item.material is not None
+    }
+
+
+def child_by_role(root: SceneNode, role: str) -> SceneNode:
+    return next(child for child in root.children if child.extras["role"] == role)
+
+
+def test_display_profile_uses_scene_extent_clamp() -> None:
+    profile = derive_air_defense_display_profile(72_000)
+
+    assert derive_air_defense_display_profile(60_000).exaggeration == 10
+    assert profile.exaggeration == 12
+    assert derive_air_defense_display_profile(120_000).exaggeration == 15
+    assert profile.display_dimensions_m.length == 144
+    assert profile.display_dimensions_m.width == pytest.approx(38.4)
+    assert profile.display_dimensions_m.chassis_height == pytest.approx(33.6)
+    assert profile.display_dimensions_m.equipment_top == 90
+    assert profile.symbol_scale_m == pytest.approx(316.8)
+    with pytest.raises(FrozenInstanceError):
+        setattr(profile, "exaggeration", 13)
+    with pytest.raises(FrozenInstanceError):
+        setattr(profile.display_dimensions_m, "width", 40)
+
+
+def test_air_defense_unit_binds_all_components_to_one_root() -> None:
+    nodes, omissions = build_unit_nodes([unit()], frame())
+
+    assert omissions == []
+    root = nodes[0]
+    assert root.name == "unit_ad-05"
+    assert root.extras["display_scale_m"] == 800
+    assert root.extras["source"] == {
+        "threat_level": "high",
+        "max_range_m": 8_000,
+    }
+    assert {child.extras["role"] for child in root.children} == {
+        "model",
+        "symbol_cross",
+        "label_cross",
+        "warning_zone",
+        "kill_zone",
+    }
+    for child in root.children:
+        assert child.extras.items() >= {
+            "kind": "unit_component",
+            "unit_id": "ad-05",
+            "unit_type": "air_defense",
+            "status": "active",
+            "display_scale_m": 800,
+        }.items()
+
+
+def test_grounded_air_defense_has_seven_roles_and_isolates_slope_transforms() -> None:
+    terrain_normal_enu = numpy.asarray([0.18, -0.12, 0.0], dtype=float)
+    terrain_normal_enu[2] = numpy.sqrt(1 - numpy.dot(terrain_normal_enu, terrain_normal_enu))
+    profile = derive_air_defense_display_profile(72_000)
+    nodes, omissions = build_unit_nodes(
+        [
+            unit(
+                terrain_anchor=TerrainAnchor(
+                    ground_elevation_amsl_m=5_899.25,
+                    normal_enu=tuple(terrain_normal_enu),
+                    slope_deg=12.0,
+                    fit_rmse_m=1.5,
+                    max_residual_m=3.0,
+                ),
+                display_profile=profile,
+            )
+        ],
+        frame(),
+    )
+
+    assert omissions == []
+    root = nodes[0]
+    assert root.transform[:3, :3] == pytest.approx(numpy.eye(3))
+    assert root.transform[:3, 3] == pytest.approx([0, 900.0, 0])
+    assert root.extras["ground_clearance_m"] == 0.75
+    assert {child.extras["role"] for child in root.children} == {
+        "ground_anchor",
+        "model",
+        "leader",
+        "symbol_cross",
+        "label_cross",
+        "warning_zone",
+        "kill_zone",
+    }
+
+    expected_normal_gltf = numpy.asarray(
+        [terrain_normal_enu[0], terrain_normal_enu[2], -terrain_normal_enu[1]],
+        dtype=float,
+    )
+    model = child_by_role(root, "model")
+    anchor = child_by_role(root, "ground_anchor")
+    assert model.transform[:3, :3] != pytest.approx(numpy.eye(3))
+    assert anchor.transform[:3, :3] != pytest.approx(numpy.eye(3))
+    assert model.transform[:3, 1] == pytest.approx(expected_normal_gltf)
+    assert anchor.transform[:3, 1] == pytest.approx(expected_normal_gltf)
+
+    for role in ("leader", "symbol_cross", "label_cross", "warning_zone", "kill_zone"):
+        assert child_by_role(root, role).transform[:3, :3] == pytest.approx(
+            numpy.eye(3)
+        )
+
+
+def test_grounded_air_defense_model_uses_profile_dimensions_and_semantic_parts() -> None:
+    profile = derive_air_defense_display_profile(72_000)
+    nodes, omissions = build_unit_nodes(
+        [
+            unit(
+                terrain_anchor=TerrainAnchor(
+                    ground_elevation_amsl_m=5_900,
+                    normal_enu=(0.0, 0.0, 1.0),
+                    slope_deg=0.0,
+                    fit_rmse_m=0.0,
+                    max_residual_m=0.0,
+                ),
+                display_profile=profile,
+                heading_deg=0,
+            )
+        ],
+        frame(),
+    )
+
+    assert omissions == []
+    root = nodes[0]
+    model = child_by_role(root, "model")
+    assert {child.name.rsplit("/", 1)[-1] for child in model.children} == {
+        "chassis",
+        "left_track",
+        "right_track",
+        "cabin",
+        "launcher",
+        "radar_mast",
+        "radar_panel",
+    }
+    assert all(
+        node.extras.items() >= {
+            "unit_id": "ad-05",
+            "unit_type": "air_defense",
+            "status": "active",
+            "role": "model",
+        }.items()
+        for node in walk_nodes(model)
+    )
+    model_bounds = bounds(model)
+    assert model_bounds[:, 0] == pytest.approx([-72.0, 72.0])
+    assert model_bounds[:, 2] == pytest.approx([-19.2, 19.2])
+    assert model_bounds[1, 1] == pytest.approx(90.0)
+    assert root.extras["actual_dimensions_m"] == {
+        "length": 12.0,
+        "width": 3.2,
+        "chassis_height": 2.8,
+        "equipment_top": 7.5,
+    }
+    assert root.extras["display_dimensions_m"] == {
+        "length": 144.0,
+        "width": pytest.approx(38.4),
+        "chassis_height": pytest.approx(33.6),
+        "equipment_top": 90.0,
+    }
+    assert root.extras.items() >= {
+        "display_exaggeration": 12.0,
+        "ground_elevation_amsl_m": 5_900.0,
+        "terrain_normal": [0.0, 0.0, 1.0],
+        "terrain_slope_deg": 0.0,
+        "terrain_fit_rmse_m": 0.0,
+        "symbol_scale_m": pytest.approx(316.8),
+    }.items()
+
+
+def test_grounded_leader_is_one_unlit_mesh_of_four_global_up_dashes() -> None:
+    profile = derive_air_defense_display_profile(72_000)
+    nodes, omissions = build_unit_nodes(
+        [
+            unit(
+                terrain_anchor=TerrainAnchor(
+                    ground_elevation_amsl_m=5_900,
+                    normal_enu=(0.18, -0.12, numpy.sqrt(1 - 0.18**2 - 0.12**2)),
+                    slope_deg=12.0,
+                    fit_rmse_m=1.5,
+                    max_residual_m=3.0,
+                ),
+                display_profile=profile,
+            )
+        ],
+        frame(),
+    )
+
+    assert omissions == []
+    root = nodes[0]
+    leader = child_by_role(root, "leader")
+    symbol = child_by_role(root, "symbol_cross")
+    assert leader.mesh is not None
+    assert leader.children == []
+    assert len(numpy.unique(numpy.round(leader.mesh.vertices[:, 1], decimals=9))) == 8
+    assert leader.material is not None
+    assert leader.material.shading == "unlit"
+    assert leader.material.rgba == (174, 181, 180, 255)
+    assert leader.transform[:3, :3] == pytest.approx(numpy.eye(3))
+    assert leader.mesh.bounds[1, 1] == pytest.approx(bounds(symbol)[0, 1])
+    assert numpy.hypot(leader.mesh.vertices[:, 0], leader.mesh.vertices[:, 2]).max() == pytest.approx(
+        profile.symbol_scale_m * 0.008
+    )
+
+
+def test_grounded_zones_clip_display_bottoms_and_add_unlit_boundaries() -> None:
+    profile = derive_air_defense_display_profile(72_000)
+    nodes, omissions = build_unit_nodes(
+        [
+            unit(
+                terrain_anchor=TerrainAnchor(
+                    ground_elevation_amsl_m=5_900,
+                    normal_enu=(0.0, 0.0, 1.0),
+                    slope_deg=0.0,
+                    fit_rmse_m=0.0,
+                    max_residual_m=0.0,
+                ),
+                display_profile=profile,
+                warning_zone=InfluenceZoneSpec(0, 7_750, 5_800, 6_600),
+                kill_zone=InfluenceZoneSpec(0, 4_500, 5_700, 6_600),
+            )
+        ],
+        frame(),
+    )
+
+    assert omissions == []
+    root = nodes[0]
+    for role, alpha, requested_bottom in (
+        ("warning_zone", 20, 5_800),
+        ("kill_zone", 31, 5_700),
+    ):
+        zone = child_by_role(root, role)
+        fill = next(child for child in zone.children if child.name.endswith("/fill"))
+        boundary = next(
+            child for child in zone.children if child.name.endswith("/boundary")
+        )
+        assert fill.material is not None
+        assert fill.material.shading == "unlit"
+        assert fill.material.rgba[3] == alpha
+        assert fill.mesh is not None
+        assert fill.mesh.bounds[:, 1] == pytest.approx([-0.75, 699.25])
+        assert zone.extras.items() >= {
+            "requested_min_altitude_amsl_m": requested_bottom,
+            "requested_max_altitude_amsl_m": 6_600,
+            "display_min_altitude_amsl_m": 5_900,
+            "display_max_altitude_amsl_m": 6_600,
+        }.items()
+        assert boundary.material is not None
+        assert boundary.material.shading == "unlit"
+        assert boundary.mesh is not None
+        assert boundary.mesh.bounds[0, 1] < fill.mesh.bounds[0, 1]
+        assert boundary.mesh.bounds[1, 1] > fill.mesh.bounds[1, 1]
+
+
+def test_unit_ids_cannot_collide_with_hierarchy_component_names(
+    tmp_path: Path,
+) -> None:
+    nodes, omissions = build_unit_nodes(
+        [
+            unit(unit_id="a", warning_zone=None, kill_zone=None),
+            unit(
+                unit_id="a_model",
+                position=(501_000, 3_500_000),
+                warning_zone=None,
+                kill_zone=None,
+            ),
+        ],
+        frame(),
+    )
+
+    assert omissions == []
+    assert [node.name for node in nodes] == ["unit_a", "unit_a_model"]
+    assert {child.name for child in nodes[0].children} == {
+        "unit_a/model",
+        "unit_a/symbol_cross",
+        "unit_a/label_cross",
+    }
+    for root in nodes:
+        for parent in walk_nodes(root):
+            for child in parent.children:
+                suffix = child.name.removeprefix(f"{parent.name}/")
+                assert suffix != child.name
+                assert "/" not in suffix
+
+    path = tmp_path / "collision-proof-units.glb"
+    export_glb(path, nodes, scene_metadata={"schema_version": 1})
+    document = read_glb_document(path.read_bytes())
+    names = [node["name"] for node in document["nodes"]]
+    assert len(names) == len(set(names))
+
+
+def test_missing_type_status_and_heading_use_explicit_defaults() -> None:
+    nodes, omissions = build_unit_nodes(
+        [
+            unit(
+                unit_id="unknown-1",
+                unit_type=None,
+                status=None,
+                heading_deg=None,
+                warning_zone=None,
+                kill_zone=None,
+            )
+        ],
+        frame(),
+    )
+
+    assert omissions == []
+    root = nodes[0]
+    assert root.extras.items() >= {
+        "unit_type": "unknown",
+        "status": "unknown",
+        "heading_deg": 0,
+    }.items()
+    assert root.transform[:3, :3] == pytest.approx(numpy.eye(3))
+    assert root.transform[:3, 3] == pytest.approx([0, 900, 0])
+
+
+def test_heading_is_normalized_and_applied_clockwise_on_parent() -> None:
+    nodes, omissions = build_unit_nodes([unit(heading_deg=405)], frame())
+
+    assert omissions == []
+    root = nodes[0]
+    expected = trimesh.transformations.rotation_matrix(-pi / 4, [0, 1, 0])
+    expected[:3, 3] = [0, 900, 0]
+    assert root.extras["heading_deg"] == 45
+    assert root.transform == pytest.approx(expected)
+    assert all(numpy.allclose(child.transform[:3, 3], [0, 0, 0]) is False
+               for child in root.children
+               if child.extras["role"] in {"symbol_cross", "label_cross"})
+
+
+@pytest.mark.parametrize("display_scale_m", [0, -1, numpy.nan, numpy.inf])
+def test_invalid_display_scale_is_one_complete_omission(
+    display_scale_m: float,
+) -> None:
+    nodes, omissions = build_unit_nodes(
+        [unit(display_scale_m=display_scale_m)],
+        frame(),
+    )
+
+    assert nodes == []
+    assert len(omissions) == 1
+    assert omissions[0].unit_id == "ad-05"
+    assert "display_scale_m" in omissions[0].reason
+
+
+def test_identity_bounds_exclude_model_defined_influence_zones() -> None:
+    scale = 800
+    nodes, omissions = build_unit_nodes([unit(display_scale_m=scale)], frame())
+
+    assert omissions == []
+    root = nodes[0]
+    identity_vertices = [
+        vertices
+        for role in ("model", "symbol_cross", "label_cross")
+        for vertices in transformed_vertices(child_by_role(root, role))
+    ]
+    identity = numpy.vstack(identity_vertices)
+    identity_size = identity.max(axis=0) - identity.min(axis=0)
+    assert identity_size[0] <= 1.25 * scale
+    assert identity_size[2] <= 1.25 * scale
+    assert identity_size[1] <= 2.0 * scale
+
+    warning = bounds(child_by_role(root, "warning_zone"))
+    warning_vertices = numpy.vstack(
+        list(transformed_vertices(child_by_role(root, "warning_zone")))
+    )
+    warning_radii = numpy.hypot(warning_vertices[:, 0], warning_vertices[:, 2])
+    assert warning_radii.min() == pytest.approx(0)
+    assert warning_radii.max() == pytest.approx(7_750)
+    assert warning[:, 1] == pytest.approx([-5_900, 700])
+
+    kill_vertices = numpy.vstack(
+        list(transformed_vertices(child_by_role(root, "kill_zone")))
+    )
+    kill_radii = numpy.hypot(kill_vertices[:, 0], kill_vertices[:, 2])
+    assert kill_radii.min() == pytest.approx(0)
+    assert kill_radii.max() == pytest.approx(4_500)
+    assert bounds(child_by_role(root, "kill_zone"))[:, 1] == pytest.approx(
+        [-5_900, 700]
+    )
+
+
+def test_crossed_air_defense_symbol_has_perpendicular_planes() -> None:
+    symbol = crossed_air_defense_symbol_nodes(800)
+
+    assert len(symbol.children) == 2
+    normals = [
+        child.transform[:3, :3] @ numpy.asarray([0, 0, 1], dtype=float)
+        for child in symbol.children
+    ]
+    assert abs(float(numpy.dot(normals[0], normals[1]))) < 1e-12
+    assert all(node.material is None or node.material.double_sided
+               for node in walk_nodes(symbol))
+
+
+def test_glyph_map_is_complete_fixed_five_by_seven_masks() -> None:
+    assert set(GLYPH_MAP) == set(ALLOWED_LABEL_CHARACTERS)
+    assert all(len(mask) == 7 for mask in GLYPH_MAP.values())
+    assert all(len(row) == 5 for mask in GLYPH_MAP.values() for row in mask)
+    assert all(set(row) <= {"0", "1"} for mask in GLYPH_MAP.values() for row in mask)
+
+
+@pytest.mark.parametrize("character", sorted(ALLOWED_LABEL_CHARACTERS))
+def test_every_allowed_label_character_produces_finite_geometry(
+    character: str,
+) -> None:
+    label = crossed_label_nodes(character, 800)
+    meshes = [node.mesh for node in walk_nodes(label) if node.mesh is not None]
+
+    assert meshes
+    assert all(len(mesh.faces) > 0 for mesh in meshes)
+    assert all(numpy.isfinite(mesh.vertices).all() for mesh in meshes)
+
+
+def test_crossed_label_accepts_eight_allowed_characters() -> None:
+    label = crossed_label_nodes("ABCD-123", 800)
+    meshes = [node.mesh for node in walk_nodes(label) if node.mesh is not None]
+
+    assert meshes
+    assert all(numpy.isfinite(mesh.vertices).all() for mesh in meshes)
+
+
+def test_crossed_label_rejects_nine_allowed_characters() -> None:
+    with pytest.raises(ValueError, match="1 through 8"):
+        crossed_label_nodes("ABCDE-123", 800)
+
+
+def test_crossed_label_rejects_unsupported_characters() -> None:
+    with pytest.raises(ValueError, match="allowed uppercase characters"):
+        crossed_label_nodes("AD.05", 800)
+
+
+@pytest.mark.parametrize(
+    ("value", "unit_id", "index", "expected"),
+    [
+        (" ad-05! ", "ignored", 0, "AD-05"),
+        ("ABCDEFGHI", "unit-02", 1, "UNIT-02"),
+        (None, "unit identifier too long", 0, "U01"),
+        ("!!!", "***", 11, "U12"),
+    ],
+)
+def test_short_label_sanitization_and_fallback_are_stable(
+    value: str | None,
+    unit_id: str,
+    index: int,
+    expected: str,
+) -> None:
+    assert sanitize_short_label(value, unit_id, index) == expected
+    assert sanitize_short_label(value, unit_id, index) == expected
+
+
+@pytest.mark.parametrize(
+    ("field", "role"),
+    [
+        ("model", "model"),
+        ("symbol", "symbol_cross"),
+        ("label", "label_cross"),
+        ("warning_zone", "warning_zone"),
+        ("kill_zone", "kill_zone"),
+    ],
+)
+def test_display_options_remove_role_and_its_unused_materials(
+    field: str,
+    role: str,
+) -> None:
+    full_nodes, _ = build_unit_nodes([unit()], frame())
+    full_root = full_nodes[0]
+    removed_materials = material_names(child_by_role(full_root, role))
+    options = replace(UnitDisplayOptions(), **{field: False})
+
+    nodes, omissions = build_unit_nodes([unit()], frame(), options)
+
+    assert omissions == []
+    root = nodes[0]
+    assert role not in {child.extras["role"] for child in root.children}
+    assert material_names(root).isdisjoint(removed_materials)
+
+
+def test_display_options_require_model_or_symbol_identity() -> None:
+    with pytest.raises(ValueError, match="model or symbol"):
+        build_unit_nodes(
+            [unit()],
+            frame(),
+            UnitDisplayOptions(model=False, symbol=False),
+        )
+
+
+@pytest.mark.parametrize(
+    ("changes", "reason"),
+    [
+        ({"position": (numpy.nan, 3_500_000)}, "position"),
+        ({"altitude_amsl_m": numpy.inf}, "altitude_amsl_m"),
+        ({"heading_deg": numpy.nan}, "heading_deg"),
+        ({"unit_type": "frigate"}, "unit_type"),
+        ({"unit_type": ""}, "unit_type"),
+        ({"status": "invented"}, "status"),
+        ({"status": ""}, "status"),
+        ({"warning_zone": {}}, "warning_zone"),
+        (
+            {"warning_zone": InfluenceZoneSpec(100, 50, 0, 1_000)},
+            "warning_zone",
+        ),
+        (
+            {"kill_zone": InfluenceZoneSpec(0, 50, 1_000, 1_000)},
+            "kill_zone",
+        ),
+        (
+            {"kill_zone": InfluenceZoneSpec(0, numpy.inf, 0, 1_000)},
+            "kill_zone",
+        ),
+    ],
+)
+def test_invalid_unit_data_returns_one_omission_and_no_partial_root(
+    changes: dict[str, object],
+    reason: str,
+) -> None:
+    nodes, omissions = build_unit_nodes([unit(**changes)], frame())
+
+    assert nodes == []
+    assert len(omissions) == 1
+    assert omissions[0].unit_id == "ad-05"
+    assert reason in omissions[0].reason
+
+
+def test_geometry_failure_returns_one_omission_and_no_partial_root(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_geometry(_scale_m: float) -> SceneNode:
+        raise RuntimeError("glyph geometry failed")
+
+    monkeypatch.setattr(
+        "app.scene3d.units.crossed_air_defense_symbol_nodes",
+        fail_geometry,
+    )
+
+    nodes, omissions = build_unit_nodes([unit()], frame())
+
+    assert nodes == []
+    assert omissions == [UnitOmission("ad-05", "glyph geometry failed")]
+
+
+class TrackingFrame:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def to_gltf(self, _point: tuple[float, float, float]) -> numpy.ndarray:
+        self.calls += 1
+        return numpy.zeros(3)
+
+
+@pytest.mark.parametrize(
+    "specs",
+    [
+        [unit(unit_id="   ")],
+        [unit(unit_id="AD 05"), unit(unit_id="ad_05")],
+    ],
+)
+def test_invalid_scene_identity_raises_during_preflight(
+    specs: list[UnitSpec],
+) -> None:
+    tracking_frame = TrackingFrame()
+
+    with pytest.raises(ValueError, match="[Uu]nit ID|normalized unit ID"):
+        build_unit_nodes(specs, tracking_frame)
+
+    assert tracking_frame.calls == 0

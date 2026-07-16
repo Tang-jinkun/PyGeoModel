@@ -19,6 +19,9 @@ The frontend keeps one MapLibre map while preserving independent model drafts, c
 - `data/`: local runtime storage for uploaded DEMs, task JSON, and outputs.
 - `docs/`: technical plan and feasibility notes.
 
+Backend consumers integrating the radar task API and GLB output should read
+the Chinese [radar frontend integration guide](docs/radar_model_frontend_integration_guide.md).
+
 ## Local Development Without Docker
 
 Docker is optional. The normal local workflow uses a Python virtual environment and Vite directly.
@@ -84,7 +87,7 @@ Services:
 - Backend API: `http://localhost:8000`
 - Frontend: `http://localhost:5173`
 
-The compose build passes Tencent Cloud mirrors for Debian apt, pip, and npm package downloads. To speed up Docker Hub base image pulls on Tencent Cloud hosts, configure the Docker daemon registry mirror:
+The compose build uses Tencent Cloud mirrors for Debian apt and npm package downloads, and official PyPI for Python packages. To speed up Docker Hub base image pulls on Tencent Cloud hosts, configure the Docker daemon registry mirror:
 
 ```json
 {
@@ -144,6 +147,44 @@ cd frontend
 npm test
 npm run build
 ```
+
+## Synthetic Demo Scenarios
+
+With Docker services running, generate and execute the six non-radar demo scenarios against the local DEM:
+
+```powershell
+docker compose up -d --build
+docker compose exec -T backend python /app/scripts/generate_demo_scenarios.py --data-dir /workspace/data --dem-id dem_20260713_080113_884937cf
+docker compose exec -T backend python /app/scripts/run_demo_scenarios.py --data-dir /workspace/data --dem-id dem_20260713_080113_884937cf --api-base-url http://127.0.0.1:8000
+```
+
+Generated scenario files and `scenario-index.json` are stored under `data/demo-scenarios/<dem-id>/`. They are synthetic runtime data and are not committed to Git.
+
+### Air corridor GLB inspection
+
+New air-corridor tasks include a terrain-free `air_corridor_result.glb`. The
+file uses a local glTF Y-up coordinate frame. Use `model_metadata.json` or the
+embedded `asset.extras.scene3d` object to reconstruct its geographic origin,
+source CRS, axis mapping, and altitude datum.
+
+Inspect the newest downloaded server artifact from Docker:
+
+```powershell
+$taskId = (Get-ChildItem data\tasks\air_corridor_task_*.json | Sort-Object LastWriteTime -Descending | Select-Object -First 1).BaseName
+docker compose exec -T backend python /app/scripts/inspect_glb.py "/workspace/data/outputs/$taskId/air_corridor_result.glb" --max-bytes 50000000
+```
+
+### Preview a GLB over its DEM
+
+Open a finished task that includes `scene_glb`, choose **Layers**, and enable
+**3D result**. The workbench loads the file only after this manual action and
+temporarily displays DEM terrain at true 1:1 elevation. Disable the layer to
+remove the preview and release browser GPU resources. The Files tab continues
+to provide the original GLB download.
+
+The preview requires the task's source DEM to be selected and currently accepts
+static PyGeoModel GLBs whose embedded `scene3d` metadata declares WGS84 UTM and
+the `X=east`, `Y=up`, `Z=south` frame.
 
 ## Important Limits
 
