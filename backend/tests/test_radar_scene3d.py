@@ -9,6 +9,8 @@ from rasterio.transform import from_origin
 from app.schemas.radar import CoverageRequest
 from app.scene3d.exporter import read_glb_document
 from app.scene3d.radar import (
+    BLOCKED_CONTACT_MATERIAL,
+    BLOCKED_GROUND_MATERIAL,
     BLOCKED_VOLUME_MATERIAL,
     DETECTION_FLOOR_MATERIAL,
     DIAGNOSTIC_MAX_MARKERS,
@@ -49,8 +51,11 @@ def test_shell_grid_material_is_opaque_white() -> None:
 
 def test_floor_and_blocked_volume_use_distinct_dark_materials() -> None:
     assert DETECTION_FLOOR_MATERIAL.rgba == (20, 73, 48, 210)
-    assert BLOCKED_VOLUME_MATERIAL.rgba == (55, 60, 58, 92)
+    assert BLOCKED_VOLUME_MATERIAL.rgba == (55, 60, 58, 48)
+    assert BLOCKED_GROUND_MATERIAL.rgba == (44, 48, 46, 150)
+    assert BLOCKED_CONTACT_MATERIAL.rgba == (224, 76, 48, 255)
     assert DETECTION_FLOOR_MATERIAL.rgba != BLOCKED_VOLUME_MATERIAL.rgba
+    assert BLOCKED_GROUND_MATERIAL.rgba != BLOCKED_VOLUME_MATERIAL.rgba
 
 
 def test_scan_animation_uses_sparse_visibility_keyframes() -> None:
@@ -225,6 +230,8 @@ def test_target_independent_radar_glb_is_self_contained_and_open_at_nodata(
         "radar_result/detectable_shell",
         "radar_result/detection_floor",
         "radar_result/terrain_blocked_volume",
+        "radar_result/terrain_blocked_ground",
+        "radar_result/terrain_blocked_contact",
         "radar_result/detection_floor_boundary",
         "radar_result/terrain_contact",
         "radar_result/unknown_boundary",
@@ -289,6 +296,7 @@ def test_target_independent_radar_glb_is_self_contained_and_open_at_nodata(
         "shell_face_count",
         "floor_face_count",
         "blocked_face_count",
+        "blocked_ground_face_count",
         "terrain_segment_count",
         "unknown_segment_count",
     }

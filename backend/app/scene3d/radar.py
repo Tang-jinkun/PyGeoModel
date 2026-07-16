@@ -30,6 +30,7 @@ VISUAL_DOME_ELEVATION_STEP_DEG = 5.0
 VISUAL_DOME_VERTICAL_RATIO = 1.0
 DIAGNOSTIC_MAX_MARKERS = 256
 ENVELOPE_GRID_SIZE = 256
+BLOCKED_GROUND_OFFSET_M = 2.0
 
 SHELL_MATERIAL = MaterialSpec(
     "radar_detectable_shell",
@@ -45,9 +46,21 @@ DETECTION_FLOOR_MATERIAL = MaterialSpec(
 )
 BLOCKED_VOLUME_MATERIAL = MaterialSpec(
     "radar_terrain_blocked_volume",
-    (55, 60, 58, 92),
+    (55, 60, 58, 48),
     shading="unlit",
     emissive_rgb=(25, 28, 27),
+)
+BLOCKED_GROUND_MATERIAL = MaterialSpec(
+    "radar_terrain_blocked_ground",
+    (44, 48, 46, 150),
+    shading="unlit",
+    emissive_rgb=(22, 24, 23),
+)
+BLOCKED_CONTACT_MATERIAL = MaterialSpec(
+    "radar_terrain_blocked_contact",
+    (224, 76, 48, 255),
+    shading="unlit",
+    emissive_rgb=(150, 34, 20),
 )
 GRID_MATERIAL = MaterialSpec(
     "radar_shell_grid",
@@ -248,6 +261,15 @@ def write_radar_coverage_glb(
         if visibility_volume is not None
         else None
     )
+    blocked_ground = (
+        _blocked_ground_mesh(
+            visibility_volume,
+            frame,
+            altitude_offset_m=BLOCKED_GROUND_OFFSET_M,
+        )
+        if visibility_volume is not None
+        else None
+    )
     grid = _grid_mesh(
         actual_local_grid,
         ray_grid,
@@ -264,6 +286,16 @@ def write_radar_coverage_glb(
         else None
     )
     contact_radius_m = max(10.0, min(40.0, effective_range_m * 0.0007))
+    blocked_contact = (
+        _blocked_ground_contact_mesh(
+            visibility_volume,
+            frame,
+            radius_m=max(12.0, min(50.0, effective_range_m * 0.0008)),
+            altitude_offset_m=BLOCKED_GROUND_OFFSET_M,
+        )
+        if visibility_volume is not None
+        else None
+    )
     terrain_contact = (
         _visibility_segment_mesh(
             visibility_volume.terrain_segments,
@@ -354,6 +386,18 @@ def write_radar_coverage_glb(
                 if blocked_volume is not None
                 else []
             ),
+            *(
+                [
+                    SceneNode(
+                        name="radar_result/terrain_blocked_ground",
+                        mesh=blocked_ground,
+                        material=BLOCKED_GROUND_MATERIAL,
+                        extras={"kind": "terrain_blocked_ground"},
+                    )
+                ]
+                if blocked_ground is not None
+                else []
+            ),
             SceneNode(
                 name="radar_result/shell_grid",
                 mesh=grid,
@@ -382,6 +426,18 @@ def write_radar_coverage_glb(
                     )
                 ]
                 if terrain_contact is not None
+                else []
+            ),
+            *(
+                [
+                    SceneNode(
+                        name="radar_result/terrain_blocked_contact",
+                        mesh=blocked_contact,
+                        material=BLOCKED_CONTACT_MATERIAL,
+                        extras={"kind": "terrain_blocked_contact"},
+                    )
+                ]
+                if blocked_contact is not None
                 else []
             ),
             *(
@@ -501,6 +557,9 @@ def write_radar_coverage_glb(
             "floor_face_count": int(numpy.count_nonzero(lower_faces)),
             "blocked_face_count": int(
                 numpy.count_nonzero(~blocked_lower_faces)
+            ),
+            "blocked_ground_face_count": int(
+                numpy.count_nonzero(blocked_lower_faces)
             ),
             "terrain_segment_count": len(visibility_volume.terrain_segments),
             "unknown_segment_count": len(visibility_volume.unknown_segments),
@@ -686,12 +745,8 @@ def _visibility_volume_mesh(
     volume: RadarVisibilityVolume,
     frame: SceneFrame,
 ) -> trimesh.Trimesh:
-    vertices = numpy.asarray(
-        [frame.to_gltf(tuple(point)) for point in volume.vertices],
-        dtype=numpy.float64,
-    )
     faces = volume.faces[~_lower_face_mask(volume.faces)]
-    return trimesh.Trimesh(vertices=vertices, faces=faces, process=False)
+    return _indexed_projected_mesh(volume.vertices, faces, frame)
 
 
 def _visibility_floor_mesh(
@@ -701,11 +756,7 @@ def _visibility_floor_mesh(
     floor_faces = volume.faces[_lower_face_mask(volume.faces)]
     if len(floor_faces) == 0:
         return None
-    vertices = numpy.asarray(
-        [frame.to_gltf(tuple(point)) for point in volume.vertices],
-        dtype=numpy.float64,
-    )
-    return trimesh.Trimesh(vertices=vertices, faces=floor_faces, process=False)
+    return _indexed_projected_mesh(volume.vertices, floor_faces, frame)
 
 
 def _blocked_volume_mesh(
@@ -717,11 +768,49 @@ def _blocked_volume_mesh(
     faces = volume.blocked_faces[~_lower_face_mask(volume.blocked_faces)]
     if len(volume.blocked_vertices) == 0 or len(faces) == 0:
         return None
+    return _indexed_projected_mesh(volume.blocked_vertices, faces, frame)
+
+
+def _blocked_ground_mesh(
+    volume: RadarVisibilityVolume,
+    frame: SceneFrame,
+    *,
+    altitude_offset_m: float,
+) -> trimesh.Trimesh | None:
+    if volume.blocked_vertices is None or volume.blocked_faces is None:
+        return None
+    faces = volume.blocked_faces[_lower_face_mask(volume.blocked_faces)]
+    if len(faces) == 0:
+        return None
+    return _indexed_projected_mesh(
+        volume.blocked_vertices,
+        faces,
+        frame,
+        altitude_offset_m=altitude_offset_m,
+    )
+
+
+def _indexed_projected_mesh(
+    projected_vertices: numpy.ndarray,
+    faces: numpy.ndarray,
+    frame: SceneFrame,
+    *,
+    altitude_offset_m: float = 0.0,
+) -> trimesh.Trimesh:
+    used = numpy.unique(faces)
+    selected = numpy.asarray(projected_vertices[used], dtype=numpy.float64).copy()
+    selected[:, 2] += altitude_offset_m
+    remap = numpy.full(len(projected_vertices), -1, dtype=numpy.int64)
+    remap[used] = numpy.arange(len(used), dtype=numpy.int64)
     vertices = numpy.asarray(
-        [frame.to_gltf(tuple(point)) for point in volume.blocked_vertices],
+        [frame.to_gltf(tuple(point)) for point in selected],
         dtype=numpy.float64,
     )
-    return trimesh.Trimesh(vertices=vertices, faces=faces, process=False)
+    return trimesh.Trimesh(
+        vertices=vertices,
+        faces=remap[faces],
+        process=False,
+    )
 
 
 def _lower_face_mask(faces: numpy.ndarray) -> numpy.ndarray:
@@ -736,8 +825,42 @@ def _lower_surface_boundary_mesh(
     *,
     radius_m: float,
 ) -> trimesh.Trimesh | None:
+    return _lower_face_boundary_mesh(
+        volume.vertices,
+        volume.faces,
+        frame,
+        radius_m=radius_m,
+    )
+
+
+def _blocked_ground_contact_mesh(
+    volume: RadarVisibilityVolume,
+    frame: SceneFrame,
+    *,
+    radius_m: float,
+    altitude_offset_m: float,
+) -> trimesh.Trimesh | None:
+    if volume.blocked_vertices is None or volume.blocked_faces is None:
+        return None
+    return _lower_face_boundary_mesh(
+        volume.blocked_vertices,
+        volume.blocked_faces,
+        frame,
+        radius_m=radius_m,
+        altitude_offset_m=altitude_offset_m,
+    )
+
+
+def _lower_face_boundary_mesh(
+    vertices: numpy.ndarray,
+    faces: numpy.ndarray,
+    frame: SceneFrame,
+    *,
+    radius_m: float,
+    altitude_offset_m: float = 0.0,
+) -> trimesh.Trimesh | None:
     edge_counts: dict[tuple[int, int], int] = {}
-    for face in volume.faces:
+    for face in faces:
         indices = [int(index) for index in face]
         if any(index % 2 for index in indices):
             continue
@@ -751,8 +874,12 @@ def _lower_surface_boundary_mesh(
             continue
         path = numpy.asarray(
             [
-                frame.to_gltf(tuple(volume.vertices[first])),
-                frame.to_gltf(tuple(volume.vertices[second])),
+                frame.to_gltf(
+                    tuple(vertices[first] + (0.0, 0.0, altitude_offset_m))
+                ),
+                frame.to_gltf(
+                    tuple(vertices[second] + (0.0, 0.0, altitude_offset_m))
+                ),
             ],
             dtype=numpy.float64,
         )
