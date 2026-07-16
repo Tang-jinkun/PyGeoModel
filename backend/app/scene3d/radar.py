@@ -747,6 +747,13 @@ def _ground_contact_mesh(local_grid, ray_grid, wrap: bool, *, radius_m: float):
     )
 
 
+def _grid_strides() -> tuple[int, int]:
+    return (
+        max(1, round(6 / AZIMUTH_STEP_DEG)),
+        max(1, round(5 / ELEVATION_STEP_DEG)),
+    )
+
+
 def _grid_mesh(
     local_grid,
     ray_grid,
@@ -756,8 +763,7 @@ def _grid_mesh(
 ) -> trimesh.Trimesh:
     paths: list[numpy.ndarray] = []
     azimuth_count = len(local_grid[0])
-    azimuth_stride = max(1, round(6 / AZIMUTH_STEP_DEG))
-    elevation_stride = max(1, round(5 / VISUAL_DOME_ELEVATION_STEP_DEG))
+    azimuth_stride, elevation_stride = _grid_strides()
     for azimuth_index in range(0, azimuth_count, azimuth_stride):
         _append_closed_paths(
             paths,
@@ -888,19 +894,29 @@ def _scan_slice_nodes(origin, local_grid, ray_grid, *, wrap):
 
     if not nodes:
         raise ValueError("Radar ray grid produced no animated scan slices")
-    times = numpy.linspace(0, SCAN_PERIOD_S, len(nodes) + 1, dtype=numpy.float32)
     tracks = []
+    phase_duration_s = SCAN_PERIOD_S / len(nodes)
     for node_index, node in enumerate(nodes):
-        values = numpy.zeros((len(times), 3), dtype=numpy.float32)
-        for frame_index in range(len(times)):
-            phase = frame_index % len(nodes)
-            if phase in {node_index, (node_index + 1) % len(nodes)}:
-                values[frame_index] = 1
+        active_phases = {node_index, (node_index + 1) % len(nodes)}
+        states = [0 in active_phases]
+        times = [0.0]
+        for phase in range(1, len(nodes)):
+            active = phase in active_phases
+            if active != states[-1]:
+                times.append(phase * phase_duration_s)
+                states.append(active)
+        times.append(SCAN_PERIOD_S)
+        states.append(0 in active_phases)
+        values = numpy.repeat(
+            numpy.asarray(states, dtype=numpy.float32)[:, numpy.newaxis],
+            3,
+            axis=1,
+        )
         tracks.append(
             AnimationTrack(
                 node_name=node.name,
                 path="scale",
-                times=times,
+                times=numpy.asarray(times, dtype=numpy.float32),
                 values=values,
                 interpolation="STEP",
             )

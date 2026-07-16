@@ -11,6 +11,8 @@ from app.scene3d.exporter import read_glb_document
 from app.scene3d.radar import (
     GRID_MATERIAL,
     RayResult,
+    _grid_strides,
+    _scan_slice_nodes,
     _shell_mesh,
     _trace_ray,
     write_radar_coverage_glb,
@@ -39,6 +41,35 @@ def test_shell_does_not_bridge_terrain_shadow_to_full_range() -> None:
 def test_shell_grid_material_is_opaque_white() -> None:
     assert GRID_MATERIAL.rgba == (255, 255, 255, 255)
     assert GRID_MATERIAL.emissive_rgb == (180, 180, 180)
+
+
+def test_scan_animation_uses_sparse_visibility_keyframes() -> None:
+    azimuth_count = 8
+    angles = numpy.linspace(0, 2 * numpy.pi, azimuth_count, endpoint=False)
+    local_grid = [
+        [numpy.array([numpy.sin(angle), 0, numpy.cos(angle)]) for angle in angles],
+        [numpy.array([numpy.sin(angle), 1, numpy.cos(angle)]) for angle in angles],
+    ]
+    ray_grid = [
+        [RayResult(1_000, tuple(point), "nominal", True) for point in row]
+        for row in local_grid
+    ]
+
+    nodes, _, animation = _scan_slice_nodes(
+        numpy.zeros(3),
+        local_grid,
+        ray_grid,
+        wrap=True,
+    )
+
+    assert len(nodes) == azimuth_count
+    assert len(animation.tracks) == azimuth_count
+    assert max(len(track.times) for track in animation.tracks) <= 5
+    assert sum(len(track.times) for track in animation.tracks) <= 5 * azimuth_count
+
+
+def test_shell_grid_decouples_visual_spacing_from_ray_precision() -> None:
+    assert _grid_strides() == (4, 3)
 
 
 def test_target_independent_radar_glb_is_self_contained_and_open_at_nodata(
