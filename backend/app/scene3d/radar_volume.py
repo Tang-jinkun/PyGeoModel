@@ -23,8 +23,6 @@ class RadarVisibilityVolume:
     unknown_segments: numpy.ndarray
     grid_shape: tuple[int, int, int]
     occupied_voxel_count: int
-    blocked_vertices: numpy.ndarray | None = None
-    blocked_faces: numpy.ndarray | None = None
     blocked_contact_segments: numpy.ndarray | None = None
 
 
@@ -316,35 +314,6 @@ def build_radar_visibility_envelope(
         upper_surface,
         envelope_valid,
     )
-    terrain_visibility_floor = terrain_grid + min_height_grid
-    blocked_upper_surface = numpy.minimum(
-        terrain_visibility_floor,
-        upper_surface,
-    )
-    blocked_valid = (
-        valid_horizontal
-        & inside_range
-        & sector
-        & (min_height_grid > 1e-6)
-        & (terrain_grid < blocked_upper_surface)
-    )
-    blocked_cells = (
-        blocked_valid[:-1, :-1]
-        & blocked_valid[:-1, 1:]
-        & blocked_valid[1:, :-1]
-        & blocked_valid[1:, 1:]
-    )
-    if blocked_cells.any():
-        blocked_vertices, blocked_faces = _height_field_envelope_mesh(
-            x_grid,
-            y_grid,
-            terrain_grid,
-            blocked_upper_surface,
-            blocked_valid,
-        )
-    else:
-        blocked_vertices = numpy.empty((0, 3), dtype=numpy.float64)
-        blocked_faces = numpy.empty((0, 3), dtype=numpy.int64)
     x_pitch = (2 * effective_range_m) / (x_count - 1)
     y_pitch = (2 * effective_range_m) / (y_count - 1)
     blocked_contact_segments = _terrain_shadow_boundary_segments(
@@ -382,8 +351,6 @@ def build_radar_visibility_envelope(
         unknown_segments=unknown_segments,
         grid_shape=(x_count, y_count, 2),
         occupied_voxel_count=int(numpy.count_nonzero(envelope_valid)),
-        blocked_vertices=blocked_vertices,
-        blocked_faces=blocked_faces,
         blocked_contact_segments=blocked_contact_segments,
     )
 

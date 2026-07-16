@@ -10,8 +10,6 @@ from app.schemas.radar import CoverageRequest
 from app.scene3d.exporter import read_glb_document
 from app.scene3d.radar import (
     BLOCKED_CONTACT_MATERIAL,
-    BLOCKED_GROUND_MATERIAL,
-    BLOCKED_VOLUME_MATERIAL,
     DETECTION_FLOOR_MATERIAL,
     DIAGNOSTIC_MAX_MARKERS,
     GRID_MATERIAL,
@@ -49,13 +47,9 @@ def test_shell_grid_material_is_opaque_white() -> None:
     assert GRID_MATERIAL.emissive_rgb == (180, 180, 180)
 
 
-def test_floor_and_blocked_volume_use_distinct_dark_materials() -> None:
+def test_floor_and_terrain_contact_use_distinct_materials() -> None:
     assert DETECTION_FLOOR_MATERIAL.rgba == (20, 73, 48, 210)
-    assert BLOCKED_VOLUME_MATERIAL.rgba == (55, 60, 58, 48)
-    assert BLOCKED_GROUND_MATERIAL.rgba == (44, 48, 46, 150)
     assert BLOCKED_CONTACT_MATERIAL.rgba == (224, 76, 48, 255)
-    assert DETECTION_FLOOR_MATERIAL.rgba != BLOCKED_VOLUME_MATERIAL.rgba
-    assert BLOCKED_GROUND_MATERIAL.rgba != BLOCKED_VOLUME_MATERIAL.rgba
 
 
 def test_scan_animation_uses_sparse_visibility_keyframes() -> None:
@@ -229,8 +223,6 @@ def test_target_independent_radar_glb_is_self_contained_and_open_at_nodata(
         "radar_result/radar_origin",
         "radar_result/detectable_shell",
         "radar_result/detection_floor",
-        "radar_result/terrain_blocked_volume",
-        "radar_result/terrain_blocked_ground",
         "radar_result/terrain_blocked_contact",
         "radar_result/detection_floor_boundary",
         "radar_result/terrain_contact",
@@ -238,6 +230,8 @@ def test_target_independent_radar_glb_is_self_contained_and_open_at_nodata(
         "radar_result/shell_grid",
         "radar_result/diagnostics",
     } <= node_names
+    assert "radar_result/terrain_blocked_volume" not in node_names
+    assert "radar_result/terrain_blocked_ground" not in node_names
     scan_nodes = {
         name for name in node_names
         if isinstance(name, str) and name.startswith("radar_result/scan_slice_")
@@ -295,8 +289,6 @@ def test_target_independent_radar_glb_is_self_contained_and_open_at_nodata(
         "face_count",
         "shell_face_count",
         "floor_face_count",
-        "blocked_face_count",
-        "blocked_ground_face_count",
         "blocked_contact_segment_count",
         "terrain_segment_count",
         "unknown_segment_count",
@@ -309,7 +301,6 @@ def test_target_independent_radar_glb_is_self_contained_and_open_at_nodata(
     assert visibility_volume["face_count"] > 0
     assert visibility_volume["shell_face_count"] > 0
     assert visibility_volume["floor_face_count"] > 0
-    assert visibility_volume["blocked_face_count"] > 0
     assert visibility_volume["blocked_contact_segment_count"] > 0
     assert visibility_volume["terrain_segment_count"] > 0
     assert visibility_volume["unknown_segment_count"] > 0

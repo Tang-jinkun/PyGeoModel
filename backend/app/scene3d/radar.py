@@ -30,7 +30,7 @@ VISUAL_DOME_ELEVATION_STEP_DEG = 5.0
 VISUAL_DOME_VERTICAL_RATIO = 1.0
 DIAGNOSTIC_MAX_MARKERS = 256
 ENVELOPE_GRID_SIZE = 256
-BLOCKED_GROUND_OFFSET_M = 2.0
+TERRAIN_CONTACT_OFFSET_M = 2.0
 
 SHELL_MATERIAL = MaterialSpec(
     "radar_detectable_shell",
@@ -43,18 +43,6 @@ DETECTION_FLOOR_MATERIAL = MaterialSpec(
     (20, 73, 48, 210),
     shading="unlit",
     emissive_rgb=(10, 38, 24),
-)
-BLOCKED_VOLUME_MATERIAL = MaterialSpec(
-    "radar_terrain_blocked_volume",
-    (55, 60, 58, 48),
-    shading="unlit",
-    emissive_rgb=(25, 28, 27),
-)
-BLOCKED_GROUND_MATERIAL = MaterialSpec(
-    "radar_terrain_blocked_ground",
-    (44, 48, 46, 150),
-    shading="unlit",
-    emissive_rgb=(22, 24, 23),
 )
 BLOCKED_CONTACT_MATERIAL = MaterialSpec(
     "radar_terrain_blocked_contact",
@@ -216,23 +204,16 @@ def write_radar_coverage_glb(
         *(
             (
                 tuple(point)
-                for point in visibility_volume.blocked_vertices
-            )
-            if visibility_volume is not None
-            and visibility_volume.blocked_vertices is not None
-            else ()
-        ),
-        *(
-            (
-                tuple(point)
                 for segments in (
                     visibility_volume.terrain_segments,
                     visibility_volume.unknown_segments,
+                    visibility_volume.blocked_contact_segments,
                 )
                 for segment in segments
                 for point in segment
             )
             if visibility_volume is not None
+            and visibility_volume.blocked_contact_segments is not None
             else ()
         )
     ]
@@ -253,20 +234,6 @@ def write_radar_coverage_glb(
     )
     detection_floor = (
         _visibility_floor_mesh(visibility_volume, frame)
-        if visibility_volume is not None
-        else None
-    )
-    blocked_volume = (
-        _blocked_volume_mesh(visibility_volume, frame)
-        if visibility_volume is not None
-        else None
-    )
-    blocked_ground = (
-        _blocked_ground_mesh(
-            visibility_volume,
-            frame,
-            altitude_offset_m=BLOCKED_GROUND_OFFSET_M,
-        )
         if visibility_volume is not None
         else None
     )
@@ -291,7 +258,7 @@ def write_radar_coverage_glb(
             visibility_volume.blocked_contact_segments,
             frame,
             radius_m=max(12.0, min(50.0, effective_range_m * 0.0008)),
-            altitude_offset_m=BLOCKED_GROUND_OFFSET_M,
+            altitude_offset_m=TERRAIN_CONTACT_OFFSET_M,
         )
         if visibility_volume is not None
         and visibility_volume.blocked_contact_segments is not None
@@ -373,30 +340,6 @@ def write_radar_coverage_glb(
                     )
                 ]
                 if detection_floor is not None
-                else []
-            ),
-            *(
-                [
-                    SceneNode(
-                        name="radar_result/terrain_blocked_volume",
-                        mesh=blocked_volume,
-                        material=BLOCKED_VOLUME_MATERIAL,
-                        extras={"kind": "terrain_blocked_volume"},
-                    )
-                ]
-                if blocked_volume is not None
-                else []
-            ),
-            *(
-                [
-                    SceneNode(
-                        name="radar_result/terrain_blocked_ground",
-                        mesh=blocked_ground,
-                        material=BLOCKED_GROUND_MATERIAL,
-                        extras={"kind": "terrain_blocked_ground"},
-                    )
-                ]
-                if blocked_ground is not None
                 else []
             ),
             SceneNode(
@@ -538,12 +481,6 @@ def write_radar_coverage_glb(
     )
     if visibility_volume is not None:
         lower_faces = _lower_face_mask(visibility_volume.faces)
-        blocked_faces = (
-            visibility_volume.blocked_faces
-            if visibility_volume.blocked_faces is not None
-            else numpy.empty((0, 3), dtype=numpy.int64)
-        )
-        blocked_lower_faces = _lower_face_mask(blocked_faces)
         metadata["visibility_volume"] = {
             "method": "dem_height_field_envelope",
             "nominal_elevation_deg": [0, 90],
@@ -556,12 +493,6 @@ def write_radar_coverage_glb(
             "face_count": len(visibility_volume.faces),
             "shell_face_count": int(numpy.count_nonzero(~lower_faces)),
             "floor_face_count": int(numpy.count_nonzero(lower_faces)),
-            "blocked_face_count": int(
-                numpy.count_nonzero(~blocked_lower_faces)
-            ),
-            "blocked_ground_face_count": int(
-                numpy.count_nonzero(blocked_lower_faces)
-            ),
             "blocked_contact_segment_count": (
                 len(visibility_volume.blocked_contact_segments)
                 if visibility_volume.blocked_contact_segments is not None
@@ -763,37 +694,6 @@ def _visibility_floor_mesh(
     if len(floor_faces) == 0:
         return None
     return _indexed_projected_mesh(volume.vertices, floor_faces, frame)
-
-
-def _blocked_volume_mesh(
-    volume: RadarVisibilityVolume,
-    frame: SceneFrame,
-) -> trimesh.Trimesh | None:
-    if volume.blocked_vertices is None or volume.blocked_faces is None:
-        return None
-    faces = volume.blocked_faces[~_lower_face_mask(volume.blocked_faces)]
-    if len(volume.blocked_vertices) == 0 or len(faces) == 0:
-        return None
-    return _indexed_projected_mesh(volume.blocked_vertices, faces, frame)
-
-
-def _blocked_ground_mesh(
-    volume: RadarVisibilityVolume,
-    frame: SceneFrame,
-    *,
-    altitude_offset_m: float,
-) -> trimesh.Trimesh | None:
-    if volume.blocked_vertices is None or volume.blocked_faces is None:
-        return None
-    faces = volume.blocked_faces[_lower_face_mask(volume.blocked_faces)]
-    if len(faces) == 0:
-        return None
-    return _indexed_projected_mesh(
-        volume.blocked_vertices,
-        faces,
-        frame,
-        altitude_offset_m=altitude_offset_m,
-    )
 
 
 def _indexed_projected_mesh(
