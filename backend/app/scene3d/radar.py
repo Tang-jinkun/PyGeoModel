@@ -29,12 +29,25 @@ SCAN_PERIOD_S = 20.0
 VISUAL_DOME_ELEVATION_STEP_DEG = 5.0
 VISUAL_DOME_VERTICAL_RATIO = 1.0
 DIAGNOSTIC_MAX_MARKERS = 256
+ENVELOPE_GRID_SIZE = 256
 
 SHELL_MATERIAL = MaterialSpec(
     "radar_detectable_shell",
     (41, 74, 53, 34),
     shading="unlit",
     emissive_rgb=(20, 44, 30),
+)
+DETECTION_FLOOR_MATERIAL = MaterialSpec(
+    "radar_detection_floor",
+    (20, 73, 48, 210),
+    shading="unlit",
+    emissive_rgb=(10, 38, 24),
+)
+BLOCKED_VOLUME_MATERIAL = MaterialSpec(
+    "radar_terrain_blocked_volume",
+    (55, 60, 58, 92),
+    shading="unlit",
+    emissive_rgb=(25, 28, 27),
 )
 GRID_MATERIAL = MaterialSpec(
     "radar_shell_grid",
@@ -169,7 +182,12 @@ def write_radar_coverage_glb(
         effective_range_m,
     )
     visibility_volume = (
-        build_radar_visibility_envelope(prepared, payload, min_visible_height)
+        build_radar_visibility_envelope(
+            prepared,
+            payload,
+            min_visible_height,
+            grid_shape=(ENVELOPE_GRID_SIZE, ENVELOPE_GRID_SIZE, 2),
+        )
         if min_visible_height is not None
         else None
     )
@@ -180,6 +198,15 @@ def write_radar_coverage_glb(
         *(
             (tuple(point) for point in visibility_volume.vertices)
             if visibility_volume is not None
+            else ()
+        ),
+        *(
+            (
+                tuple(point)
+                for point in visibility_volume.blocked_vertices
+            )
+            if visibility_volume is not None
+            and visibility_volume.blocked_vertices is not None
             else ()
         ),
         *(
@@ -210,6 +237,16 @@ def write_radar_coverage_glb(
         _visibility_volume_mesh(visibility_volume, frame)
         if visibility_volume is not None
         else _shell_mesh(local_grid, visual_ray_grid, wrap)
+    )
+    detection_floor = (
+        _visibility_floor_mesh(visibility_volume, frame)
+        if visibility_volume is not None
+        else None
+    )
+    blocked_volume = (
+        _blocked_volume_mesh(visibility_volume, frame)
+        if visibility_volume is not None
+        else None
     )
     grid = _grid_mesh(
         actual_local_grid,
@@ -292,6 +329,30 @@ def write_radar_coverage_glb(
                 mesh=shell,
                 material=SHELL_MATERIAL,
                 extras={"kind": "detectable_shell"},
+            ),
+            *(
+                [
+                    SceneNode(
+                        name="radar_result/detection_floor",
+                        mesh=detection_floor,
+                        material=DETECTION_FLOOR_MATERIAL,
+                        extras={"kind": "detection_floor"},
+                    )
+                ]
+                if detection_floor is not None
+                else []
+            ),
+            *(
+                [
+                    SceneNode(
+                        name="radar_result/terrain_blocked_volume",
+                        mesh=blocked_volume,
+                        material=BLOCKED_VOLUME_MATERIAL,
+                        extras={"kind": "terrain_blocked_volume"},
+                    )
+                ]
+                if blocked_volume is not None
+                else []
             ),
             SceneNode(
                 name="radar_result/shell_grid",
@@ -419,6 +480,13 @@ def write_radar_coverage_glb(
         }
     )
     if visibility_volume is not None:
+        lower_faces = _lower_face_mask(visibility_volume.faces)
+        blocked_faces = (
+            visibility_volume.blocked_faces
+            if visibility_volume.blocked_faces is not None
+            else numpy.empty((0, 3), dtype=numpy.int64)
+        )
+        blocked_lower_faces = _lower_face_mask(blocked_faces)
         metadata["visibility_volume"] = {
             "method": "dem_height_field_envelope",
             "nominal_elevation_deg": [0, 90],
@@ -429,6 +497,11 @@ def write_radar_coverage_glb(
             "grid_shape": list(visibility_volume.grid_shape),
             "occupied_voxel_count": visibility_volume.occupied_voxel_count,
             "face_count": len(visibility_volume.faces),
+            "shell_face_count": int(numpy.count_nonzero(~lower_faces)),
+            "floor_face_count": int(numpy.count_nonzero(lower_faces)),
+            "blocked_face_count": int(
+                numpy.count_nonzero(~blocked_lower_faces)
+            ),
             "terrain_segment_count": len(visibility_volume.terrain_segments),
             "unknown_segment_count": len(visibility_volume.unknown_segments),
         }
@@ -617,7 +690,44 @@ def _visibility_volume_mesh(
         [frame.to_gltf(tuple(point)) for point in volume.vertices],
         dtype=numpy.float64,
     )
-    return trimesh.Trimesh(vertices=vertices, faces=volume.faces, process=False)
+    faces = volume.faces[~_lower_face_mask(volume.faces)]
+    return trimesh.Trimesh(vertices=vertices, faces=faces, process=False)
+
+
+def _visibility_floor_mesh(
+    volume: RadarVisibilityVolume,
+    frame: SceneFrame,
+) -> trimesh.Trimesh | None:
+    floor_faces = volume.faces[_lower_face_mask(volume.faces)]
+    if len(floor_faces) == 0:
+        return None
+    vertices = numpy.asarray(
+        [frame.to_gltf(tuple(point)) for point in volume.vertices],
+        dtype=numpy.float64,
+    )
+    return trimesh.Trimesh(vertices=vertices, faces=floor_faces, process=False)
+
+
+def _blocked_volume_mesh(
+    volume: RadarVisibilityVolume,
+    frame: SceneFrame,
+) -> trimesh.Trimesh | None:
+    if volume.blocked_vertices is None or volume.blocked_faces is None:
+        return None
+    faces = volume.blocked_faces[~_lower_face_mask(volume.blocked_faces)]
+    if len(volume.blocked_vertices) == 0 or len(faces) == 0:
+        return None
+    vertices = numpy.asarray(
+        [frame.to_gltf(tuple(point)) for point in volume.blocked_vertices],
+        dtype=numpy.float64,
+    )
+    return trimesh.Trimesh(vertices=vertices, faces=faces, process=False)
+
+
+def _lower_face_mask(faces: numpy.ndarray) -> numpy.ndarray:
+    if len(faces) == 0:
+        return numpy.empty(0, dtype=bool)
+    return numpy.all(numpy.asarray(faces) % 2 == 0, axis=1)
 
 
 def _lower_surface_boundary_mesh(

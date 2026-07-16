@@ -9,6 +9,8 @@ from rasterio.transform import from_origin
 from app.schemas.radar import CoverageRequest
 from app.scene3d.exporter import read_glb_document
 from app.scene3d.radar import (
+    BLOCKED_VOLUME_MATERIAL,
+    DETECTION_FLOOR_MATERIAL,
     DIAGNOSTIC_MAX_MARKERS,
     GRID_MATERIAL,
     RayResult,
@@ -43,6 +45,12 @@ def test_shell_does_not_bridge_terrain_shadow_to_full_range() -> None:
 def test_shell_grid_material_is_opaque_white() -> None:
     assert GRID_MATERIAL.rgba == (255, 255, 255, 255)
     assert GRID_MATERIAL.emissive_rgb == (180, 180, 180)
+
+
+def test_floor_and_blocked_volume_use_distinct_dark_materials() -> None:
+    assert DETECTION_FLOOR_MATERIAL.rgba == (20, 73, 48, 210)
+    assert BLOCKED_VOLUME_MATERIAL.rgba == (55, 60, 58, 92)
+    assert DETECTION_FLOOR_MATERIAL.rgba != BLOCKED_VOLUME_MATERIAL.rgba
 
 
 def test_scan_animation_uses_sparse_visibility_keyframes() -> None:
@@ -215,6 +223,8 @@ def test_target_independent_radar_glb_is_self_contained_and_open_at_nodata(
         "radar_result",
         "radar_result/radar_origin",
         "radar_result/detectable_shell",
+        "radar_result/detection_floor",
+        "radar_result/terrain_blocked_volume",
         "radar_result/detection_floor_boundary",
         "radar_result/terrain_contact",
         "radar_result/unknown_boundary",
@@ -276,15 +286,21 @@ def test_target_independent_radar_glb_is_self_contained_and_open_at_nodata(
         "grid_shape",
         "occupied_voxel_count",
         "face_count",
+        "shell_face_count",
+        "floor_face_count",
+        "blocked_face_count",
         "terrain_segment_count",
         "unknown_segment_count",
     }
     assert visibility_volume["method"] == "dem_height_field_envelope"
     assert visibility_volume["nominal_elevation_deg"] == [0, 90]
     assert visibility_volume["scan_elevation_deg"] == [0.0, 90.0]
-    assert visibility_volume["grid_shape"] == [128, 128, 2]
+    assert visibility_volume["grid_shape"] == [256, 256, 2]
     assert visibility_volume["occupied_voxel_count"] > 0
     assert visibility_volume["face_count"] > 0
+    assert visibility_volume["shell_face_count"] > 0
+    assert visibility_volume["floor_face_count"] > 0
+    assert visibility_volume["blocked_face_count"] > 0
     assert visibility_volume["terrain_segment_count"] > 0
     assert visibility_volume["unknown_segment_count"] > 0
     assert metadata["visual_dome"]["terrain_conforming"] is False
