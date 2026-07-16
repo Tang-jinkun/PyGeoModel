@@ -19,6 +19,9 @@ The frontend keeps one MapLibre map while preserving independent model drafts, c
 - `data/`: local runtime storage for uploaded DEMs, task JSON, and outputs.
 - `docs/`: technical plan and feasibility notes.
 
+Backend consumers integrating the radar task API and GLB output should read
+the Chinese [radar frontend integration guide](docs/radar_model_frontend_integration_guide.md).
+
 ## Local Development Without Docker
 
 Docker is optional. The normal local workflow uses a Python virtual environment and Vite directly.
