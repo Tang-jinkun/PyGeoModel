@@ -127,7 +127,7 @@ def write_radar_platform_glb(
             ),
         ],
     )
-    times = numpy.asarray([0, 2, 4, 6, 8], dtype=numpy.float32)
+    times = numpy.linspace(0, SCAN_PERIOD_S, 5, dtype=numpy.float32)
     angles = numpy.radians([0, 90, 180, 270, 360]) / 2
     rotations = numpy.column_stack(
         [

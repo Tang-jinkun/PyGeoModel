@@ -335,6 +335,15 @@ def test_target_independent_radar_glb_is_self_contained_and_open_at_nodata(
     assert platform_metadata["animation"]["period_s"] == 20
     assert platform_metadata["axes"] == {"x": "east", "y": "north", "z": "up"}
     assert platform_metadata["dimensions_m"]["height"] == 1235
+    platform_animation = next(
+        animation
+        for animation in platform_document["animations"]
+        if animation.get("name") == "radar_platform_scan"
+    )
+    platform_time_accessor = platform_document["accessors"][
+        platform_animation["samplers"][0]["input"]
+    ]
+    assert platform_time_accessor["max"] == [20.0]
     platform_scene = trimesh.load(platform_output, force="scene")
     assert platform_scene.bounds[0, 2] < 100
     assert any(
