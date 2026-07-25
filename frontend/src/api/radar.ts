@@ -131,6 +131,41 @@ export interface CoverageProfileResult {
   samples: CoverageProfileSample[];
 }
 
+export interface CoverageProfileTargetInput {
+  id?: string | null;
+  lon: number;
+  lat: number;
+}
+
+export interface CoverageProfileBatchRequest {
+  targets: CoverageProfileTargetInput[];
+  samples: number;
+  include_samples: boolean;
+}
+
+export interface CoverageProfileBatchOptions {
+  samples?: number;
+  include_samples?: boolean;
+}
+
+export interface CoverageProfileError {
+  id: string;
+  index: number;
+  lon: number;
+  lat: number;
+  code: string;
+  message: string;
+}
+
+export interface CoverageProfileBatchResult {
+  task_id: string;
+  requested_count: number;
+  succeeded_count: number;
+  failed_count: number;
+  results: CoverageProfileResult[];
+  errors: CoverageProfileError[];
+}
+
 export interface FusionMetrics {
   task_count: number;
   union_visible_area_m2: number;
@@ -182,6 +217,22 @@ export async function getCoverageProfile(taskId: string, lon: number, lat: numbe
     samples: "180"
   });
   return requestJson<CoverageProfileResult>(`/api/radar/coverage/${taskId}/profile?${params.toString()}`);
+}
+
+export async function getCoverageProfiles(
+  taskId: string,
+  targets: CoverageProfileTargetInput[],
+  options: CoverageProfileBatchOptions = {}
+): Promise<CoverageProfileBatchResult> {
+  const payload: CoverageProfileBatchRequest = {
+    targets,
+    samples: options.samples ?? 180,
+    include_samples: options.include_samples ?? false
+  };
+  return requestJson<CoverageProfileBatchResult>(`/api/radar/coverage/${taskId}/profiles`, {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
 }
 
 export async function createFusionAnalysis(taskIds: string[]): Promise<FusionResult> {

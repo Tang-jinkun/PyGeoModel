@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { normalizeCoverageTaskStatus } from "./radar";
+import { getCoverageProfiles, normalizeCoverageTaskStatus } from "./radar";
 
 
 describe("radar task normalization", () => {
@@ -62,5 +62,52 @@ describe("radar task normalization", () => {
     expect(task.metrics?.unknown_area_m2).toBe(0);
     expect(task.model?.coverage_contract_version).toBe(1);
     expect(task.model?.beam_clip_profile).toBeNull();
+  });
+});
+
+describe("radar batch profile client", () => {
+  it("posts targets and options to the batch profile endpoint", async () => {
+    const originalFetch = globalThis.fetch;
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    globalThis.fetch = (async (url: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ url: String(url), init });
+      return new Response(
+        JSON.stringify({
+          task_id: "task_a",
+          requested_count: 2,
+          succeeded_count: 2,
+          failed_count: 0,
+          results: [],
+          errors: []
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      );
+    }) as typeof fetch;
+
+    try {
+      const result = await getCoverageProfiles(
+        "task_a",
+        [
+          { id: "T001", lon: 105.01, lat: 35 },
+          { lon: 105.02, lat: 35.01 }
+        ],
+        { samples: 80, include_samples: false }
+      );
+
+      expect(result.requested_count).toBe(2);
+      expect(calls).toHaveLength(1);
+      expect(calls[0].url).toBe("/api/radar/coverage/task_a/profiles");
+      expect(calls[0].init?.method).toBe("POST");
+      expect(JSON.parse(String(calls[0].init?.body))).toEqual({
+        targets: [
+          { id: "T001", lon: 105.01, lat: 35 },
+          { lon: 105.02, lat: 35.01 }
+        ],
+        samples: 80,
+        include_samples: false
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });
