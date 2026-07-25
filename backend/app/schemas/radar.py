@@ -98,6 +98,38 @@ class CoverageRequest(BaseModel):
     reserved_radar_params: ReservedRadarParams = Field(default_factory=ReservedRadarParams)
 
 
+class MultiRadarStation(BaseModel):
+    radar_id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
+    name: str | None = Field(default=None, max_length=128)
+    radar: RadarInput
+    target: TargetInput = Field(default_factory=TargetInput)
+    coverage: CoverageInput
+    advanced: AdvancedInput = Field(default_factory=AdvancedInput)
+    reserved_radar_params: ReservedRadarParams = Field(default_factory=ReservedRadarParams)
+
+
+class MultiRadarRequest(BaseModel):
+    dem_id: str
+    radars: list[MultiRadarStation] = Field(min_length=2, max_length=256)
+
+    @model_validator(mode="after")
+    def validate_radar_ids(self) -> "MultiRadarRequest":
+        if len({radar.radar_id for radar in self.radars}) != len(self.radars):
+            raise ValueError("radar_id values must be unique")
+        return self
+
+
+class MultiRadarTaskStatus(BaseModel):
+    task_id: str
+    dem_id: str
+    status: Literal["pending", "running", "finished", "partial", "failed"]
+    progress: int = Field(default=0, ge=0, le=100)
+    message: str = ""
+    created_at: str | None = None
+    updated_at: str | None = None
+    request: MultiRadarRequest | None = None
+
+
 class CoverageMetrics(BaseModel):
     requested_theoretical_area_m2: float = 0
     theoretical_area_m2: float = 0
