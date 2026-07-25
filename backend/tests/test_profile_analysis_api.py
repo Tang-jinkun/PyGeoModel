@@ -2,13 +2,52 @@ import json
 from pathlib import Path
 
 import numpy
+import pytest
 import rasterio
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 from rasterio.transform import from_origin
 
 from app.core.config import settings
 from app.main import app
+from app.schemas.radar import CoverageProfileBatchRequest
 from app.services.dem_store import read_dem_metadata
+
+
+def test_profile_batch_request_accepts_valid_targets() -> None:
+    payload = CoverageProfileBatchRequest.model_validate(
+        {
+            "targets": [
+                {"id": "T001", "lon": 105.010, "lat": 35.000},
+                {"lon": 105.011, "lat": 35.001},
+            ],
+            "samples": 12,
+            "include_samples": True,
+        }
+    )
+
+    assert len(payload.targets) == 2
+    assert payload.targets[0].id == "T001"
+    assert payload.targets[1].id is None
+    assert payload.samples == 12
+    assert payload.include_samples is True
+
+
+def test_profile_batch_request_rejects_empty_targets() -> None:
+    with pytest.raises(ValidationError):
+        CoverageProfileBatchRequest.model_validate({"targets": []})
+
+
+def test_profile_batch_request_rejects_more_than_500_targets() -> None:
+    with pytest.raises(ValidationError):
+        CoverageProfileBatchRequest.model_validate(
+            {
+                "targets": [
+                    {"lon": 105.0 + index * 0.00001, "lat": 35.0}
+                    for index in range(501)
+                ]
+            }
+        )
 
 
 def test_read_coverage_profile_reports_terrain_obstruction(tmp_path: Path) -> None:

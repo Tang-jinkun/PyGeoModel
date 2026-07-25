@@ -236,6 +236,36 @@ class CoverageProfileResult(BaseModel):
     samples: list[CoverageProfileSample] = Field(default_factory=list)
 
 
+class CoverageProfileTargetInput(BaseModel):
+    id: str | None = None
+    lon: float = Field(ge=-180, le=180)
+    lat: float = Field(ge=-90, le=90)
+
+
+class CoverageProfileBatchRequest(BaseModel):
+    targets: list[CoverageProfileTargetInput] = Field(min_length=1, max_length=500)
+    samples: int = 180
+    include_samples: bool = False
+
+
+class CoverageProfileError(BaseModel):
+    id: str
+    index: int
+    lon: float
+    lat: float
+    code: str
+    message: str
+
+
+class CoverageProfileBatchResult(BaseModel):
+    task_id: str
+    requested_count: int
+    succeeded_count: int
+    failed_count: int
+    results: list[CoverageProfileResult] = Field(default_factory=list)
+    errors: list[CoverageProfileError] = Field(default_factory=list)
+
+
 class FusionRequest(BaseModel):
     task_ids: list[str] = Field(min_length=2, max_length=12)
 
