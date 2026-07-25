@@ -45,13 +45,12 @@ def write_radar_platform_glb(
         ],
         axes="z_up",
     )
-    base = numpy.asarray([0.0, ground_m - frame.origin_altitude_m, 0.0])
+    ground_offset = numpy.asarray([0.0, 0.0, ground_m - frame.origin_altitude_m])
 
     cabinet = trimesh.creation.box(extents=[4.8, 2.6, 3.2])
-    cabinet.apply_translation(base + numpy.asarray([0, 1.3, 0]))
+    cabinet.apply_translation([0, 1.3, 0])
 
     pedestal = _cylinder_y(radius=1.05, height=3.2, center_y=4.2)
-    pedestal.apply_translation(base)
 
     turntable = trimesh.util.concatenate(
         [
@@ -59,14 +58,12 @@ def write_radar_platform_glb(
             _cylinder_y(radius=0.34, height=3.3, center_y=7.85),
         ]
     )
-    turntable.apply_translation(base)
 
     dish = _parabolic_dish_mesh(
         center=numpy.asarray([0, 9.6, 0], dtype=numpy.float64),
         radius_m=2.75,
         depth_m=0.9,
     )
-    dish.apply_translation(base)
 
     feed_arm = tube_mesh(
         numpy.asarray(
@@ -83,11 +80,11 @@ def write_radar_platform_glb(
     feed_horn = trimesh.creation.icosphere(subdivisions=2, radius=0.24)
     feed_horn.apply_translation([2.3, 9.6, 0])
     feed_arm = trimesh.util.concatenate([feed_arm, feed_horn])
-    feed_arm.apply_translation(base)
 
     for mesh in (cabinet, pedestal, turntable, dish, feed_arm):
-        mesh.apply_transform(trimesh.transformations.rotation_matrix(numpy.pi / 2, [1, 0, 0]))
         mesh.apply_scale(DISPLAY_SCALE)
+        mesh.apply_transform(trimesh.transformations.rotation_matrix(numpy.pi / 2, [1, 0, 0]))
+        mesh.apply_translation(ground_offset)
 
     rotating_names = [
         "radar_platform/azimuth_turntable",

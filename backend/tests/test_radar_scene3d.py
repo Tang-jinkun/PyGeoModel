@@ -3,6 +3,7 @@ from pathlib import Path
 
 import numpy
 import rasterio
+import trimesh
 from rasterio.coords import BoundingBox
 from rasterio.transform import from_origin
 
@@ -114,7 +115,7 @@ def test_target_independent_radar_glb_is_self_contained_and_open_at_nodata(
     assert defaults.advanced.vertical_beam_width_deg == 98
 
     dem_path = tmp_path / "radar-dem.tif"
-    dem = numpy.full((21, 21), 1_000, dtype=numpy.float32)
+    dem = numpy.full((21, 21), 1_030, dtype=numpy.float32)
     dem[9:12, 14] = 1_450
     dem[0:5, 17:21] = -9999
     transform = from_origin(-1_050, 1_050, 100, 100)
@@ -195,7 +196,7 @@ def test_target_independent_radar_glb_is_self_contained_and_open_at_nodata(
         payload,
         90,
         0,
-        1_030,
+        1_060,
         1_000,
         "nominal",
         100,
@@ -334,6 +335,8 @@ def test_target_independent_radar_glb_is_self_contained_and_open_at_nodata(
     assert platform_metadata["animation"]["period_s"] == 20
     assert platform_metadata["axes"] == {"x": "east", "y": "north", "z": "up"}
     assert platform_metadata["dimensions_m"]["height"] == 1235
+    platform_scene = trimesh.load(platform_output, force="scene")
+    assert platform_scene.bounds[0, 2] < 100
     assert any(
         animation.get("name") == "radar_platform_scan"
         for animation in platform_document.get("animations", [])
