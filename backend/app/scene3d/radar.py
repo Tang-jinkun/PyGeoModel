@@ -217,7 +217,7 @@ def write_radar_coverage_glb(
             else ()
         )
     ]
-    frame = SceneFrame.from_projected_points(prepared.target_epsg, all_points)
+    frame = SceneFrame.from_projected_points(prepared.target_epsg, all_points, axes="z_up")
     actual_local_grid = [
         [frame.to_gltf(result.point) for result in row]
         for row in ray_grid

@@ -37,3 +37,19 @@ def test_frame_metadata_round_trips_origin() -> None:
     assert metadata["origin"]["altitude_amsl_m"] == 6200.0
     assert -180 <= metadata["origin"]["longitude"] <= 180
     assert -90 <= metadata["origin"]["latitude"] <= 90
+
+
+def test_frame_maps_enu_to_gltf_z_up_for_radar_assets() -> None:
+    frame = SceneFrame.from_projected_points(
+        32644,
+        [(500_000.0, 3_500_000.0, 6100.0)],
+        axes="z_up",
+    )
+
+    assert numpy.allclose(
+        frame.to_gltf((500_200.0, 3_500_400.0, 6380.0)),
+        [200.0, 400.0, 280.0],
+    )
+    assert frame.metadata("radar_task_a", "radar")["axes"] == {
+        "x": "east", "y": "north", "z": "up"
+    }

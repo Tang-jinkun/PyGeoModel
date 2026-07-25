@@ -43,8 +43,9 @@ def write_radar_platform_glb(
             (prepared.radar_x, prepared.radar_y, ground_m),
             (prepared.radar_x, prepared.radar_y, ground_m + 12.5),
         ],
+        axes="z_up",
     )
-    base = frame.to_gltf((prepared.radar_x, prepared.radar_y, ground_m))
+    base = numpy.asarray([0.0, ground_m - frame.origin_altitude_m, 0.0])
 
     cabinet = trimesh.creation.box(extents=[4.8, 2.6, 3.2])
     cabinet.apply_translation(base + numpy.asarray([0, 1.3, 0]))
@@ -85,6 +86,7 @@ def write_radar_platform_glb(
     feed_arm.apply_translation(base)
 
     for mesh in (cabinet, pedestal, turntable, dish, feed_arm):
+        mesh.apply_transform(trimesh.transformations.rotation_matrix(numpy.pi / 2, [1, 0, 0]))
         mesh.apply_scale(DISPLAY_SCALE)
 
     rotating_names = [
@@ -133,8 +135,8 @@ def write_radar_platform_glb(
     rotations = numpy.column_stack(
         [
             numpy.zeros(len(angles)),
-            numpy.sin(angles),
             numpy.zeros(len(angles)),
+            numpy.sin(angles),
             numpy.cos(angles),
         ]
     ).astype(numpy.float32)

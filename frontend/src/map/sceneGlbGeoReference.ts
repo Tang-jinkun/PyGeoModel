@@ -15,7 +15,7 @@ export interface Scene3dMetadata {
     latitude: number;
     altitude_amsl_m: number;
   };
-  axes: { x: "east"; y: "up"; z: "south" };
+  axes: { x: "east"; y: "up"; z: "south" } | { x: "east"; y: "north"; z: "up" };
   [key: string]: unknown;
 }
 
@@ -51,13 +51,11 @@ export function validateScene3dMetadata(
   if (value.geographic_crs !== "EPSG:4326") {
     throw new Error("GLB scene3d geographic CRS must be EPSG:4326");
   }
-  if (
-    !isRecord(value.axes)
-    || value.axes.x !== "east"
-    || value.axes.y !== "up"
-    || value.axes.z !== "south"
-  ) {
-    throw new Error("GLB scene3d axes must be X=east, Y=up, Z=south");
+  if (!isRecord(value.axes) || value.axes.x !== "east" || !(
+    (value.axes.y === "up" && value.axes.z === "south")
+    || (value.axes.y === "north" && value.axes.z === "up")
+  )) {
+    throw new Error("GLB scene3d axes must be X=east, Y=up/Z=south or Y=north/Z=up");
   }
   if (typeof value.source_crs !== "string" || utmDefinition(value.source_crs) === null) {
     throw new Error("GLB scene3d source CRS must be WGS84 UTM");
@@ -91,9 +89,10 @@ export function createSceneGeoReference(metadata: Scene3dMetadata): SceneGeoRefe
     metadata,
     anchor,
     project([x, y, z]) {
+      const zUp = metadata.axes.y === "north";
       const projected: [number, number] = [
         metadata.origin.projected_x + x,
-        metadata.origin.projected_y - z
+        metadata.origin.projected_y + (zUp ? y : -z)
       ];
       const [wrappedLongitude, latitude] = inverse.forward(projected);
       const longitude = nearestPeriodicCopy(
@@ -101,7 +100,7 @@ export function createSceneGeoReference(metadata: Scene3dMetadata): SceneGeoRefe
         metadata.origin.longitude,
         360
       );
-      const altitudeAmslM = metadata.origin.altitude_amsl_m + y;
+      const altitudeAmslM = metadata.origin.altitude_amsl_m + (zUp ? z : y);
       const mercator = maplibregl.MercatorCoordinate.fromLngLat(
         { lng: longitude, lat: latitude },
         altitudeAmslM

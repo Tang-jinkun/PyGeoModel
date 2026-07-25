@@ -332,6 +332,7 @@ def test_target_independent_radar_glb_is_self_contained_and_open_at_nodata(
         "radar_platform/feed_arm",
     } <= platform_nodes
     assert platform_metadata["animation"]["period_s"] == 8
+    assert platform_metadata["axes"] == {"x": "east", "y": "north", "z": "up"}
     assert platform_metadata["dimensions_m"]["height"] == 123.5
     assert any(
         animation.get("name") == "radar_platform_scan"

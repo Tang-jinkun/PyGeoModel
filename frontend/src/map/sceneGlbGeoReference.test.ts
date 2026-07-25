@@ -33,7 +33,7 @@ describe("scene GLB georeference", () => {
       .toThrow("metre");
     expect(() => validateScene3dMetadata({
       ...north,
-      axes: { x: "east", y: "north", z: "up" }
+      axes: { x: "east", y: "north", z: "south" }
     })).toThrow("axes");
     expect(() => validateScene3dMetadata({ ...north, source_crs: "EPSG:3857" }))
       .toThrow("UTM");
@@ -48,6 +48,22 @@ describe("scene GLB georeference", () => {
     expect(result.longitude).toBeCloseTo(79.283, 2);
     expect(result.latitude).toBeCloseTo(31.516, 2);
     expect(result.mercator.every(Number.isFinite)).toBe(true);
+  });
+
+  it("reconstructs radar coordinates with Z pointing up", () => {
+    const radar = {
+      ...north,
+      task_id: "radar_task_a",
+      model_id: "radar",
+      axes: { x: "east", y: "north", z: "up" }
+    };
+    const result = createSceneGeoReference(validateScene3dMetadata(radar, {
+      taskId: "radar_task_a",
+      modelId: "radar"
+    })).project([1000, 2000, 250]);
+
+    expect(result.projected).toEqual([336974.7457902762, 3488028.840193924]);
+    expect(result.altitudeAmslM).toBe(5250);
   });
 
   it("supports southern-hemisphere WGS84 UTM zones", () => {

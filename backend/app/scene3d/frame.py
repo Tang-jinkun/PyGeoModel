@@ -16,12 +16,15 @@ class SceneFrame:
     origin_altitude_m: float
     origin_longitude: float
     origin_latitude: float
+    axes: str = "y_up"
 
     @classmethod
     def from_projected_points(
         cls,
         target_epsg: int,
         points: list[ProjectedPoint],
+        *,
+        axes: str = "y_up",
     ) -> "SceneFrame":
         values = numpy.asarray(points, dtype=numpy.float64)
         if (
@@ -40,6 +43,8 @@ class SceneFrame:
             always_xy=True,
         )
         longitude, latitude = to_wgs84.transform(origin_x, origin_y)
+        if axes not in {"y_up", "z_up"}:
+            raise ValueError("Scene frame axes must be y_up or z_up")
         return cls(
             target_epsg,
             origin_x,
@@ -47,16 +52,16 @@ class SceneFrame:
             origin_altitude_m,
             float(longitude),
             float(latitude),
+            axes,
         )
 
     def to_gltf(self, point: ProjectedPoint) -> numpy.ndarray:
         east, north, altitude = point
         result = numpy.asarray(
-            [
-                east - self.origin_x,
-                altitude - self.origin_altitude_m,
-                -(north - self.origin_y),
-            ],
+            [east - self.origin_x, north - self.origin_y, altitude - self.origin_altitude_m],
+            dtype=numpy.float64,
+        ) if self.axes == "z_up" else numpy.asarray(
+            [east - self.origin_x, altitude - self.origin_altitude_m, -(north - self.origin_y)],
             dtype=numpy.float64,
         )
         if not numpy.isfinite(result).all():
@@ -78,5 +83,7 @@ class SceneFrame:
                 "latitude": self.origin_latitude,
                 "altitude_amsl_m": self.origin_altitude_m,
             },
-            "axes": {"x": "east", "y": "up", "z": "south"},
+            "axes": {"x": "east", "y": "north", "z": "up"}
+            if self.axes == "z_up"
+            else {"x": "east", "y": "up", "z": "south"},
         }
