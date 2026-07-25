@@ -18,10 +18,11 @@ from .exporter import (
 )
 from .frame import SceneFrame
 from .primitives import tube_mesh
+from .radar import SCAN_PERIOD_S, _azimuths
 
 
-SCAN_PERIOD_S = 20.0
 DISPLAY_SCALE = 100.0
+ANTENNA_PHASE_CENTER_HEIGHT_M = 9.6
 EQUIPMENT_MATERIAL = MaterialSpec("radar_equipment_olive", (72, 82, 68, 255))
 PEDESTAL_MATERIAL = MaterialSpec("radar_pedestal_metal", (70, 78, 80, 255))
 TURNTABLE_MATERIAL = MaterialSpec("radar_turntable_metal", (47, 56, 60, 255))
@@ -35,7 +36,19 @@ def write_radar_platform_glb(
     task_id: str,
     prepared: PreparedCoverageDem,
     payload: CoverageRequest,
+    scan_azimuths_deg: list[float] | None = None,
 ) -> dict:
+    if scan_azimuths_deg is None:
+        azimuths = _azimuths(payload)
+        scan_azimuths_deg = (
+            azimuths
+            if payload.coverage.scan_mode == "omni"
+            else azimuths[:-1]
+        )
+    scan_azimuths = numpy.asarray(scan_azimuths_deg, dtype=numpy.float64)
+    if len(scan_azimuths) == 0 or not numpy.isfinite(scan_azimuths).all():
+        raise ValueError("Radar platform requires finite scan azimuths")
+
     ground_m = _radar_ground_elevation(prepared)
     frame = SceneFrame.from_projected_points(
         prepared.target_epsg,
@@ -46,6 +59,13 @@ def write_radar_platform_glb(
         axes="z_up",
     )
     ground_offset = numpy.asarray([0.0, 0.0, ground_m - frame.origin_altitude_m])
+    vertical_scale = max(
+        payload.radar.height_m / ANTENNA_PHASE_CENTER_HEIGHT_M,
+        0.01,
+    )
+    phase_center_offset = payload.radar.height_m - (
+        ANTENNA_PHASE_CENTER_HEIGHT_M * vertical_scale
+    )
 
     cabinet = trimesh.creation.box(extents=[4.8, 2.6, 3.2])
     cabinet.apply_translation([0, 1.3, 0])
@@ -82,9 +102,9 @@ def write_radar_platform_glb(
     feed_arm = trimesh.util.concatenate([feed_arm, feed_horn])
 
     for mesh in (cabinet, pedestal, turntable, dish, feed_arm):
-        mesh.apply_scale(DISPLAY_SCALE)
+        mesh.apply_scale([DISPLAY_SCALE, vertical_scale, DISPLAY_SCALE])
         mesh.apply_transform(trimesh.transformations.rotation_matrix(numpy.pi / 2, [1, 0, 0]))
-        mesh.apply_translation(ground_offset)
+        mesh.apply_translation(ground_offset + [0.0, 0.0, phase_center_offset])
 
     rotating_names = [
         "radar_platform/azimuth_turntable",
@@ -127,8 +147,9 @@ def write_radar_platform_glb(
             ),
         ],
     )
-    times = numpy.linspace(0, SCAN_PERIOD_S, 5, dtype=numpy.float32)
-    angles = numpy.radians([0, 90, 180, 270, 360]) / 2
+    times = numpy.linspace(0, SCAN_PERIOD_S, len(scan_azimuths) + 1, dtype=numpy.float32)
+    scan_azimuths = numpy.append(scan_azimuths, scan_azimuths[0])
+    angles = numpy.radians(90 - scan_azimuths) / 2
     rotations = numpy.column_stack(
         [
             numpy.zeros(len(angles)),
@@ -145,6 +166,7 @@ def write_radar_platform_glb(
                 path="rotation",
                 times=times,
                 values=rotations,
+                interpolation="STEP",
             )
             for name in rotating_names
         ],
@@ -158,7 +180,11 @@ def write_radar_platform_glb(
             "dimensions_m": {
                 "width": 5.5 * DISPLAY_SCALE,
                 "depth": 5.5 * DISPLAY_SCALE,
-                "height": 12.35 * DISPLAY_SCALE,
+                "height": 12.35 * vertical_scale,
+            },
+            "antenna_phase_center": {
+                "height_above_ground_m": payload.radar.height_m,
+                "azimuth_deg": float(scan_azimuths[0]),
             },
             "animation": {"name": animation.name, "period_s": SCAN_PERIOD_S},
         }

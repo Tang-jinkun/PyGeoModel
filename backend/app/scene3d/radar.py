@@ -307,6 +307,9 @@ def write_radar_coverage_glb(
         ray_grid,
         wrap=wrap,
     )
+    scan_azimuths_deg = [
+        azimuths[int(node.extras["azimuth_index"])] for node in scan_nodes
+    ]
     diagnostic_mesh = _diagnostic_mesh(
         actual_local_grid,
         ray_grid,
@@ -459,6 +462,7 @@ def write_radar_coverage_glb(
             "scan_animation": {
                 "period_s": SCAN_PERIOD_S,
                 "slice_count": len(scan_nodes),
+                "azimuth_deg": scan_azimuths_deg,
                 "max_range_m": scan_ranges_m,
             },
             "visual_dome": {
@@ -1061,7 +1065,7 @@ def _scan_slice_nodes(origin, local_grid, ray_grid, *, wrap):
     tracks = []
     phase_duration_s = SCAN_PERIOD_S / len(nodes)
     for node_index, node in enumerate(nodes):
-        active_phases = {node_index, (node_index + 1) % len(nodes)}
+        active_phases = {node_index}
         states = [0 in active_phases]
         times = [0.0]
         for phase in range(1, len(nodes)):

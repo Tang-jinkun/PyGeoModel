@@ -334,11 +334,24 @@ def test_target_independent_radar_glb_is_self_contained_and_open_at_nodata(
     } <= platform_nodes
     assert platform_metadata["animation"]["period_s"] == 20
     assert platform_metadata["axes"] == {"x": "east", "y": "north", "z": "up"}
-    assert platform_metadata["dimensions_m"]["height"] == 1235
+    assert platform_metadata["dimensions_m"]["height"] == 12.35 * 30 / 9.6
+    assert platform_metadata["antenna_phase_center"] == {
+        "height_above_ground_m": 30,
+        "azimuth_deg": 30,
+    }
     platform_animation = next(
         animation
         for animation in platform_document["animations"]
         if animation.get("name") == "radar_platform_scan"
+    )
+    dish_node = next(
+        node
+        for node in platform_document["nodes"]
+        if node.get("name") == "radar_platform/antenna_dish"
+    )
+    assert numpy.allclose(
+        dish_node["rotation"],
+        [0, 0, numpy.sin(numpy.radians(30)), numpy.cos(numpy.radians(30))],
     )
     platform_time_accessor = platform_document["accessors"][
         platform_animation["samplers"][0]["input"]

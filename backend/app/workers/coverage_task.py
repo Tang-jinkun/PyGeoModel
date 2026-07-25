@@ -82,6 +82,7 @@ def run_coverage_task(task_id: str, payload: CoverageRequest) -> None:
                 task_id=task_id,
                 prepared=prepared,
                 payload=payload,
+                scan_azimuths_deg=scene_metadata["scan_animation"]["azimuth_deg"],
             )
 
             mark_running(task_id, "Vectorizing viewshed outputs.", 85)
