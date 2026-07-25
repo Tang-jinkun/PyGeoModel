@@ -1,9 +1,17 @@
 import math
+from dataclasses import dataclass
+from typing import Any
 
 from pyproj import Transformer
 
 from app.core.errors import AppError
-from app.schemas.radar import CoverageProfileResult, CoverageProfileSample
+from app.schemas.radar import (
+    CoverageProfileBatchRequest,
+    CoverageProfileBatchResult,
+    CoverageProfileError,
+    CoverageProfileResult,
+    CoverageProfileSample,
+)
 from app.services.dem_store import find_dem_file
 from app.services.coverage_range import effective_max_range as _effective_max_range
 from app.services.projection import utm_epsg_from_lonlat
@@ -12,95 +20,138 @@ from app.services.task_store import get_task
 EARTH_RADIUS_M = 6_371_000.0
 
 
-def analyze_coverage_profile(task_id: str, lon: float, lat: float, samples: int = 160) -> CoverageProfileResult:
+@dataclass
+class _ProfileContext:
+    task_id: str
+    payload: Any
+    dataset: Any
+    to_projected: Transformer
+    from_projected: Transformer
+    to_dem: Transformer
+    radar_x: float
+    radar_y: float
+    radar_ground_m: float
+    radar_altitude_m: float
+    effective_range_m: float
+    radar_equation_range_m: float | None
+
+
+def _load_profile_task(task_id: str):
     task = get_task(task_id)
     if task.status != "finished":
         raise AppError("TASK_NOT_FINISHED", "Coverage profiles are available only after the task is finished.", status_code=409)
     if task.request is None:
         raise AppError("TASK_WITHOUT_REQUEST", "Task request parameters are missing.", status_code=409)
+    return task
+
+
+def _load_profile_context(task, dataset) -> _ProfileContext:
+    if dataset.crs is None:
+        raise AppError("DEM_WITHOUT_CRS", "DEM is missing coordinate reference system.")
 
     payload = task.request
-    sample_count = min(400, max(16, samples))
-    dem_path = find_dem_file(payload.dem_id)
     target_epsg = utm_epsg_from_lonlat(payload.radar.lon, payload.radar.lat)
+    to_projected = Transformer.from_crs("EPSG:4326", f"EPSG:{target_epsg}", always_xy=True)
+    from_projected = Transformer.from_crs(f"EPSG:{target_epsg}", "EPSG:4326", always_xy=True)
+    to_dem = Transformer.from_crs("EPSG:4326", dataset.crs, always_xy=True)
+    radar_x, radar_y = to_projected.transform(payload.radar.lon, payload.radar.lat)
+    radar_ground_m = _sample_elevation(dataset, to_dem, payload.radar.lon, payload.radar.lat, "radar")
+    effective_range_m, radar_equation_range_m = _effective_max_range(payload)
 
-    try:
-        import rasterio
-    except ImportError as exc:
-        raise AppError("RASTERIO_NOT_INSTALLED", "Rasterio is required to analyze terrain profiles.", status_code=500) from exc
+    return _ProfileContext(
+        task_id=task.task_id,
+        payload=payload,
+        dataset=dataset,
+        to_projected=to_projected,
+        from_projected=from_projected,
+        to_dem=to_dem,
+        radar_x=radar_x,
+        radar_y=radar_y,
+        radar_ground_m=radar_ground_m,
+        radar_altitude_m=radar_ground_m + payload.radar.height_m,
+        effective_range_m=effective_range_m,
+        radar_equation_range_m=radar_equation_range_m,
+    )
 
-    try:
-        with rasterio.open(dem_path) as dataset:
-            if dataset.crs is None:
-                raise AppError("DEM_WITHOUT_CRS", "DEM is missing coordinate reference system.")
 
-            to_projected = Transformer.from_crs("EPSG:4326", f"EPSG:{target_epsg}", always_xy=True)
-            from_projected = Transformer.from_crs(f"EPSG:{target_epsg}", "EPSG:4326", always_xy=True)
-            to_dem = Transformer.from_crs("EPSG:4326", dataset.crs, always_xy=True)
+def _analyze_profile_target(
+    context: _ProfileContext,
+    lon: float,
+    lat: float,
+    *,
+    samples: int,
+    include_samples: bool,
+) -> CoverageProfileResult:
+    payload = context.payload
+    sample_count = min(400, max(16, samples))
+    target_x, target_y = context.to_projected.transform(lon, lat)
+    dx = target_x - context.radar_x
+    dy = target_y - context.radar_y
+    distance_m = math.hypot(dx, dy)
+    if not math.isfinite(distance_m) or distance_m <= 1:
+        raise AppError("PROFILE_TARGET_TOO_CLOSE", "Profile target is too close to the radar.", status_code=400)
 
-            radar_x, radar_y = to_projected.transform(payload.radar.lon, payload.radar.lat)
-            target_x, target_y = to_projected.transform(lon, lat)
-            dx = target_x - radar_x
-            dy = target_y - radar_y
-            distance_m = math.hypot(dx, dy)
-            if not math.isfinite(distance_m) or distance_m <= 1:
-                raise AppError("PROFILE_TARGET_TOO_CLOSE", "Profile target is too close to the radar.", status_code=400)
+    target_ground_m = _sample_elevation(context.dataset, context.to_dem, lon, lat, "target")
+    target_altitude_m = target_ground_m + payload.target.height_m
+    azimuth_deg = (math.degrees(math.atan2(dx, dy)) + 360) % 360
+    elevation_deg = math.degrees(math.atan2(target_altitude_m - context.radar_altitude_m, distance_m))
 
-            radar_ground_m = _sample_elevation(dataset, to_dem, payload.radar.lon, payload.radar.lat, "radar")
-            target_ground_m = _sample_elevation(dataset, to_dem, lon, lat, "target")
-            radar_altitude_m = radar_ground_m + payload.radar.height_m
-            target_altitude_m = target_ground_m + payload.target.height_m
-            azimuth_deg = (math.degrees(math.atan2(dx, dy)) + 360) % 360
-            elevation_deg = math.degrees(math.atan2(target_altitude_m - radar_altitude_m, distance_m))
+    profile_samples: list[CoverageProfileSample] = []
+    obstruction: CoverageProfileSample | None = None
+    required_target_altitude_m = target_altitude_m
 
-            profile_samples: list[CoverageProfileSample] = []
-            obstruction: CoverageProfileSample | None = None
-            required_target_altitude_m = target_altitude_m
+    for index in range(sample_count):
+        fraction = index / (sample_count - 1)
+        sample_x = context.radar_x + dx * fraction
+        sample_y = context.radar_y + dy * fraction
+        sample_lon, sample_lat = context.from_projected.transform(sample_x, sample_y)
+        sample_distance_m = distance_m * fraction
+        terrain_m = _sample_elevation(context.dataset, context.to_dem, sample_lon, sample_lat, "profile sample")
+        line_of_sight_m = context.radar_altitude_m + (target_altitude_m - context.radar_altitude_m) * fraction
+        clearance_m = line_of_sight_m - (
+            terrain_m
+            + _curvature_bulge(
+                distance_m,
+                sample_distance_m,
+                payload.advanced.use_curvature,
+                payload.advanced.curvature_coeff,
+            )
+        )
+        sample = CoverageProfileSample(
+            distance_m=sample_distance_m,
+            lon=sample_lon,
+            lat=sample_lat,
+            terrain_m=terrain_m,
+            line_of_sight_m=line_of_sight_m,
+            clearance_m=clearance_m,
+        )
+        profile_samples.append(sample)
 
-            for index in range(sample_count):
-                fraction = index / (sample_count - 1)
-                sample_x = radar_x + dx * fraction
-                sample_y = radar_y + dy * fraction
-                sample_lon, sample_lat = from_projected.transform(sample_x, sample_y)
-                sample_distance_m = distance_m * fraction
-                terrain_m = _sample_elevation(dataset, to_dem, sample_lon, sample_lat, "profile sample")
-                line_of_sight_m = radar_altitude_m + (target_altitude_m - radar_altitude_m) * fraction
-                clearance_m = line_of_sight_m - (terrain_m + _curvature_bulge(distance_m, sample_distance_m, payload.advanced.use_curvature, payload.advanced.curvature_coeff))
-                sample = CoverageProfileSample(
-                    distance_m=sample_distance_m,
-                    lon=sample_lon,
-                    lat=sample_lat,
-                    terrain_m=terrain_m,
-                    line_of_sight_m=line_of_sight_m,
-                    clearance_m=clearance_m,
+        if index not in {0, sample_count - 1} and clearance_m < 0:
+            if obstruction is None or clearance_m < obstruction.clearance_m:
+                obstruction = sample
+        if fraction > 0:
+            required_altitude = context.radar_altitude_m + (
+                terrain_m
+                + _curvature_bulge(
+                    distance_m,
+                    sample_distance_m,
+                    payload.advanced.use_curvature,
+                    payload.advanced.curvature_coeff,
                 )
-                profile_samples.append(sample)
-
-                if index not in {0, sample_count - 1} and clearance_m < 0:
-                    if obstruction is None or clearance_m < obstruction.clearance_m:
-                        obstruction = sample
-                if fraction > 0:
-                    required_altitude = radar_altitude_m + (
-                        terrain_m
-                        + _curvature_bulge(distance_m, sample_distance_m, payload.advanced.use_curvature, payload.advanced.curvature_coeff)
-                        - radar_altitude_m
-                    ) / fraction
-                    required_target_altitude_m = max(required_target_altitude_m, required_altitude)
-    except AppError:
-        raise
-    except Exception as exc:
-        raise AppError("PROFILE_ANALYSIS_FAILED", f"Unable to analyze terrain profile: {exc}", status_code=500) from exc
+                - context.radar_altitude_m
+            ) / fraction
+            required_target_altitude_m = max(required_target_altitude_m, required_altitude)
 
     min_required_target_height_m = max(0.0, required_target_altitude_m - target_ground_m)
     required_height_delta_m = max(0.0, min_required_target_height_m - payload.target.height_m)
-    effective_range_m, radar_equation_range_m = _effective_max_range(payload)
     reason = _profile_reason(
         distance_m=distance_m,
         azimuth_deg=azimuth_deg,
         elevation_deg=elevation_deg,
         blocked=obstruction is not None,
-        effective_range_m=effective_range_m,
-        radar_equation_range_m=radar_equation_range_m,
+        effective_range_m=context.effective_range_m,
+        radar_equation_range_m=context.radar_equation_range_m,
         requested_range_m=payload.coverage.max_range_m,
         scan_mode=payload.coverage.scan_mode,
         sector_azimuth_deg=payload.coverage.azimuth_deg,
@@ -110,15 +161,15 @@ def analyze_coverage_profile(task_id: str, lon: float, lat: float, samples: int 
     )
 
     return CoverageProfileResult(
-        task_id=task_id,
+        task_id=context.task_id,
         target_lon=lon,
         target_lat=lat,
         distance_m=distance_m,
         azimuth_deg=azimuth_deg,
         elevation_deg=elevation_deg,
-        radar_ground_m=radar_ground_m,
+        radar_ground_m=context.radar_ground_m,
         target_ground_m=target_ground_m,
-        radar_altitude_m=radar_altitude_m,
+        radar_altitude_m=context.radar_altitude_m,
         target_altitude_m=target_altitude_m,
         blocked=obstruction is not None,
         obstruction_distance_m=obstruction.distance_m if obstruction else None,
@@ -128,7 +179,78 @@ def analyze_coverage_profile(task_id: str, lon: float, lat: float, samples: int 
         min_required_target_height_m=min_required_target_height_m,
         required_height_delta_m=required_height_delta_m,
         reason=reason,
-        samples=profile_samples,
+        samples=profile_samples if include_samples else [],
+    )
+
+
+def analyze_coverage_profile(task_id: str, lon: float, lat: float, samples: int = 160) -> CoverageProfileResult:
+    task = _load_profile_task(task_id)
+    dem_path = find_dem_file(task.request.dem_id)
+
+    try:
+        import rasterio
+    except ImportError as exc:
+        raise AppError("RASTERIO_NOT_INSTALLED", "Rasterio is required to analyze terrain profiles.", status_code=500) from exc
+
+    try:
+        with rasterio.open(dem_path) as dataset:
+            context = _load_profile_context(task, dataset)
+            return _analyze_profile_target(context, lon, lat, samples=samples, include_samples=True)
+    except AppError:
+        raise
+    except Exception as exc:
+        raise AppError("PROFILE_ANALYSIS_FAILED", f"Unable to analyze terrain profile: {exc}", status_code=500) from exc
+
+
+def analyze_coverage_profiles(task_id: str, request: CoverageProfileBatchRequest) -> CoverageProfileBatchResult:
+    task = _load_profile_task(task_id)
+    dem_path = find_dem_file(task.request.dem_id)
+
+    try:
+        import rasterio
+    except ImportError as exc:
+        raise AppError("RASTERIO_NOT_INSTALLED", "Rasterio is required to analyze terrain profiles.", status_code=500) from exc
+
+    results: list[CoverageProfileResult] = []
+    errors: list[CoverageProfileError] = []
+    try:
+        with rasterio.open(dem_path) as dataset:
+            context = _load_profile_context(task, dataset)
+            for index, target in enumerate(request.targets):
+                target_id = target.id if target.id is not None else str(index)
+                try:
+                    results.append(
+                        _analyze_profile_target(
+                            context,
+                            target.lon,
+                            target.lat,
+                            samples=request.samples,
+                            include_samples=request.include_samples,
+                        )
+                    )
+                except AppError as exc:
+                    errors.append(
+                        CoverageProfileError(
+                            id=target_id,
+                            index=index,
+                            lon=target.lon,
+                            lat=target.lat,
+                            code=exc.code,
+                            message=exc.message,
+                        )
+                    )
+    except AppError:
+        raise
+    except Exception as exc:
+        raise AppError("PROFILE_ANALYSIS_FAILED", f"Unable to analyze terrain profiles: {exc}", status_code=500) from exc
+
+    return CoverageProfileBatchResult(
+        task_id=task_id,
+        requested_count=len(request.targets),
+        succeeded_count=len(results),
+        failed_count=len(errors),
+        results=results,
+        errors=errors,
     )
 
 
