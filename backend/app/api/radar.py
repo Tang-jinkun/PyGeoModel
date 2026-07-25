@@ -6,6 +6,8 @@ from app.schemas.radar import (
     CoverageMetrics,
     CoverageOutputFile,
     CoverageOutputKind,
+    CoverageProfileBatchRequest,
+    CoverageProfileBatchResult,
     CoverageProfileResult,
     CoverageRequest,
     CoverageTaskDeleteResult,
@@ -18,7 +20,7 @@ from app.services.output_files import list_task_output_files, resolve_task_outpu
 from app.services.coverage_model import validate_coverage_extent
 from app.services.dem_store import find_dem_file, read_dem_metadata
 from app.services.fusion_analysis import analyze_fusion
-from app.services.profile_analysis import analyze_coverage_profile
+from app.services.profile_analysis import analyze_coverage_profile, analyze_coverage_profiles
 from app.services.task_store import create_task, delete_task, get_task, list_tasks
 from app.workers.coverage_task import run_coverage_task
 
@@ -73,6 +75,14 @@ def read_coverage_metrics(task_id: str) -> CoverageMetrics:
 def read_coverage_profile(task_id: str, lon: float, lat: float, samples: int = 160) -> CoverageProfileResult:
     try:
         return analyze_coverage_profile(task_id, lon, lat, samples=samples)
+    except AppError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.as_detail()) from exc
+
+
+@router.post("/coverage/{task_id}/profiles", response_model=CoverageProfileBatchResult)
+def read_coverage_profiles(task_id: str, payload: CoverageProfileBatchRequest) -> CoverageProfileBatchResult:
+    try:
+        return analyze_coverage_profiles(task_id, payload)
     except AppError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.as_detail()) from exc
 

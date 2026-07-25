@@ -181,6 +181,46 @@ def test_single_and_batch_profiles_share_core_fields(tmp_path: Path) -> None:
     assert len(batch.samples) == len(single.samples)
 
 
+def test_read_coverage_profiles_batch_returns_partial_results(tmp_path: Path) -> None:
+    settings.data_dir = tmp_path
+    settings.ensure_directories()
+    dem_path = write_profile_dem(tmp_path, "dem_a")
+    metadata = read_dem_metadata("dem_a", dem_path)
+    (tmp_path / "dem" / "dem_a" / "metadata.json").write_text(metadata.model_dump_json(indent=2), encoding="utf-8")
+    write_finished_task(tmp_path, "task_a")
+
+    response = TestClient(app).post(
+        "/api/radar/coverage/task_a/profiles",
+        json={
+            "targets": [
+                {"id": "valid", "lon": 105.010, "lat": 35.000},
+                {"id": "outside", "lon": 106.500, "lat": 35.000},
+            ],
+            "samples": 40,
+            "include_samples": False,
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["task_id"] == "task_a"
+    assert payload["requested_count"] == 2
+    assert payload["succeeded_count"] == 1
+    assert payload["failed_count"] == 1
+    assert payload["results"][0]["samples"] == []
+    assert payload["errors"][0]["id"] == "outside"
+    assert payload["errors"][0]["code"] == "PROFILE_OUTSIDE_DEM"
+
+
+def test_read_coverage_profiles_batch_rejects_empty_targets(tmp_path: Path) -> None:
+    settings.data_dir = tmp_path
+    settings.ensure_directories()
+
+    response = TestClient(app).post("/api/radar/coverage/task_a/profiles", json={"targets": []})
+
+    assert response.status_code == 422
+
+
 def write_profile_dem(root: Path, dem_id: str) -> Path:
     dem_dir = root / "dem" / dem_id
     dem_dir.mkdir(parents=True, exist_ok=True)
