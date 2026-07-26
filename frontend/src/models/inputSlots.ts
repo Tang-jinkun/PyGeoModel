@@ -1,3 +1,5 @@
+import { toRaw } from "vue";
+
 export type AssetType = "dem" | "vector" | "table" | "route";
 
 export interface InputSlotDefinition {
@@ -26,5 +28,8 @@ export function applyInputSelections<Request extends { dem_id: string }>(
   request: Request,
   selections: ModelInputSelections
 ): Request {
-  return { ...request, dem_id: selections.terrain?.[0] ?? "" };
+  return {
+    ...structuredClone(toRaw(request)),
+    dem_id: selections.terrain?.[0] ?? ""
+  };
 }
