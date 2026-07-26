@@ -1,3 +1,5 @@
+import { toRaw } from "vue";
+
 import type { SpatialCoordinate, SpatialDraft, SpatialThreat } from "../map/spatialInput";
 import type { AirDefenseThreatInput } from "./airCorridor/types";
 import type { ModelId, ModelRequestMap } from "./registry";
@@ -58,7 +60,7 @@ export function applySpatialDraftToRequest<K extends ModelId>(
   source: ModelRequestMap[K],
   draft: SpatialDraft
 ): ModelRequestMap[K] {
-  const request = structuredClone(source) as ModelRequestMap[K];
+  const request = structuredClone(toRaw(source)) as ModelRequestMap[K];
   switch (modelId) {
     case "radar": {
       const value = request as ModelRequestMap["radar"];

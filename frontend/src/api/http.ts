@@ -46,6 +46,14 @@ export function resolveAssetUrl(path?: string | null): string | null {
   return `${normalizedBase}${normalizedPath}`;
 }
 
+export function resolveMapAssetUrl(path: string): string {
+  const resolved = resolveAssetUrl(path);
+  if (!resolved) throw new Error("Map asset URL is required");
+  return new URL(resolved, window.location.origin).toString()
+    .replaceAll("%7B", "{")
+    .replaceAll("%7D", "}");
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }

@@ -1,10 +1,21 @@
 import { describe, expect, it } from "vitest";
+import { reactive } from "vue";
 
 import { reduceSpatialDraft } from "../map/spatialInput";
 import { getModelDefinition, type ModelId } from "./registry";
 import { applySpatialDraftToRequest, spatialDraftFromRequest } from "./spatialAdapter";
 
 describe("spatialAdapter", () => {
+  it("accepts a Vue-reactive request when applying a map pick", () => {
+    const request = reactive(getModelDefinition("radar").createDefaultRequest());
+    const draft = reduceSpatialDraft(spatialDraftFromRequest("radar", request), {
+      type: "set-point",
+      coordinate: [88.1, 32.2]
+    });
+
+    expect(applySpatialDraftToRequest("radar", request, draft).radar).toMatchObject({ lon: 88.1, lat: 32.2 });
+  });
+
   it.each([
     ["radar", "radar"],
     ["watchpost", "observer"],
