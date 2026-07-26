@@ -108,6 +108,40 @@ function toggleTasks() {
 .gis-workbench__tasks { position: relative; grid-area: tasks; }
 .gis-workbench__status { grid-area: status; }
 
+.gis-workbench__status :deep(.workbench-status) {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  align-items: center;
+  gap: 20px;
+  padding: 0 12px;
+  overflow: hidden;
+  color: var(--wb-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.gis-workbench__status :deep(.workbench-status__item) { min-width: 0; }
+.gis-workbench__status :deep(.workbench-status__mono) {
+  color: var(--wb-fg-2);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+.gis-workbench__status :deep(.workbench-status__grow) { flex: 1; }
+.gis-workbench__status :deep(.workbench-status__live) {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #18a957;
+}
+.gis-workbench__status :deep(.workbench-status__live::before) {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  content: "";
+}
+.gis-workbench__status :deep(.workbench-status__live[data-connected="false"]) { color: #d73545; }
+
 .gis-workbench__task-command {
   position: absolute;
   z-index: 3;
@@ -147,5 +181,7 @@ function toggleTasks() {
   }
 
   .gis-workbench__dock { display: none; }
+  .gis-workbench__status :deep(.workbench-status) { gap: 12px; }
+  .gis-workbench__status :deep(.workbench-status__map-info) { display: none; }
 }
 </style>

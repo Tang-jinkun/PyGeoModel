@@ -10,7 +10,19 @@
       <div class="workspace-map-stack"><MapWorkspace :key="workspace.selectedModel.value" :kind="activeDefinition.spatialInput" :draft="mapWorkspace.draft.value" :editing="mapEditing" :edit-target="mapEditTarget" :dem="selectedDem" @map-ready="setMap" @spatial-edit="applyMapEdit" @out-of-bounds="showError(new Error('Pick a location inside the selected DEM.'))" /><MapPickBar v-if="mapEditing" :target="mapEditTarget === 'auto' ? 'point' : mapEditTarget" @cancel="finishMapPicking" @undo="applyMapEdit({ type: 'undo' })" @finish="finishMapPicking" /></div>
     </template>
     <template #tasks><WorkbenchTaskCenter :rows="workbenchTaskRows" :active-tab="presentation.taskTab.value" @update:active-tab="presentation.selectTaskTab" @select-task="selectWorkbenchTask" /></template>
-    <template #status><div class="workbench-status">褰撳墠 DEM: {{ selectedDem?.filename ?? '鏈€夋嫨' }}<span>EPSG:4326</span><span :data-connected="!taskManager.connectionInterrupted.value">浠诲姟杞</span></div></template>
+    <template #status>
+      <div class="workbench-status">
+        <span class="workbench-status__item workbench-status__map-info">坐标 <span class="workbench-status__mono">—</span></span>
+        <span class="workbench-status__item workbench-status__map-info">高程 <span class="workbench-status__mono">—</span></span>
+        <span class="workbench-status__item workbench-status__map-info">比例尺 <span class="workbench-status__mono">—</span></span>
+        <span class="workbench-status__item">坐标系 <span class="workbench-status__mono">{{ selectedDem?.crs ?? "EPSG:4326" }}</span></span>
+        <span class="workbench-status__grow"></span>
+        <span class="workbench-status__item">当前 DEM：{{ selectedDem?.filename ?? "未选择" }}</span>
+        <span class="workbench-status__live" :data-connected="!taskManager.connectionInterrupted.value">
+          {{ taskManager.connectionInterrupted.value ? "任务轮询中断" : "任务轮询正常" }}
+        </span>
+      </div>
+    </template>
   </GisWorkbenchShell>
   <ModelRunDialog v-if="configuredModelId" :open="runDialogOpen" :model-id="configuredModelId" :request="workspace.currentDraft.value.request" :inputs="workspace.inputSelectionsFor(configuredModelId)" :slots="activeDefinition.inputSlots" :assets="demManager.dems.value" :submitting="submitting" @update:open="runDialogOpen = $event" @update:request="updateDraft" @update:inputs="updateRunInputs" @activate-map-tool="activateMapTool" @submit="submitModelRun" />
 

@@ -43,6 +43,19 @@ describe("App model run workflow", () => {
     expect(wrapper.find("[data-action='run-analysis-on-map']").exists()).toBe(false);
     expect(wrapper.find("[data-workbench-region='map']").exists()).toBe(true);
   });
+
+  it("renders the reference status bar with Chinese map and connection details", async () => {
+    const wrapper = mountApp();
+    await flushPromises();
+
+    const status = wrapper.get("[data-workbench-region='status']");
+    expect(status.text()).toContain("坐标");
+    expect(status.text()).toContain("高程");
+    expect(status.text()).toContain("比例尺");
+    expect(status.text()).toContain("坐标系");
+    expect(status.text()).toContain("当前 DEM：未选择");
+    expect(status.find(".workbench-status__live").exists()).toBe(true);
+  });
 });
 
 function mountApp() {
