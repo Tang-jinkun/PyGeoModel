@@ -16,6 +16,26 @@ describe("WorkbenchTaskCenter", () => {
     await wrapper.get('[data-task-key="radar:radar-1"]').trigger("click");
     expect(wrapper.emitted("select-task")?.[0]).toEqual(["radar", "radar-1"]);
   });
+
+  it("shows an active multi-radar task in the running tab", () => {
+    const wrapper = mount(WorkbenchTaskCenter, {
+      props: {
+        rows: [],
+        activeTab: "running",
+        multiRadarTask: {
+          task_id: "multi-1",
+          dem_id: "dem-1",
+          status: "running",
+          progress: 48,
+          message: "Computing 2 of 3 stations.",
+          stations: []
+        }
+      }
+    });
+
+    expect(wrapper.get("[data-multi-radar-task]").text()).toContain("多雷达协同");
+    expect(wrapper.get("[data-multi-radar-task]").text()).toContain("48%");
+  });
 });
 
 function finishedRadarRow(): WorkbenchTaskRow {

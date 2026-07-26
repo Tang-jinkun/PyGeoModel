@@ -13,6 +13,13 @@
         <p v-if="!rows.length" class="empty-state">暂无日志</p>
       </div>
       <div v-else class="task-pane active">
+        <div v-if="visibleMultiRadarTask" class="task-row" data-multi-radar-task>
+          <span class="tid">{{ shortId(visibleMultiRadarTask.task_id) }}</span><span class="tmodel">多雷达协同</span>
+          <span class="tinfo">{{ [visibleMultiRadarTask.dem_id, visibleMultiRadarTask.message || multiRadarStatusLabel].filter(Boolean).join(" · ") }}</span>
+          <span v-if="isMultiRadarRunning" class="progress"><span class="bar"><i :style="{ width: `${visibleMultiRadarTask.progress}%` }"></i></span><span class="pv">{{ visibleMultiRadarTask.progress }}%</span></span><span v-else></span>
+          <span class="status-chip" :class="multiRadarStatusClass">{{ multiRadarStatusLabel }}</span>
+          <span class="task-act"></span>
+        </div>
         <div v-for="row in visibleRows" :key="row.key" class="task-row" :data-task-key="row.key" role="button" tabindex="0" @click="select(row)" @keydown.enter="select(row)">
           <span class="tid">{{ shortId(row.task.task_id) }}</span><span class="tmodel">{{ row.label }}</span>
           <span class="tinfo">{{ taskInfo(row) }}</span>
@@ -29,14 +36,26 @@
 <script setup lang="ts">
 import { computed } from "vue";
 
+import type { MultiRadarTask } from "../../models/multiRadar/types";
 import type { WorkbenchTaskRow } from "../../workbench/taskPresentation";
 import type { TaskCenterTab } from "../../workbench/useWorkbenchPresentation";
 
-const props = withDefaults(defineProps<{ rows: readonly WorkbenchTaskRow[]; activeTab?: TaskCenterTab }>(), { activeTab: "running" });
+const props = withDefaults(defineProps<{ rows: readonly WorkbenchTaskRow[]; activeTab?: TaskCenterTab; multiRadarTask?: MultiRadarTask | null }>(), { activeTab: "running", multiRadarTask: null });
 const emit = defineEmits<{ "update:activeTab": [tab: TaskCenterTab]; "select-task": [modelId: WorkbenchTaskRow["modelId"], taskId: string] }>();
 const tabs: Array<{ id: TaskCenterTab; label: string }> = [{ id: "running", label: "运行中" }, { id: "history", label: "历史记录" }, { id: "logs", label: "日志" }];
 const runningRows = computed(() => props.rows.filter(isRunning));
 const visibleRows = computed(() => props.activeTab === "running" ? runningRows.value : props.rows.filter(({ task }) => task.status === "finished" || task.status === "failed"));
+const isMultiRadarRunning = computed(() => props.multiRadarTask?.status === "pending" || props.multiRadarTask?.status === "running");
+const visibleMultiRadarTask = computed(() => {
+  const task = props.multiRadarTask;
+  if (!task || props.activeTab === "logs") return null;
+  return props.activeTab === "running" ? (isMultiRadarRunning.value ? task : null) : task;
+});
+const multiRadarStatusLabel = computed(() => ({ pending: "等待中", running: "运行中", finished: "已完成", partial: "部分完成", failed: "失败" }[props.multiRadarTask?.status ?? "pending"]));
+const multiRadarStatusClass = computed(() => {
+  const status = props.multiRadarTask?.status;
+  return status === "finished" ? "ok" : status === "failed" ? "fail" : status === "partial" ? "partial" : "run";
+});
 function isRunning(row: WorkbenchTaskRow) { return row.task.status === "pending" || row.task.status === "running"; }
 function statusClass(row: WorkbenchTaskRow) { return row.task.status === "finished" ? "ok" : row.task.status === "failed" ? "fail" : "run"; }
 function select(row: WorkbenchTaskRow) { emit("select-task", row.modelId, row.task.task_id); }
@@ -50,5 +69,5 @@ function taskTime(row: WorkbenchTaskRow) { const value = row.task.updated_at || 
 </script>
 
 <style scoped>
-.workbench-task-center{display:flex;height:100%;min-height:0;flex-direction:column}.tasks-head{display:flex;height:38px;flex:none;align-items:center;gap:4px;padding:0 8px}.title{padding:0 8px;color:var(--wb-fg);font-size:14px;font-weight:600}.task-tab{padding:6px 12px;border:0;border-radius:980px;background:transparent;color:var(--wb-muted);font-size:12px;cursor:pointer}.task-tab[aria-selected="true"]{background:var(--wb-surface);color:var(--wb-fg);font-weight:600}.badge{display:inline-block;min-width:16px;margin-left:4px;padding:0 4px;border-radius:980px;background:var(--wb-accent);color:#fff;font-size:10px;line-height:16px;text-align:center}.spacer{flex:1}.tasks-body{height:176px;overflow-y:auto;border-top:1px solid var(--wb-border-soft)}.task-pane{display:block}.task-row{display:grid;grid-template-columns:92px 170px minmax(0,1fr) 200px 140px auto;align-items:center;gap:16px;padding:8px 16px;border-bottom:1px solid var(--wb-border-soft);color:var(--wb-fg);font-size:14px;cursor:pointer}.task-row:hover{background:var(--wb-surface-warm)}.tid,.tinfo{overflow:hidden;color:var(--wb-muted);font-size:12px;text-overflow:ellipsis;white-space:nowrap}.tid,.pv{font-family:ui-monospace,SFMono-Regular,Consolas,monospace}.tmodel{overflow:hidden;font-weight:600;text-overflow:ellipsis;white-space:nowrap}.progress{display:flex;align-items:center;gap:8px}.bar{height:5px;flex:1;overflow:hidden;border-radius:980px;background:var(--wb-surface)}.bar i{display:block;height:100%;border-radius:980px;background:var(--wb-accent);transition:width 400ms ease}.pv{width:36px;color:var(--wb-fg-2);font-size:12px;text-align:right}.status-chip{display:inline-flex;align-items:center;gap:6px;color:var(--wb-accent);font-size:12px;font-weight:600;white-space:nowrap}.status-chip::before{width:7px;height:7px;flex:none;border-radius:50%;background:currentColor;content:""}.status-chip.ok{color:#18a957}.status-chip.fail{color:#e5484d}.task-act{display:flex;justify-content:flex-end;gap:4px}.task-act button,.task-act a{padding:4px 10px;border:0;border-radius:980px;background:transparent;color:var(--wb-accent);font-size:12px;text-decoration:none;white-space:nowrap;cursor:pointer}.task-act button:hover,.task-act a:hover{background:rgb(0 113 227 / 9%)}.empty-state{padding:24px;margin:0;color:var(--wb-meta);font-size:12px;text-align:center}.log-line{display:flex;gap:12px;margin:0;padding:8px 16px;border-bottom:1px solid var(--wb-border-soft);font-size:12px}.log-line time{flex:none;color:var(--wb-meta)}.log-line span{overflow:hidden;color:var(--wb-fg-2);text-overflow:ellipsis;white-space:nowrap}@media(max-width:900px){.task-row{grid-template-columns:92px 1fr 120px auto}.task-row .tinfo,.task-row .progress{display:none}}
+.workbench-task-center{display:flex;height:100%;min-height:0;flex-direction:column}.tasks-head{display:flex;height:38px;flex:none;align-items:center;gap:4px;padding:0 8px}.title{padding:0 8px;color:var(--wb-fg);font-size:14px;font-weight:600}.task-tab{padding:6px 12px;border:0;border-radius:980px;background:transparent;color:var(--wb-muted);font-size:12px;cursor:pointer}.task-tab[aria-selected="true"]{background:var(--wb-surface);color:var(--wb-fg);font-weight:600}.badge{display:inline-block;min-width:16px;margin-left:4px;padding:0 4px;border-radius:980px;background:var(--wb-accent);color:#fff;font-size:10px;line-height:16px;text-align:center}.spacer{flex:1}.tasks-body{height:176px;overflow-y:auto;border-top:1px solid var(--wb-border-soft)}.task-pane{display:block}.task-row{display:grid;grid-template-columns:92px 170px minmax(0,1fr) 200px 140px auto;align-items:center;gap:16px;padding:8px 16px;border-bottom:1px solid var(--wb-border-soft);color:var(--wb-fg);font-size:14px;cursor:pointer}.task-row:hover{background:var(--wb-surface-warm)}.tid,.tinfo{overflow:hidden;color:var(--wb-muted);font-size:12px;text-overflow:ellipsis;white-space:nowrap}.tid,.pv{font-family:ui-monospace,SFMono-Regular,Consolas,monospace}.tmodel{overflow:hidden;font-weight:600;text-overflow:ellipsis;white-space:nowrap}.progress{display:flex;align-items:center;gap:8px}.bar{height:5px;flex:1;overflow:hidden;border-radius:980px;background:var(--wb-surface)}.bar i{display:block;height:100%;border-radius:980px;background:var(--wb-accent);transition:width 400ms ease}.pv{width:36px;color:var(--wb-fg-2);font-size:12px;text-align:right}.status-chip{display:inline-flex;align-items:center;gap:6px;color:var(--wb-accent);font-size:12px;font-weight:600;white-space:nowrap}.status-chip::before{width:7px;height:7px;flex:none;border-radius:50%;background:currentColor;content:""}.status-chip.ok{color:#18a957}.status-chip.partial{color:#c78100}.status-chip.fail{color:#e5484d}.task-act{display:flex;justify-content:flex-end;gap:4px}.task-act button,.task-act a{padding:4px 10px;border:0;border-radius:980px;background:transparent;color:var(--wb-accent);font-size:12px;text-decoration:none;white-space:nowrap;cursor:pointer}.task-act button:hover,.task-act a:hover{background:rgb(0 113 227 / 9%)}.empty-state{padding:24px;margin:0;color:var(--wb-meta);font-size:12px;text-align:center}.log-line{display:flex;gap:12px;margin:0;padding:8px 16px;border-bottom:1px solid var(--wb-border-soft);font-size:12px}.log-line time{flex:none;color:var(--wb-meta)}.log-line span{overflow:hidden;color:var(--wb-fg-2);text-overflow:ellipsis;white-space:nowrap}@media(max-width:900px){.task-row{grid-template-columns:92px 1fr 120px auto}.task-row .tinfo,.task-row .progress{display:none}}
 </style>

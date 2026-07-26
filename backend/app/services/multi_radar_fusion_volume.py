@@ -1,7 +1,8 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import numpy
+from rasterio.fill import fillnodata
 import trimesh
 from skimage import measure
 
@@ -51,6 +52,7 @@ def accumulate_fusion_height_counts(masks) -> numpy.ndarray:
 
 
 def write_multi_radar_fusion_glb(path: Path, *, task_id: str, counts: FusionHeightCounts) -> dict:
+    counts = replace(counts, terrain_m=_fill_non_finite_terrain(counts.terrain_m))
     nodes: list[SceneNode] = []
     frame = _fusion_frame(counts)
     for threshold, name, material in (
@@ -86,6 +88,7 @@ def write_cooperative_intersection_glb(
     task_id: str,
     counts: FusionHeightCounts,
 ) -> dict | None:
+    counts = replace(counts, terrain_m=_fill_non_finite_terrain(counts.terrain_m))
     frame = _fusion_frame(counts)
     mesh = _coverage_mesh(counts, threshold=2, frame=frame)
     if mesh is None:
@@ -111,6 +114,23 @@ def write_cooperative_intersection_glb(
     })
     export_glb(path, [root], scene_metadata=metadata, include_normals=False)
     return metadata
+
+
+def _fill_non_finite_terrain(terrain_m: numpy.ndarray) -> numpy.ndarray:
+    terrain = numpy.asarray(terrain_m, dtype=numpy.float32)
+    finite = numpy.isfinite(terrain)
+    if not finite.any():
+        raise ValueError("Fusion GLB requires at least one finite terrain elevation.")
+    if finite.all():
+        return terrain
+    filled = fillnodata(
+        numpy.where(finite, terrain, 0.0),
+        mask=finite.astype(numpy.uint8),
+        max_search_distance=float(max(terrain.shape) * 2),
+    )
+    if not numpy.isfinite(filled).all():
+        raise ValueError("Fusion GLB terrain elevations could not be completed.")
+    return numpy.asarray(filled, dtype=numpy.float32)
 
 
 def _coverage_mesh(counts: FusionHeightCounts, threshold: int, frame: SceneFrame) -> trimesh.Trimesh | None:

@@ -9,7 +9,7 @@
     <template #map>
       <div class="workspace-map-stack"><MapWorkspace :key="workspace.selectedModel.value" :kind="activeDefinition.spatialInput" :draft="mapWorkspace.draft.value" :editing="mapEditing" :edit-target="mapEditTarget" :dem="selectedDem" @map-ready="setMap" @spatial-edit="applyMapEdit" @out-of-bounds="showError(new Error('Pick a location inside the selected DEM.'))" /><MapPickBar v-if="mapEditing" :target="mapEditTarget === 'auto' ? 'point' : mapEditTarget" @cancel="finishMapPicking" @undo="applyMapEdit({ type: 'undo' })" @finish="finishMapPicking" /></div>
     </template>
-    <template #tasks><WorkbenchTaskCenter :rows="workbenchTaskRows" :active-tab="presentation.taskTab.value" @update:active-tab="presentation.selectTaskTab" @select-task="selectWorkbenchTask" /></template>
+    <template #tasks><WorkbenchTaskCenter :rows="workbenchTaskRows" :multi-radar-task="activeMultiRadarTask" :active-tab="presentation.taskTab.value" @update:active-tab="presentation.selectTaskTab" @select-task="selectWorkbenchTask" /></template>
     <template #status>
       <div class="workbench-status">
         <span class="workbench-status__item workbench-status__map-info">坐标 <span class="workbench-status__mono">—</span></span>

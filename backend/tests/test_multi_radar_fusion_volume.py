@@ -44,6 +44,26 @@ def test_fusion_glb_contains_union_and_overlap_meshes(tmp_path: Path) -> None:
     assert metadata["fusion_height_count"] == 3
 
 
+def test_fusion_glb_fills_non_finite_terrain_samples(tmp_path: Path) -> None:
+    counts = FusionHeightCounts(
+        target_epsg=32644,
+        transform=from_origin(400_000, 3_500_000, 100, 100),
+        heights_m=numpy.array([0, 200, 500], dtype=numpy.float32),
+        coverage_count=numpy.ones((3, 3, 3), dtype=numpy.uint16),
+        terrain_m=numpy.array([
+            [1200, 1200, 1200],
+            [1200, numpy.nan, 1200],
+            [1200, 1200, 1200],
+        ], dtype=numpy.float32),
+    )
+
+    metadata = write_multi_radar_fusion_glb(
+        tmp_path / "fusion_scene.glb", task_id="multi_task_nan_terrain", counts=counts
+    )
+
+    assert metadata["kind"] == "multi_radar_fusion"
+
+
 def test_cooperative_intersection_glb_contains_only_common_detection_mesh(tmp_path: Path) -> None:
     counts = FusionHeightCounts(
         target_epsg=32644,
