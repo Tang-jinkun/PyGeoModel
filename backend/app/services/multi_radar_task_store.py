@@ -5,7 +5,13 @@ from uuid import uuid4
 
 from app.core.config import settings
 from app.core.errors import AppError
-from app.schemas.radar import MultiRadarRequest, MultiRadarTaskStatus
+from app.schemas.radar import (
+    MultiRadarMetrics,
+    MultiRadarOutputs,
+    MultiRadarRequest,
+    MultiRadarStationSummary,
+    MultiRadarTaskStatus,
+)
 
 
 def create_multi_task(payload: MultiRadarRequest) -> MultiRadarTaskStatus:
@@ -45,6 +51,35 @@ def mark_multi_running(task_id: str, message: str, progress: int) -> None:
     task = get_multi_task(task_id)
     task.status = "running"
     task.progress = progress
+    task.message = message
+    _save(task)
+
+
+def mark_multi_completed(
+    task_id: str,
+    *,
+    status: str,
+    metrics: dict | MultiRadarMetrics,
+    outputs: dict | MultiRadarOutputs,
+    stations: list[dict | MultiRadarStationSummary],
+    message: str | None = None,
+) -> None:
+    if status not in {"finished", "partial", "failed"}:
+        raise ValueError("Multi-radar task completion status must be finished, partial, or failed")
+    task = get_multi_task(task_id)
+    task.status = status
+    task.progress = 100
+    task.message = message or ("finished" if status == "finished" else status)
+    task.metrics = MultiRadarMetrics.model_validate(metrics)
+    task.outputs = MultiRadarOutputs.model_validate(outputs)
+    task.stations = [MultiRadarStationSummary.model_validate(station) for station in stations]
+    _save(task)
+
+
+def mark_multi_failed(task_id: str, message: str) -> None:
+    task = get_multi_task(task_id)
+    task.status = "failed"
+    task.progress = 100
     task.message = message
     _save(task)
 

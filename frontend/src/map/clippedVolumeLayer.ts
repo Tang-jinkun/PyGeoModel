@@ -1,4 +1,4 @@
-import * as maplibregl from "maplibre-gl";
+import * as mapboxgl from "mapbox-gl";
 import * as THREE from "three";
 
 const CLIPPED_VOLUME_LAYER_ID = "clipped-volume-layer";
@@ -30,12 +30,12 @@ interface ClippedVolumeRenderOptions {
   radarLat: number;
 }
 
-type ClippedVolumeCustomLayer = maplibregl.CustomLayerInterface & {
+type ClippedVolumeCustomLayer = mapboxgl.CustomLayerInterface & {
   update: (cells: ClippedVolumeCell[], manifest: ClippedVolumeManifest, options?: ClippedVolumeRenderOptions) => void;
 };
 
 interface ClippedVolumeState {
-  map: maplibregl.Map | null;
+  map: mapboxgl.Map | null;
   camera: THREE.Camera | null;
   scene: THREE.Scene | null;
   renderer: THREE.WebGLRenderer | null;
@@ -48,7 +48,7 @@ interface ClippedVolumeState {
 }
 
 export function addOrUpdateClippedVolumeLayer(
-  map: maplibregl.Map,
+  map: mapboxgl.Map,
   cells: ClippedVolumeCell[],
   manifest: ClippedVolumeManifest,
   options?: Partial<ClippedVolumeRenderOptions>
@@ -63,7 +63,7 @@ export function addOrUpdateClippedVolumeLayer(
   map.addLayer(activeClippedVolumeLayer);
 }
 
-export function removeClippedVolumeLayer(map: maplibregl.Map) {
+export function removeClippedVolumeLayer(map: mapboxgl.Map) {
   removeLayerIfPresent(map, CLIPPED_VOLUME_LAYER_ID);
   for (const layer of map.getStyle().layers ?? []) {
     if (layer.id.startsWith(CLIPPED_VOLUME_LEGACY_LAYER_PREFIX)) {
@@ -79,13 +79,13 @@ export async function loadClippedVolumeData(
 ): Promise<{ cells: ClippedVolumeCell[]; manifest: ClippedVolumeManifest }> {
   const manifestResponse = await fetch(manifestUrl);
   if (!manifestResponse.ok) {
-    throw new Error(`裁切波束清单读取失败：${manifestResponse.status}`);
+    throw new Error(`瑁佸垏娉㈡潫娓呭崟璇诲彇澶辫触锛?{manifestResponse.status}`);
   }
   const manifest = await manifestResponse.json() as ClippedVolumeManifest;
 
   const cellsResponse = await fetch(cellsUrl);
   if (!cellsResponse.ok) {
-    throw new Error(`裁切波束体读取失败：${cellsResponse.status}`);
+    throw new Error(`瑁佸垏娉㈡潫浣撹鍙栧け璐ワ細${cellsResponse.status}`);
   }
   const buffer = await cellsResponse.arrayBuffer();
   const values = new Float32Array(buffer);
@@ -98,7 +98,7 @@ export async function loadClippedVolumeData(
   const valuesPerCell = manifest.bytes_per_cell / 4;
 
   if ([lonIndex, latIndex, bottomIndex, blockedIndex, visibleIndex].some((index) => index < 0) || valuesPerCell <= 0) {
-    throw new Error("裁切波束体字段不完整");
+    throw new Error("瑁佸垏娉㈡潫浣撳瓧娈典笉瀹屾暣");
   }
 
   const cells: ClippedVolumeCell[] = [];
@@ -235,7 +235,7 @@ function buildInstancedSegments(
   for (let index = 0; index < segments.length; index++) {
     const { cell, bottom, top } = segments[index];
     const mid = (bottom + top) / 2;
-    const coordinate = maplibregl.MercatorCoordinate.fromLngLat({ lng: cell.lon, lat: cell.lat }, mid);
+    const coordinate = mapboxgl.MercatorCoordinate.fromLngLat({ lng: cell.lon, lat: cell.lat }, mid);
     const meter = coordinate.meterInMercatorCoordinateUnits();
     position.set(coordinate.x, coordinate.y, coordinate.z);
     scale.set(cellSizeM * meter, cellSizeM * meter, Math.max(1, top - bottom) * meter);
@@ -315,8 +315,8 @@ function buildScanSegments(cells: ClippedVolumeCell[], kind: "blocked" | "visibl
     if (top <= bottom + 0.5) {
       continue;
     }
-    const lower = maplibregl.MercatorCoordinate.fromLngLat({ lng: cell.lon, lat: cell.lat }, bottom);
-    const upper = maplibregl.MercatorCoordinate.fromLngLat({ lng: cell.lon, lat: cell.lat }, top);
+    const lower = mapboxgl.MercatorCoordinate.fromLngLat({ lng: cell.lon, lat: cell.lat }, bottom);
+    const upper = mapboxgl.MercatorCoordinate.fromLngLat({ lng: cell.lon, lat: cell.lat }, top);
     positions.push(lower.x, lower.y, lower.z, upper.x, upper.y, upper.z);
   }
   if (!positions.length) {
@@ -390,7 +390,7 @@ function distanceScore(fromLon: number, fromLat: number, toLon: number, toLat: n
   return dx * dx + dy * dy;
 }
 
-function removeLayerIfPresent(map: maplibregl.Map, layerId: string) {
+function removeLayerIfPresent(map: mapboxgl.Map, layerId: string) {
   if (map.getLayer(layerId)) {
     map.removeLayer(layerId);
   }

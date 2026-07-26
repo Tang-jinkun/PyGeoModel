@@ -1,6 +1,6 @@
 import { mount } from "@vue/test-utils";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type maplibregl from "maplibre-gl";
+import type mapboxgl from "mapbox-gl";
 
 import { createSpatialDraft } from "../../map/spatialInput";
 import MapWorkspace from "./MapWorkspace.vue";
@@ -23,7 +23,7 @@ const mapHarness = vi.hoisted(() => {
   return { instances, constructor: vi.fn() };
 });
 
-vi.mock("maplibre-gl", () => ({
+vi.mock("mapbox-gl", () => ({
   default: {
     Map: class {
       constructor(options: unknown) {
@@ -48,7 +48,7 @@ beforeEach(() => {
 
 describe("MapWorkspace", () => {
   it("passes a caller-provided local style object through unchanged", () => {
-    const explicitStyle: maplibregl.StyleSpecification = {
+    const explicitStyle: mapboxgl.StyleSpecification = {
       version: 8,
       sources: {
         workspace: {
@@ -89,7 +89,7 @@ describe("MapWorkspace", () => {
     wrapper.unmount();
   });
 
-  it("uses a local empty style by default instead of an external URL", () => {
+  it("uses the TianDiTu base style by default", () => {
     const wrapper = mount(MapWorkspace, {
       props: {
         kind: "point",
@@ -99,12 +99,11 @@ describe("MapWorkspace", () => {
     const map = mapHarness.instances[0];
     const style = (map.options as { style: unknown }).style;
 
-    expect(style).toStrictEqual({
+    expect(style).toMatchObject({
       version: 8,
-      sources: {},
-      layers: []
+      sources: { tianditu_vector: { type: "raster" }, tianditu_annotation: { type: "raster" } },
+      layers: [{ id: "tianditu_vector" }, { id: "tianditu_annotation" }]
     });
-    expect(JSON.stringify(style)).not.toContain("https://");
 
     wrapper.unmount();
   });

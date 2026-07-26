@@ -166,14 +166,21 @@ function updateReserved<K extends keyof ReservedRadarParams>(key: K, value: Rese
 </script>
 
 <style scoped>
-.point-form, .form-section { display: grid; gap: 12px; min-width: 0; }
-.point-form { padding: 14px 14px 24px; }
-.form-section { padding-bottom: 16px; border-bottom: 1px solid #ebeef5; }
+.point-form, .form-section { display: grid; gap: 0; min-width: 0; }
+.point-form { padding: 8px 16px 20px; }
+.form-section { padding: 8px 0; border-bottom: 1px solid #e8e8ed; }
 .form-section:last-child { border-bottom: 0; }
-.form-section h3 { margin: 0; color: #303133; font-size: 14px; letter-spacing: 0; }
-.section-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.field-row { display: grid; grid-template-columns: minmax(94px, 0.9fr) minmax(0, 1.1fr); align-items: center; gap: 10px; color: #606266; font-size: 12px; }
-.input-with-unit { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 7px; min-width: 0; }
+.form-section h3 { margin: 0 0 4px; color: #1d1d1f; font-size: 14px; font-weight: 600; }
+.section-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
+.section-heading :deep(.el-button) { height: 30px; padding: 0 10px; color: #0071e3; background: #f5f5f7; border: 0; border-radius: 8px; }
+.field-row { display: grid; grid-template-columns: minmax(0, 1fr) 128px; align-items: center; gap: 8px; min-height: 40px; padding: 5px 0 5px 14px; color: #424245; font-size: 14px; }
+.input-with-unit { position: relative; display: block; min-width: 0; }
 .input-with-unit :deep(.el-input-number), .field-row :deep(.el-input), .field-row :deep(.el-radio-group) { width: 100%; }
-.unit { color: #909399; white-space: nowrap; }
+.field-row :deep(.el-input__wrapper), .field-row :deep(.el-input-number .el-input__wrapper) { min-height: 30px; background: #fff; box-shadow: 0 0 0 1px #d2d2d7 inset; border-radius: 8px; }
+.field-row :deep(.el-input__wrapper.is-focus), .field-row :deep(.el-input-number .el-input__wrapper.is-focus) { box-shadow: 0 0 0 1px #0071e3 inset, 0 0 0 4px rgb(0 113 227 / 20%); }
+.field-row :deep(.el-switch) { justify-self: end; --el-switch-on-color: #0071e3; }
+.field-row :deep(.el-radio-group) { display: flex; overflow: hidden; border: 1px solid #d2d2d7; border-radius: 8px; }
+.field-row :deep(.el-radio-button__inner) { padding: 7px 10px; box-shadow: none; }
+.unit { position: absolute; top: 50%; right: 8px; transform: translateY(-50%); z-index: 2; color: #86868b; font-size: 12px; pointer-events: none; white-space: nowrap; }
+.input-with-unit :deep(.el-input__inner) { padding-right: 32px; }
 </style>

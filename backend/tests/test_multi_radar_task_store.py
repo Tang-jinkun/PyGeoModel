@@ -9,6 +9,7 @@ from app.services.multi_radar_task_store import (
     create_multi_task,
     get_multi_task,
     list_multi_tasks,
+    mark_multi_completed,
     mark_multi_running,
 )
 
@@ -55,3 +56,35 @@ def test_multi_task_running_state_is_persisted_and_listed(tmp_path: Path) -> Non
 
     assert get_multi_task(task.task_id).status == "running"
     assert list_multi_tasks()[0].message == "Computing station 1 of 2."
+
+
+def test_multi_task_completion_persists_station_summaries_and_outputs(tmp_path: Path) -> None:
+    settings.data_dir = tmp_path
+    settings.ensure_directories()
+    payload = MultiRadarRequest.model_validate(
+        {"dem_id": "dem_a", "radars": [station("north"), station("south")]}
+    )
+    task = create_multi_task(payload)
+
+    mark_multi_completed(
+        task.task_id,
+        status="partial",
+        metrics={"visible_union_area_m2": 125.0},
+        outputs={"visible_union_geojson": "/outputs/task/visible_union.geojson"},
+        stations=[
+            {"radar_id": "north", "status": "finished"},
+            {"radar_id": "south", "status": "failed", "message": "outside DEM"},
+        ],
+    )
+
+    stored = get_multi_task(task.task_id)
+
+    assert stored.status == "partial"
+    assert stored.metrics is not None
+    assert stored.metrics.visible_union_area_m2 == 125.0
+    assert stored.outputs is not None
+    assert stored.outputs.visible_union_geojson.endswith("visible_union.geojson")
+    assert [(station.radar_id, station.status) for station in stored.stations] == [
+        ("north", "finished"),
+        ("south", "failed"),
+    ]

@@ -7,7 +7,7 @@
   >
     <span class="scene-glb-row__swatch" aria-hidden="true" />
     <div class="scene-glb-row__identity">
-      <strong>{{ file.label }}</strong>
+      <strong>三维结果 · {{ displayLabel }}</strong>
       <span :data-state="state.status">任务 {{ shortTaskId }} · {{ stateText }}</span>
     </div>
     <ElSwitch
@@ -52,6 +52,7 @@ const emit = defineEmits<{
 }>();
 
 const shortTaskId = computed(() => props.state.taskId.slice(-8));
+const displayLabel = computed(() => props.file.label.replace(/ 3D Result GLB$/, " Planning"));
 const switchOn = computed(() => (
   props.state.status === "loading" || props.state.status === "visible"
 ));

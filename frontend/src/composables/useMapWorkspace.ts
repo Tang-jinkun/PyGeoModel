@@ -1,4 +1,4 @@
-import type maplibregl from "maplibre-gl";
+import type mapboxgl from "mapbox-gl";
 import { ref, shallowRef } from "vue";
 
 import { resolveAssetUrl } from "../api/http";
@@ -13,6 +13,7 @@ import {
 import {
   addSceneGlbLayer,
   focusSceneGlbLayer,
+  focusSceneGlbLayers,
   removeAllSceneGlbLayers,
   removeSceneGlbLayer
 } from "../map/sceneGlbLayer";
@@ -53,7 +54,7 @@ export interface SceneGlbOverlayState {
 }
 
 export interface SceneGlbLoadRequest {
-  map: maplibregl.Map;
+  map: mapboxgl.Map;
   taskId: string;
   assetId: string;
   kind: SceneGlbKind;
@@ -66,9 +67,10 @@ export interface SceneGlbLoadRequest {
 
 export interface SceneGlbAdapter {
   load(request: SceneGlbLoadRequest): Promise<void>;
-  remove(map: maplibregl.Map, taskId: string): void;
-  removeAll(map: maplibregl.Map): void;
-  focus(map: maplibregl.Map, taskId: string): boolean;
+  remove(map: mapboxgl.Map, taskId: string): void;
+  removeAll(map: mapboxgl.Map): void;
+  focus(map: mapboxgl.Map, taskId: string): boolean;
+  focusMany?(map: mapboxgl.Map, taskIds: string[]): boolean;
 }
 
 export type RadarTaskSummary = TaskSummary<RadarRequest, RadarMetrics, RadarModelMetadata, RadarDiagnostics>;
@@ -118,7 +120,8 @@ const DEFAULT_SCENE_GLB_ADAPTER: SceneGlbAdapter = {
   },
   remove: removeSceneGlbLayer,
   removeAll: removeAllSceneGlbLayers,
-  focus: focusSceneGlbLayer
+  focus: focusSceneGlbLayer,
+  focusMany: focusSceneGlbLayers
 };
 
 const SCENE_METADATA_MODEL_IDS: Record<ModelId, string> = {
@@ -198,7 +201,7 @@ export function useMapWorkspace(kind: SpatialInputKind, initialDraft?: SpatialDr
     return dispatch({ type: "clear" });
   }
 
-  function focusBounds(map: maplibregl.Map, data: GeoJSON.GeoJSON) {
+  function focusBounds(map: mapboxgl.Map, data: GeoJSON.GeoJSON) {
     return fitGeoJsonBounds(map, data);
   }
 
@@ -269,7 +272,7 @@ export function useMapWorkspace(kind: SpatialInputKind, initialDraft?: SpatialDr
     updateLayer(outputLoadVersion, kind, { opacity: Math.min(1, Math.max(0, opacity)) });
   }
 
-  function focusTaskLayer(map: maplibregl.Map, kind: string) {
+  function focusTaskLayer(map: mapboxgl.Map, kind: string) {
     const layer = layerStates.value.find((candidate) => candidate.kind === kind);
     return layer?.data ? focusBounds(map, layer.data) : false;
   }
@@ -279,7 +282,7 @@ export function useMapWorkspace(kind: SpatialInputKind, initialDraft?: SpatialDr
   }
 
   async function setSceneGlbVisibility<K extends ModelId>(
-    map: maplibregl.Map,
+    map: mapboxgl.Map,
     selectedDemId: string,
     modelId: K,
     task: ModelTaskSummary<K>,
@@ -396,14 +399,22 @@ export function useMapWorkspace(kind: SpatialInputKind, initialDraft?: SpatialDr
   }
 
   function focusSceneGlb(
-    map: maplibregl.Map,
+    map: mapboxgl.Map,
     taskId: string,
     kind: SceneGlbKind = "scene_glb"
   ) {
     return sceneGlb.focus(map, sceneAssetId(taskId, kind));
   }
 
-  function removeIncompatibleSceneGlbs(map: maplibregl.Map, selectedDemId: string) {
+  function focusSceneGlbs(
+    map: mapboxgl.Map,
+    items: Array<{ taskId: string; kind?: SceneGlbKind }>
+  ) {
+    const assetIds = items.map(({ taskId, kind = "scene_glb" }) => sceneAssetId(taskId, kind));
+    return sceneGlb.focusMany?.(map, assetIds) ?? (assetIds[0] ? sceneGlb.focus(map, assetIds[0]) : false);
+  }
+
+  function removeIncompatibleSceneGlbs(map: mapboxgl.Map, selectedDemId: string) {
     const next = { ...sceneGlbStates.value };
     for (const [assetId, state] of Object.entries(next)) {
       if (state.demId === selectedDemId) continue;
@@ -415,7 +426,7 @@ export function useMapWorkspace(kind: SpatialInputKind, initialDraft?: SpatialDr
     sceneGlbStates.value = next;
   }
 
-  function removeSceneGlb(map: maplibregl.Map, taskId: string) {
+  function removeSceneGlb(map: mapboxgl.Map, taskId: string) {
     const next = { ...sceneGlbStates.value };
     for (const [assetId, state] of Object.entries(next)) {
       if (state.taskId !== taskId) continue;
@@ -427,7 +438,7 @@ export function useMapWorkspace(kind: SpatialInputKind, initialDraft?: SpatialDr
     sceneGlbStates.value = next;
   }
 
-  function removeAllSceneGlbs(map: maplibregl.Map) {
+  function removeAllSceneGlbs(map: mapboxgl.Map) {
     for (const controller of sceneGlbControllers.values()) controller.abort();
     sceneGlbControllers.clear();
     sceneGlb.removeAll(map);
@@ -491,6 +502,7 @@ export function useMapWorkspace(kind: SpatialInputKind, initialDraft?: SpatialDr
     sceneGlbStateFor,
     setSceneGlbVisibility,
     focusSceneGlb,
+    focusSceneGlbs,
     removeSceneGlb,
     removeIncompatibleSceneGlbs,
     removeAllSceneGlbs,

@@ -147,6 +147,11 @@ export function prepareStaticScene(
     geometry.computeVertexNormals();
 
     const mesh = new THREE.Mesh(geometry, object.material);
+    for (const material of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) {
+      if (!material.transparent) continue;
+      material.depthWrite = false;
+      material.needsUpdate = true;
+    }
     mesh.name = object.name;
     mesh.userData = inheritedUserData(object, root);
     mesh.renderOrder = object.renderOrder;

@@ -20,6 +20,7 @@ CoverageOutputKind = Literal[
     "scene_glb",
     "radar_platform_glb",
 ]
+MultiRadarPresentationMode = Literal["aggregate", "cooperative_3d"]
 
 
 class RadarInput(BaseModel):
@@ -111,12 +112,48 @@ class MultiRadarStation(BaseModel):
 class MultiRadarRequest(BaseModel):
     dem_id: str
     radars: list[MultiRadarStation] = Field(min_length=2, max_length=256)
+    presentation_mode: MultiRadarPresentationMode = "aggregate"
 
     @model_validator(mode="after")
     def validate_radar_ids(self) -> "MultiRadarRequest":
         if len({radar.radar_id for radar in self.radars}) != len(self.radars):
             raise ValueError("radar_id values must be unique")
+        if self.presentation_mode == "cooperative_3d" and not 3 <= len(self.radars) <= 5:
+            raise ValueError("Cooperative 3D presentation requires three to five radar stations.")
         return self
+
+
+class MultiRadarMetrics(BaseModel):
+    visible_union_area_m2: float = 0
+    overlap_area_m2: float = 0
+    blind_area_m2: float = 0
+    theoretical_union_area_m2: float = 0
+    successful_station_count: int = Field(default=0, ge=0)
+    failed_station_count: int = Field(default=0, ge=0)
+
+
+class MultiRadarOutputs(BaseModel):
+    visible_union_geojson: str | None = None
+    overlap_geojson: str | None = None
+    blind_geojson: str | None = None
+    coverage_count_geojson: str | None = None
+    stations_geojson: str | None = None
+    station_summaries_json: str | None = None
+    fusion_scene_glb: str | None = None
+    cooperative_intersection_glb: str | None = None
+
+
+class MultiRadarStationSummary(BaseModel):
+    radar_id: str
+    name: str | None = None
+    status: Literal["pending", "running", "finished", "failed"]
+    message: str = ""
+    metrics: "CoverageMetrics | None" = None
+    diagnostics: "CoverageDiagnostics | None" = None
+    outputs: dict[str, str] = Field(default_factory=dict)
+    scene_task_id: str | None = None
+    scene_status: Literal["pending", "running", "finished", "failed"] | None = None
+    scene_message: str = ""
 
 
 class MultiRadarTaskStatus(BaseModel):
@@ -127,6 +164,9 @@ class MultiRadarTaskStatus(BaseModel):
     message: str = ""
     created_at: str | None = None
     updated_at: str | None = None
+    metrics: MultiRadarMetrics | None = None
+    outputs: MultiRadarOutputs | None = None
+    stations: list[MultiRadarStationSummary] = Field(default_factory=list)
     request: MultiRadarRequest | None = None
 
 

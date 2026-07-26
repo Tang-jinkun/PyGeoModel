@@ -1,4 +1,4 @@
-import * as maplibregl from "maplibre-gl";
+import * as mapboxgl from "mapbox-gl";
 import * as THREE from "three";
 
 const VOXEL_LAYER_ID = "voxel-layer";
@@ -23,7 +23,7 @@ interface VoxelManifest {
   bytes_per_point: number;
 }
 
-type VoxelCustomLayer = maplibregl.CustomLayerInterface & {
+type VoxelCustomLayer = mapboxgl.CustomLayerInterface & {
   update: (points: VoxelPoint[], options?: VoxelRenderOptions) => void;
 };
 
@@ -32,7 +32,7 @@ interface VoxelRenderOptions {
 }
 
 interface VoxelState {
-  map: maplibregl.Map | null;
+  map: mapboxgl.Map | null;
   camera: THREE.Camera | null;
   scene: THREE.Scene | null;
   renderer: THREE.WebGLRenderer | null;
@@ -41,7 +41,7 @@ interface VoxelState {
   pointCloud: THREE.Points | null;
 }
 
-export function addOrUpdateVoxelLayer(map: maplibregl.Map, points: VoxelPoint[], options?: Partial<VoxelRenderOptions>) {
+export function addOrUpdateVoxelLayer(map: mapboxgl.Map, points: VoxelPoint[], options?: Partial<VoxelRenderOptions>) {
   const renderOptions = normalizeOptions(options);
   if (activeVoxelLayer?.id === VOXEL_LAYER_ID && map.getLayer(VOXEL_LAYER_ID)) {
     activeVoxelLayer.update(points, renderOptions);
@@ -52,7 +52,7 @@ export function addOrUpdateVoxelLayer(map: maplibregl.Map, points: VoxelPoint[],
   map.addLayer(activeVoxelLayer);
 }
 
-export function removeVoxelLayer(map: maplibregl.Map) {
+export function removeVoxelLayer(map: mapboxgl.Map) {
   removeLayerIfPresent(map, VOXEL_LAYER_ID);
   for (const layer of map.getStyle().layers ?? []) {
     if (layer.id.startsWith(VOXEL_LEGACY_LAYER_PREFIX)) {
@@ -62,7 +62,7 @@ export function removeVoxelLayer(map: maplibregl.Map) {
   activeVoxelLayer = null;
 }
 
-function removeLayerIfPresent(map: maplibregl.Map, layerId: string) {
+function removeLayerIfPresent(map: mapboxgl.Map, layerId: string) {
   if (map.getLayer(layerId)) {
     map.removeLayer(layerId);
   }
@@ -137,7 +137,7 @@ function rebuildPointCloud(state: VoxelState) {
 
   for (let i = 0; i < state.points.length; i++) {
     const pt = state.points[i];
-    const coordinate = maplibregl.MercatorCoordinate.fromLngLat({ lng: pt.x, lat: pt.y }, pt.z);
+    const coordinate = mapboxgl.MercatorCoordinate.fromLngLat({ lng: pt.x, lat: pt.y }, pt.z);
     positions[i * 3] = coordinate.x;
     positions[i * 3 + 1] = coordinate.y;
     positions[i * 3 + 2] = coordinate.z;

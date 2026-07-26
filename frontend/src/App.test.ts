@@ -66,7 +66,7 @@ vi.mock("./map/sceneGlbLayer", async (importOriginal) => ({
   focusSceneGlbLayer: sceneRuntime.focus
 }));
 
-vi.mock("maplibre-gl", () => ({
+vi.mock("mapbox-gl", () => ({
   default: {
     Map: class {
       addControl() {}
@@ -199,7 +199,7 @@ describe("App workspace wiring", () => {
     panel = wrapper.getComponent(ModelParameterPanel);
     panel.vm.$emit("submit", structuredClone(toRaw(panel.props("modelValue"))));
     await flushPromises();
-    expect(wrapper.text()).toContain("融合分析");
+    expect(wrapper.text()).toContain("铻嶅悎鍒嗘瀽");
   });
 
   it("keeps profile picking and spatial editing mutually exclusive", async () => {
@@ -339,7 +339,7 @@ function mountApp() {
     global: {
       stubs: {
         MapWorkspace: MapWorkspaceStub,
-        FusionPanel: defineComponent({ name: "FusionPanel", template: "<div>融合分析</div>" })
+        FusionPanel: defineComponent({ name: "FusionPanel", template: "<div>铻嶅悎鍒嗘瀽</div>" })
       },
       directives: { loading: () => undefined }
     }

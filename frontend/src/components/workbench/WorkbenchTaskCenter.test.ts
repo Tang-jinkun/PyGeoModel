@@ -5,11 +5,13 @@ import type { WorkbenchTaskRow } from "../../workbench/taskPresentation";
 import WorkbenchTaskCenter from "./WorkbenchTaskCenter.vue";
 
 describe("WorkbenchTaskCenter", () => {
-  it("keeps history rows to one primary metric and selects a completed task", async () => {
+  it("matches the task-history row structure and selects a completed task", async () => {
     const wrapper = mount(WorkbenchTaskCenter, { props: { rows: [finishedRadarRow()], activeTab: "history" } });
 
     expect(wrapper.text()).toContain("Visible area 2.50 km2");
     expect(wrapper.text()).not.toContain("Blocked ratio");
+    expect(wrapper.get(".task-row .status-chip.ok").text()).toContain("Completed");
+    expect(wrapper.find(".task-row .task-act").exists()).toBe(true);
 
     await wrapper.get('[data-task-key="radar:radar-1"]').trigger("click");
     expect(wrapper.emitted("select-task")?.[0]).toEqual(["radar", "radar-1"]);

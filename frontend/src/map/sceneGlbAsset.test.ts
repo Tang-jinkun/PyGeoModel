@@ -82,6 +82,17 @@ describe("static scene GLB preparation", () => {
     expect(asset.group.position.toArray()).toEqual([0, 0, 0]);
   });
 
+  it("prevents transparent GLB surfaces from writing depth over cooperative layers", () => {
+    const root = new THREE.Group();
+    const material = new THREE.MeshStandardMaterial({ transparent: true, opacity: 0.4 });
+    root.add(new THREE.Mesh(new THREE.BoxGeometry(), material));
+
+    const asset = prepareStaticScene(root, metadata, []);
+    const prepared = asset.group.children[0] as THREE.Mesh;
+
+    expect((prepared.material as THREE.Material).depthWrite).toBe(false);
+  });
+
   it("retains standard animations while rejecting skinned meshes", () => {
     const root = new THREE.Group();
     root.add(new THREE.Mesh(new THREE.BoxGeometry(), new THREE.MeshBasicMaterial()));

@@ -4,10 +4,11 @@ import { describe, expect, it } from "vitest";
 import WorkbenchInspector from "./WorkbenchInspector.vue";
 
 describe("WorkbenchInspector", () => {
-  it("shows metrics and files but no layer toggle in result mode", () => {
+  it("shows metrics and files with native result detail controls", () => {
     const wrapper = mount(WorkbenchInspector, { props: { mode: "result", context: finishedContext() } });
     expect(wrapper.find('[data-result-detail]').exists()).toBe(true);
     expect(wrapper.find('[data-tab="layers"]').exists()).toBe(false);
+    expect(wrapper.find(".task-result-panel").exists()).toBe(false);
   });
 
   it("returns to parameters from a failed task", async () => {

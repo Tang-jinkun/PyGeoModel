@@ -13,6 +13,9 @@ from app.schemas.radar import (
     CoverageTaskSummary,
     FusionRequest,
     FusionResult,
+    MultiRadarRequest,
+    MultiRadarStation,
+    MultiRadarTaskStatus,
     TargetEvaluationRequest,
     TargetEvaluationResult,
 )
@@ -22,10 +25,84 @@ from app.services.dem_store import find_dem_file, read_dem_metadata
 from app.services.fusion_analysis import analyze_fusion
 from app.services.profile_analysis import analyze_coverage_profile
 from app.services.task_store import create_task, delete_task, get_task, list_tasks
+from app.services.multi_radar_dem import station_coverage_request
+from app.services.multi_radar_task_store import create_multi_task, get_multi_task, list_multi_tasks
+from app.services.multi_radar_target_evaluation import evaluate_multi_radar_target
 from app.services.target_evaluation import evaluate_coverage_target
 from app.workers.coverage_task import run_coverage_task
+from app.workers.multi_radar_coverage_task import run_multi_radar_coverage_task
 
 router = APIRouter()
+
+
+@router.get("/multi-coverage", response_model=list[MultiRadarTaskStatus])
+def list_multi_coverage_tasks() -> list[MultiRadarTaskStatus]:
+    return list_multi_tasks()
+
+
+@router.post("/multi-coverage", response_model=MultiRadarTaskStatus, status_code=status.HTTP_202_ACCEPTED)
+def create_multi_coverage_task(payload: MultiRadarRequest, background_tasks: BackgroundTasks) -> MultiRadarTaskStatus:
+    try:
+        read_dem_metadata(payload.dem_id)
+        source = find_dem_file(payload.dem_id)
+        for station in payload.radars:
+            validate_coverage_extent(source, station_coverage_request(payload.dem_id, station))
+        task = create_multi_task(payload)
+        background_tasks.add_task(run_multi_radar_coverage_task, task.task_id, payload)
+        return task
+    except AppError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.as_detail()) from exc
+
+
+@router.get("/multi-coverage/{task_id}", response_model=MultiRadarTaskStatus)
+def read_multi_coverage_task(task_id: str) -> MultiRadarTaskStatus:
+    try:
+        return get_multi_task(task_id)
+    except AppError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.as_detail()) from exc
+
+
+@router.get("/multi-coverage/{task_id}/radars")
+def list_multi_coverage_stations(task_id: str) -> list:
+    try:
+        return get_multi_task(task_id).stations
+    except AppError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.as_detail()) from exc
+
+
+@router.get("/multi-coverage/{task_id}/radars/{radar_id}")
+def read_multi_coverage_station(task_id: str, radar_id: str):
+    try:
+        for station in get_multi_task(task_id).stations:
+            if station.radar_id == radar_id:
+                return station
+        raise AppError("MULTI_RADAR_NOT_FOUND", f"Radar '{radar_id}' was not found.", status_code=404)
+    except AppError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.as_detail()) from exc
+
+
+@router.post("/multi-coverage/{task_id}/evaluate-target")
+def evaluate_multi_target(task_id: str, payload: TargetEvaluationRequest) -> dict:
+    try:
+        return evaluate_multi_radar_target(task_id, payload)
+    except AppError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.as_detail()) from exc
+
+
+@router.post("/multi-coverage/{task_id}/radars/{radar_id}/detail", response_model=CoverageTaskStatus, status_code=status.HTTP_202_ACCEPTED)
+def create_multi_station_detail(task_id: str, radar_id: str, background_tasks: BackgroundTasks) -> CoverageTaskStatus:
+    try:
+        multi_task = get_multi_task(task_id)
+        if multi_task.request is None:
+            raise AppError("TASK_WITHOUT_REQUEST", "Multi-radar task request is unavailable.", status_code=409)
+        station = next((item for item in multi_task.request.radars if item.radar_id == radar_id), None)
+        if station is None:
+            raise AppError("MULTI_RADAR_NOT_FOUND", f"Radar '{radar_id}' was not found.", status_code=404)
+        task = create_task(station_coverage_request(multi_task.dem_id, station))
+        background_tasks.add_task(run_coverage_task, task.task_id, task.request)
+        return task
+    except AppError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.as_detail()) from exc
 
 
 @router.get("/coverage", response_model=list[CoverageTaskSummary])

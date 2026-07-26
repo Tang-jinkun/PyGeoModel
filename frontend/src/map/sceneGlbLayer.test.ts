@@ -6,6 +6,7 @@ import type { PreparedSceneGlb } from "./sceneGlbAsset";
 import {
   addSceneGlbLayer,
   focusSceneGlbLayer,
+  focusSceneGlbLayers,
   getSceneGlbTerrainTaskCount,
   hasSceneGlbLayer,
   removeAllSceneGlbLayers,
@@ -137,6 +138,21 @@ describe("scene GLB map layer", () => {
     expect(focusSceneGlbLayer(map as never, "task-a")).toBe(true);
     expect(map.fitBounds).toHaveBeenCalledWith(
       [[79, 31.4], [80, 31.6]],
+      { padding: 60, pitch: 55, bearing: -25, duration: 800 }
+    );
+  });
+
+  it("focuses the combined bounds of cooperative scene layers", () => {
+    const map = new FakeMap();
+    const first = preparedAsset("task-a");
+    const second = preparedAsset("task-b");
+    second.bounds = { ...second.bounds, west: 80, south: 31.2, east: 81, north: 31.8 };
+    addSceneGlbLayer(map as never, "task-a", first);
+    addSceneGlbLayer(map as never, "task-b", second);
+
+    expect(focusSceneGlbLayers(map as never, ["task-a", "task-b", "missing"])).toBe(true);
+    expect(map.fitBounds).toHaveBeenCalledWith(
+      [[79, 31.2], [81, 31.8]],
       { padding: 60, pitch: 55, bearing: -25, duration: 800 }
     );
   });
