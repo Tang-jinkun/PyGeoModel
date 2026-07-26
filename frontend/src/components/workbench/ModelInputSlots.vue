@@ -7,10 +7,10 @@
         :value="selections[slot.key] ?? []"
         @change="updateSlot(slot, $event)"
       >
-        <option v-if="!slot.multiple" value="">Select a file</option>
+        <option v-if="!slot.multiple" value="">请选择文件</option>
         <option v-for="asset in compatibleAssets(slot)" :key="asset.dem_id" :value="asset.dem_id">{{ asset.filename }}</option>
       </select>
-      <small v-if="showValidation && slot.required && !(selections[slot.key]?.length)">Required</small>
+      <small v-if="showValidation && slot.required && !(selections[slot.key]?.length)">必填</small>
     </label>
   </section>
 </template>

@@ -14,7 +14,7 @@ export type ModelInputSelections = Record<string, string[]>;
 
 export const terrainInputSlot: InputSlotDefinition = {
   key: "terrain",
-  label: "Terrain DEM",
+  label: "地形 DEM",
   assetTypes: ["dem"],
   required: true,
   multiple: false

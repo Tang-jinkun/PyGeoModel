@@ -1,17 +1,17 @@
 <template>
   <div v-if="open" class="model-run-dialog__backdrop" @mousedown.self="emit('update:open', false)">
-    <section class="model-run-dialog" role="dialog" aria-modal="true" :aria-label="`${definition.label} configuration`" :data-model-run-dialog="modelId">
+    <section class="model-run-dialog" role="dialog" aria-modal="true" :aria-label="`${definition.label}配置`" :data-model-run-dialog="modelId">
       <header>
-        <div><span>Model configuration</span><h1>{{ definition.label }}</h1></div>
-        <button type="button" aria-label="Close configuration" @click="emit('update:open', false)"><ElIcon><Close /></ElIcon></button>
+        <div><span>模型配置</span><h1>{{ definition.label }}</h1></div>
+        <button type="button" aria-label="关闭配置" @click="emit('update:open', false)"><ElIcon><Close /></ElIcon></button>
       </header>
-      <nav v-if="modelId === 'radar'" class="mode-tabs" role="tablist" aria-label="Radar analysis mode">
-        <button type="button" data-radar-mode="single" role="tab" :aria-selected="radarMode === 'single'" @click="radarMode = 'single'">Single radar</button>
-        <button type="button" data-radar-mode="multi" role="tab" :aria-selected="radarMode === 'multi'" @click="radarMode = 'multi'">Multi-radar</button>
+      <nav v-if="modelId === 'radar'" class="mode-tabs" role="tablist" aria-label="雷达分析模式">
+        <button type="button" data-radar-mode="single" role="tab" :aria-selected="radarMode === 'single'" @click="radarMode = 'single'">单雷达</button>
+        <button type="button" data-radar-mode="multi" role="tab" :aria-selected="radarMode === 'multi'" @click="radarMode = 'multi'">多雷达</button>
       </nav>
       <div class="model-run-dialog__body">
-        <details open><summary>Input data</summary><ModelInputSlots :slots="slots" :selections="inputs" :assets="assets" :show-validation="showValidation" @update:selections="emit('update:inputs', $event)" /></details>
-        <details v-if="radarMode === 'single'" data-model-parameters open><summary>Spatial inputs and parameters</summary><ModelParameterFields :model-id="modelId" :model-value="request" @update:model-value="emit('update:request', $event)" @activate-map-tool="emit('activate-map-tool', $event)" /></details>
+        <details open><summary>输入数据</summary><ModelInputSlots :slots="slots" :selections="inputs" :assets="assets" :show-validation="showValidation" @update:selections="emit('update:inputs', $event)" /></details>
+        <details v-if="radarMode === 'single'" data-model-parameters open><summary>空间位置与参数</summary><ModelParameterFields :model-id="modelId" :model-value="request" @update:model-value="emit('update:request', $event)" @activate-map-tool="emit('activate-map-tool', $event)" /></details>
         <MultiRadarStationEditor
           v-else
           ref="stationEditor"
@@ -23,8 +23,8 @@
         />
       </div>
       <footer>
-        <button type="button" class="cancel" @click="emit('update:open', false)">Cancel</button>
-        <button type="button" class="run" data-action="run-analysis" :disabled="submitting" @click="submit">{{ submitting ? "Running" : "Run analysis" }}</button>
+        <button type="button" class="cancel" @click="emit('update:open', false)">取消</button>
+        <button type="button" class="run" data-action="run-analysis" :disabled="submitting" @click="submit">{{ submitting ? "运行中" : "运行分析" }}</button>
       </footer>
     </section>
   </div>
@@ -92,7 +92,7 @@ function createStation(request: RadarRequest, radarId: string, longitudeOffset: 
   const source = structuredClone(request);
   return {
     radar_id: radarId,
-    name: `Station ${radarId}`,
+    name: `雷达站 ${radarId}`,
     radar: { ...source.radar, lon: source.radar.lon + longitudeOffset, lat: source.radar.lat + latitudeOffset },
     target: { ...source.target },
     coverage: { ...source.coverage },

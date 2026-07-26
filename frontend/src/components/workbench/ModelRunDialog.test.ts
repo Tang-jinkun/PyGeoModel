@@ -11,7 +11,7 @@ describe("ModelRunDialog", () => {
     await wrapper.get("[data-action='run-analysis']").trigger("click");
 
     expect(wrapper.emitted("submit")).toBeUndefined();
-    expect(wrapper.get("[data-input-slot='terrain']").text()).toContain("Required");
+    expect(wrapper.get("[data-input-slot='terrain']").text()).toContain("必填");
   });
 
   it("emits a request and explicit input selections on submit", async () => {

@@ -15,7 +15,7 @@ describe("ModelInputSlots", () => {
       }
     });
 
-    expect(wrapper.get("[data-input-slot='terrain']").text()).toContain("Terrain DEM");
+    expect(wrapper.get("[data-input-slot='terrain']").text()).toContain("地形 DEM");
     await wrapper.get("[data-input-slot='terrain'] select").setValue("dem-1");
 
     expect(wrapper.emitted("update:selections")?.[0]).toEqual([{ terrain: ["dem-1"] }]);
@@ -26,6 +26,6 @@ describe("ModelInputSlots", () => {
       props: { slots: [terrainInputSlot], selections: { terrain: [] }, assets: [], showValidation: true }
     });
 
-    expect(wrapper.get("[data-input-slot='terrain']").text()).toContain("Required");
+    expect(wrapper.get("[data-input-slot='terrain']").text()).toContain("必填");
   });
 });

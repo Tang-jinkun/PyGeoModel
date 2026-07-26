@@ -1,20 +1,20 @@
 <template>
   <section class="multi-radar-station-editor" data-multi-radar-editor>
-    <div class="multi-radar-station-editor__mode" role="radiogroup" aria-label="Multi-radar presentation mode">
-      <label><input :checked="presentationMode === 'aggregate'" type="radio" value="aggregate" @change="emit('update:presentationMode', 'aggregate')"><span>Aggregate coverage</span></label>
-      <label><input :checked="presentationMode === 'cooperative_3d'" type="radio" value="cooperative_3d" @change="emit('update:presentationMode', 'cooperative_3d')"><span>Cooperative 3D</span></label>
+    <div class="multi-radar-station-editor__mode" role="radiogroup" aria-label="多雷达展示模式">
+      <label><input :checked="presentationMode === 'aggregate'" type="radio" value="aggregate" @change="emit('update:presentationMode', 'aggregate')"><span>融合覆盖</span></label>
+      <label><input :checked="presentationMode === 'cooperative_3d'" type="radio" value="cooperative_3d" @change="emit('update:presentationMode', 'cooperative_3d')"><span>协同三维</span></label>
     </div>
 
     <article v-for="(station, index) in stations" :key="station.radar_id" class="station-editor-row" :data-station-id="station.radar_id">
-      <header><strong>Station {{ index + 1 }}</strong><button type="button" :aria-label="`Remove ${station.radar_id}`" @click="removeStation(index)"><ElIcon><Delete /></ElIcon></button></header>
+      <header><strong>雷达站 {{ index + 1 }}</strong><button type="button" :aria-label="`删除 ${station.radar_id}`" @click="removeStation(index)"><ElIcon><Delete /></ElIcon></button></header>
       <div class="station-editor-row__fields">
-        <label><span>Radar ID</span><input :value="station.radar_id" @input="updateText(index, 'radar_id', $event)"></label>
-        <label><span>Name</span><input :value="station.name ?? ''" @input="updateText(index, 'name', $event)"></label>
-        <label><span>Longitude</span><input type="number" :value="station.radar.lon" @input="updateNumber(index, 'radar.lon', $event)"></label>
-        <label><span>Latitude</span><input type="number" :value="station.radar.lat" @input="updateNumber(index, 'radar.lat', $event)"></label>
+        <label><span>雷达编号</span><input :value="station.radar_id" @input="updateText(index, 'radar_id', $event)"></label>
+        <label><span>名称</span><input :value="station.name ?? ''" @input="updateText(index, 'name', $event)"></label>
+        <label><span>经度</span><input type="number" :value="station.radar.lon" @input="updateNumber(index, 'radar.lon', $event)"></label>
+        <label><span>纬度</span><input type="number" :value="station.radar.lat" @input="updateNumber(index, 'radar.lat', $event)"></label>
       </div>
       <details class="station-editor-row__parameters" data-station-parameters>
-        <summary>Detailed parameters</summary>
+        <summary>详细参数</summary>
         <ModelParameterFields
           model-id="radar"
           :model-value="radarRequestFor(station)"
@@ -24,7 +24,7 @@
       </details>
     </article>
 
-    <button type="button" class="add-station" @click="addStation"><ElIcon><Plus /></ElIcon><span>Add station</span></button>
+    <button type="button" class="add-station" @click="addStation"><ElIcon><Plus /></ElIcon><span>添加雷达站</span></button>
     <p v-if="showValidation && validationMessages.length" class="station-editor-validation" role="alert">{{ validationMessages.join(' ') }}</p>
   </section>
 </template>
@@ -109,7 +109,7 @@ function addStation() {
   next.push({
     ...source,
     radar_id: id,
-    name: `Station ${id}`,
+    name: `雷达站 ${id}`,
     radar: { ...source.radar },
     target: source.target ? { ...source.target } : undefined,
     coverage: { ...source.coverage },
@@ -141,11 +141,11 @@ function nextStationId(stations: MultiRadarStationInput[]) {
 
 function validateStations(stations: MultiRadarStationInput[], presentationMode: PresentationMode) {
   const issues: string[] = [];
-  if (stations.length < 2) issues.push("Add at least two radar stations.");
+  if (stations.length < 2) issues.push("至少需要两个雷达站。");
   const ids = stations.map(({ radar_id }) => radar_id.trim()).filter(Boolean);
-  if (ids.length !== stations.length || new Set(ids).size !== ids.length) issues.push("Radar IDs must be unique.");
+  if (ids.length !== stations.length || new Set(ids).size !== ids.length) issues.push("雷达编号必须唯一。");
   if (presentationMode === "cooperative_3d" && (stations.length < 3 || stations.length > 5)) {
-    issues.push("Cooperative 3D requires three to five stations.");
+    issues.push("协同三维模式需要 3 到 5 个雷达站。");
   }
   return issues;
 }
