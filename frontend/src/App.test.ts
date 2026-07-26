@@ -41,7 +41,7 @@ describe("App model run workflow", () => {
 
     expect(wrapper.find("[data-workbench-region='inspector']").exists()).toBe(false);
     expect(wrapper.find("[data-action='run-analysis-on-map']").exists()).toBe(false);
-    expect(wrapper.get("[data-workbench-region='map']").exists()).toBe(true);
+    expect(wrapper.find("[data-workbench-region='map']").exists()).toBe(true);
   });
 });
 
