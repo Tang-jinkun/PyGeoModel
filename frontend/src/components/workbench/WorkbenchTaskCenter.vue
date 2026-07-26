@@ -3,21 +3,22 @@
     <header class="tasks-head">
       <span class="title">任务中心</span>
       <button v-for="tab in tabs" :key="tab.id" type="button" class="task-tab" role="tab" :aria-selected="activeTab === tab.id" @click="emit('update:activeTab', tab.id)">
-        {{ tab.label }}<span v-if="tab.id === 'running' && runningRows.length" class="badge">{{ runningRows.length }}</span>
+        {{ tab.label }}<span v-if="tab.id === 'running' && runningTaskCount" class="badge">{{ runningTaskCount }}</span>
       </button>
       <span class="spacer"></span>
     </header>
     <div class="tasks-body">
       <div v-if="activeTab === 'logs'" class="task-pane active log-pane">
+        <p v-for="task in multiRadarTasks" :key="task.task_id" class="log-line"><time>{{ multiRadarTaskTime(task) }}</time><span>[{{ shortId(task.task_id) }}] {{ task.message || multiRadarStatusLabel(task) }}</span></p>
         <p v-for="row in rows" :key="row.key" class="log-line"><time>{{ taskTime(row) }}</time><span>[{{ shortId(row.task.task_id) }}] {{ row.task.message || row.statusLabel }}</span></p>
-        <p v-if="!rows.length" class="empty-state">暂无日志</p>
+        <p v-if="!rows.length && !multiRadarTasks.length" class="empty-state">暂无日志</p>
       </div>
       <div v-else class="task-pane active">
-        <div v-if="visibleMultiRadarTask" class="task-row" data-multi-radar-task>
-          <span class="tid">{{ shortId(visibleMultiRadarTask.task_id) }}</span><span class="tmodel">多雷达协同</span>
-          <span class="tinfo">{{ [visibleMultiRadarTask.dem_id, visibleMultiRadarTask.message || multiRadarStatusLabel].filter(Boolean).join(" · ") }}</span>
-          <span v-if="isMultiRadarRunning" class="progress"><span class="bar"><i :style="{ width: `${visibleMultiRadarTask.progress}%` }"></i></span><span class="pv">{{ visibleMultiRadarTask.progress }}%</span></span><span v-else></span>
-          <span class="status-chip" :class="multiRadarStatusClass">{{ multiRadarStatusLabel }}</span>
+        <div v-for="task in visibleMultiRadarTasks" :key="task.task_id" class="task-row" data-multi-radar-task role="button" tabindex="0" @click="emit('select-multi-radar-task', task.task_id)" @keydown.enter="emit('select-multi-radar-task', task.task_id)">
+          <span class="tid">{{ shortId(task.task_id) }}</span><span class="tmodel">多雷达协同</span>
+          <span class="tinfo">{{ [task.dem_id, task.message || multiRadarStatusLabel(task)].filter(Boolean).join(" · ") }}</span>
+          <span v-if="isMultiRadarRunning(task)" class="progress"><span class="bar"><i :style="{ width: `${task.progress}%` }"></i></span><span class="pv">{{ task.progress }}%</span></span><span v-else></span>
+          <span class="status-chip" :class="multiRadarStatusClass(task)">{{ multiRadarStatusLabel(task) }}</span>
           <span class="task-act"></span>
         </div>
         <div v-for="row in visibleRows" :key="row.key" class="task-row" :data-task-key="row.key" role="button" tabindex="0" @click="select(row)" @keydown.enter="select(row)">
@@ -27,7 +28,7 @@
           <span class="status-chip" :class="statusClass(row)">{{ row.statusLabel }}</span>
           <span class="task-act"><button type="button" @click.stop="select(row)">{{ row.task.status === 'failed' ? '查看日志' : '查看图层' }}</button><a v-if="row.task.status === 'finished' && firstDownload(row)" :href="firstDownload(row)" target="_blank" @click.stop>下载</a></span>
         </div>
-        <p v-if="!visibleRows.length" class="empty-state">暂无任务</p>
+        <p v-if="!visibleRows.length && !visibleMultiRadarTasks.length" class="empty-state">暂无任务</p>
       </div>
     </div>
   </section>
@@ -40,22 +41,24 @@ import type { MultiRadarTask } from "../../models/multiRadar/types";
 import type { WorkbenchTaskRow } from "../../workbench/taskPresentation";
 import type { TaskCenterTab } from "../../workbench/useWorkbenchPresentation";
 
-const props = withDefaults(defineProps<{ rows: readonly WorkbenchTaskRow[]; activeTab?: TaskCenterTab; multiRadarTask?: MultiRadarTask | null }>(), { activeTab: "running", multiRadarTask: null });
-const emit = defineEmits<{ "update:activeTab": [tab: TaskCenterTab]; "select-task": [modelId: WorkbenchTaskRow["modelId"], taskId: string] }>();
+const props = withDefaults(defineProps<{ rows: readonly WorkbenchTaskRow[]; activeTab?: TaskCenterTab; multiRadarTasks?: readonly MultiRadarTask[] }>(), { activeTab: "running", multiRadarTasks: () => [] });
+const emit = defineEmits<{ "update:activeTab": [tab: TaskCenterTab]; "select-task": [modelId: WorkbenchTaskRow["modelId"], taskId: string]; "select-multi-radar-task": [taskId: string] }>();
 const tabs: Array<{ id: TaskCenterTab; label: string }> = [{ id: "running", label: "运行中" }, { id: "history", label: "历史记录" }, { id: "logs", label: "日志" }];
 const runningRows = computed(() => props.rows.filter(isRunning));
 const visibleRows = computed(() => props.activeTab === "running" ? runningRows.value : props.rows.filter(({ task }) => task.status === "finished" || task.status === "failed"));
-const isMultiRadarRunning = computed(() => props.multiRadarTask?.status === "pending" || props.multiRadarTask?.status === "running");
-const visibleMultiRadarTask = computed(() => {
-  const task = props.multiRadarTask;
-  if (!task || props.activeTab === "logs") return null;
-  return props.activeTab === "running" ? (isMultiRadarRunning.value ? task : null) : task;
-});
-const multiRadarStatusLabel = computed(() => ({ pending: "等待中", running: "运行中", finished: "已完成", partial: "部分完成", failed: "失败" }[props.multiRadarTask?.status ?? "pending"]));
-const multiRadarStatusClass = computed(() => {
-  const status = props.multiRadarTask?.status;
+const runningMultiRadarTasks = computed(() => props.multiRadarTasks.filter(isMultiRadarRunning));
+const runningTaskCount = computed(() => runningRows.value.length + runningMultiRadarTasks.value.length);
+const visibleMultiRadarTasks = computed(() => props.activeTab === "running"
+  ? runningMultiRadarTasks.value
+  : props.activeTab === "history"
+    ? props.multiRadarTasks.filter((task) => !isMultiRadarRunning(task))
+    : []);
+function isMultiRadarRunning(task: MultiRadarTask) { return task.status === "pending" || task.status === "running"; }
+function multiRadarStatusLabel(task: MultiRadarTask) { return { pending: "等待中", running: "运行中", finished: "已完成", partial: "部分完成", failed: "失败" }[task.status]; }
+function multiRadarStatusClass(task: MultiRadarTask) {
+  const status = task.status;
   return status === "finished" ? "ok" : status === "failed" ? "fail" : status === "partial" ? "partial" : "run";
-});
+}
 function isRunning(row: WorkbenchTaskRow) { return row.task.status === "pending" || row.task.status === "running"; }
 function statusClass(row: WorkbenchTaskRow) { return row.task.status === "finished" ? "ok" : row.task.status === "failed" ? "fail" : "run"; }
 function select(row: WorkbenchTaskRow) { emit("select-task", row.modelId, row.task.task_id); }
@@ -66,6 +69,7 @@ function taskInfo(row: WorkbenchTaskRow) {
 function firstDownload(row: WorkbenchTaskRow) { const file = row.task.output_files.find(({ exists }) => exists); return file?.download_url || file?.url || ""; }
 function shortId(id: string) { return id.length > 10 ? `T-${id.slice(0, 8)}` : id; }
 function taskTime(row: WorkbenchTaskRow) { const value = row.task.updated_at || row.task.created_at; return value ? new Date(value).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "--:--:--"; }
+function multiRadarTaskTime(task: MultiRadarTask) { const value = task.updated_at || task.created_at; return value ? new Date(value).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "--:--:--"; }
 </script>
 
 <style scoped>

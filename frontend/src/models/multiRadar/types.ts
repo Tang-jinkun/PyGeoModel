@@ -37,6 +37,8 @@ export interface MultiRadarTask {
   status: MultiRadarTaskState;
   progress: number;
   message: string;
+  created_at?: string | null;
+  updated_at?: string | null;
   metrics?: {
     visible_union_area_m2: number;
     overlap_area_m2: number;

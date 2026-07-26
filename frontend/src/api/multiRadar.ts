@@ -14,6 +14,10 @@ export async function createMultiRadarTask(payload: MultiRadarRequest): Promise<
   });
 }
 
+export function listMultiRadarTasks(): Promise<MultiRadarTask[]> {
+  return requestJson<MultiRadarTask[]>("/api/radar/multi-coverage");
+}
+
 export function getMultiRadarTask(taskId: string): Promise<MultiRadarTask> {
   return requestJson<MultiRadarTask>(`/api/radar/multi-coverage/${taskId}`);
 }

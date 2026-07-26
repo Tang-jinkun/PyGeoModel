@@ -22,21 +22,35 @@ describe("WorkbenchTaskCenter", () => {
       props: {
         rows: [],
         activeTab: "running",
-        multiRadarTask: {
-          task_id: "multi-1",
-          dem_id: "dem-1",
-          status: "running",
-          progress: 48,
-          message: "Computing 2 of 3 stations.",
-          stations: []
-        }
+        multiRadarTasks: [multiRadarTask("running")]
       }
     });
 
     expect(wrapper.get("[data-multi-radar-task]").text()).toContain("多雷达协同");
     expect(wrapper.get("[data-multi-radar-task]").text()).toContain("48%");
   });
+
+  it("keeps completed multi-radar tasks in history and emits their selection", async () => {
+    const wrapper = mount(WorkbenchTaskCenter, {
+      props: { rows: [], activeTab: "history", multiRadarTasks: [multiRadarTask("finished")] }
+    });
+
+    await wrapper.get("[data-multi-radar-task]").trigger("click");
+    expect(wrapper.get("[data-multi-radar-task]").text()).toContain("已完成");
+    expect(wrapper.emitted("select-multi-radar-task")?.[0]).toEqual(["multi-1"]);
+  });
 });
+
+function multiRadarTask(status: "running" | "finished") {
+  return {
+    task_id: "multi-1",
+    dem_id: "dem-1",
+    status,
+    progress: status === "running" ? 48 : 100,
+    message: status === "running" ? "Computing 2 of 3 stations." : "finished",
+    stations: []
+  };
+}
 
 function finishedRadarRow(): WorkbenchTaskRow {
   return {

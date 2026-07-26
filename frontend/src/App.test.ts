@@ -11,6 +11,9 @@ vi.mock("./api/dem", () => ({
 vi.mock("./api/tasks", () => ({
   createTaskClient: vi.fn(() => ({ create: vi.fn(), get: vi.fn(), list: vi.fn(), metrics: vi.fn(), delete: vi.fn() }))
 }));
+vi.mock("./api/multiRadar", () => ({
+  listMultiRadarTasks: vi.fn(async () => []), createMultiRadarTask: vi.fn(), getMultiRadarTask: vi.fn()
+}));
 vi.mock("./models/radar/layerAdapter", () => ({
   createRadarLayerAdapter: vi.fn(() => ({ errors: {}, clear: vi.fn(), dispose: vi.fn(), setRadarVisible: vi.fn() }))
 }));

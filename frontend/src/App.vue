@@ -9,7 +9,7 @@
     <template #map>
       <div class="workspace-map-stack"><MapWorkspace :key="workspace.selectedModel.value" :kind="activeDefinition.spatialInput" :draft="mapWorkspace.draft.value" :editing="mapEditing" :edit-target="mapEditTarget" :dem="selectedDem" @map-ready="setMap" @spatial-edit="applyMapEdit" @out-of-bounds="showError(new Error('Pick a location inside the selected DEM.'))" /><MapPickBar v-if="mapEditing" :target="mapEditTarget === 'auto' ? 'point' : mapEditTarget" @cancel="finishMapPicking" @undo="applyMapEdit({ type: 'undo' })" @finish="finishMapPicking" /></div>
     </template>
-    <template #tasks><WorkbenchTaskCenter :rows="workbenchTaskRows" :multi-radar-task="activeMultiRadarTask" :active-tab="presentation.taskTab.value" @update:active-tab="presentation.selectTaskTab" @select-task="selectWorkbenchTask" /></template>
+    <template #tasks><WorkbenchTaskCenter :rows="workbenchTaskRows" :multi-radar-tasks="multiRadarTasks" :active-tab="presentation.taskTab.value" @update:active-tab="presentation.selectTaskTab" @select-task="selectWorkbenchTask" @select-multi-radar-task="selectMultiRadarTask" /></template>
     <template #status>
       <div class="workbench-status">
         <span class="workbench-status__item workbench-status__map-info">坐标 <span class="workbench-status__mono">—</span></span>
@@ -232,7 +232,7 @@ import { applySpatialDraftToRequest, spatialDraftFromRequest } from "./models/sp
 import { useRadarAnalysis } from "./models/radar/useRadarAnalysis";
 import { createHeightLayerLoader } from "./models/radar/heightLayerLoader";
 import { getCoverageTask, type CoverageTaskStatus } from "./api/radar";
-import { createMultiRadarTask, getMultiRadarTask } from "./api/multiRadar";
+import { createMultiRadarTask, getMultiRadarTask, listMultiRadarTasks } from "./api/multiRadar";
 import type { MultiRadarPresentationMode, MultiRadarStationInput, MultiRadarTask } from "./models/multiRadar/types";
 import { createFusionSceneTask } from "./models/multiRadar/fusionScene";
 import {
@@ -281,6 +281,7 @@ const heightOptions = ref<RadarHeightOption[]>([]);
 const selectedHeightM = ref<number | null>(null);
 const activeHeightData = shallowRef<HeightLayerData[]>([]);
 const activeMultiRadarTask = shallowRef<MultiRadarTask | null>(null);
+const multiRadarTasks = ref<MultiRadarTask[]>([]);
 const multiRadarDetailTasks = new Map<string, CoverageTaskStatus>();
 const multiRadarDetailStationIds = ref<string[]>([]);
 const cooperativeStationTasks = new Map<string, CoverageTaskStatus>();
@@ -413,6 +414,7 @@ onMounted(async () => {
   taskManager.setVisibleModel(workspace.selectedModel.value);
   const results = await Promise.allSettled([
     demManager.load(),
+    loadMultiRadarTasks(),
     ...MODEL_IDS.map((modelId) => taskManager.refreshModel(modelId))
   ]);
   if (results.every(({ status }) => status === "rejected")) {
@@ -512,6 +514,18 @@ function selectWorkbenchModel(modelId: ModelId) {
 function selectWorkbenchTask(modelId: ModelId, taskId: string) {
   taskManager.select(modelId, taskId);
   presentation.selectTask();
+}
+
+async function selectMultiRadarTask(taskId: string) {
+  try {
+    const task = await getMultiRadarTask(taskId);
+    upsertMultiRadarTask(task);
+    activeMultiRadarTask.value = task;
+    demManager.select(task.dem_id);
+    if (task.status === "finished" || task.status === "partial") await nextTick(() => showMultiRadarAggregate(task));
+  } catch (error) {
+    showError(error);
+  }
 }
 
 async function showMultiRadarAggregate(task: MultiRadarTask) {
@@ -677,6 +691,7 @@ async function submitMultiRadarRun(
   try {
     const task = await createMultiRadarTask({ dem_id: demId, radars: stations, presentation_mode: presentationMode });
     activeMultiRadarTask.value = task;
+    upsertMultiRadarTask(task);
     startMultiRadarPolling(task.task_id);
   } catch (error) {
     showError(error);
@@ -701,6 +716,7 @@ async function refreshMultiRadarTask(taskId: string) {
   try {
     const task = await getMultiRadarTask(taskId);
     activeMultiRadarTask.value = task;
+    upsertMultiRadarTask(task);
     if (!["finished", "partial", "failed"].includes(task.status)) return;
     stopMultiRadarPolling();
     if (task.status === "finished" || task.status === "partial") await showMultiRadarAggregate(task);
@@ -708,6 +724,18 @@ async function refreshMultiRadarTask(taskId: string) {
     stopMultiRadarPolling();
     showError(error);
   }
+}
+
+async function loadMultiRadarTasks() {
+  const tasks = await listMultiRadarTasks();
+  multiRadarTasks.value = tasks;
+}
+
+function upsertMultiRadarTask(task: MultiRadarTask) {
+  const index = multiRadarTasks.value.findIndex(({ task_id }) => task_id === task.task_id);
+  if (index === -1) multiRadarTasks.value = [task, ...multiRadarTasks.value];
+  else multiRadarTasks.value.splice(index, 1, task);
+  multiRadarTasks.value.sort((left, right) => Date.parse(right.updated_at ?? right.created_at ?? "") - Date.parse(left.updated_at ?? left.created_at ?? ""));
 }
 
 async function submitTask(request: BaseModelRequest) {
