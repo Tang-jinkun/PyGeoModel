@@ -81,7 +81,7 @@ function toggleTasks() {
   overflow: hidden;
   background: var(--wb-surface);
   grid-template-areas:
-    "top top top"
+    "top top"
     "dock map"
     "tasks tasks"
     "status status";

@@ -2,8 +2,16 @@ import { mount } from "@vue/test-utils";
 import { describe, expect, it } from "vitest";
 
 import GisWorkbenchShell from "./GisWorkbenchShell.vue";
+import source from "./GisWorkbenchShell.vue?raw";
 
 describe("GisWorkbenchShell", () => {
+  it("defines a consistent two-column workbench grid", () => {
+    const gridTemplate = source.match(/grid-template-areas:\s*([\s\S]*?);/)?.[1] ?? "";
+
+    expect(gridTemplate).toContain('"top top"');
+    expect(gridTemplate).not.toContain('"top top top"');
+  });
+
   it("renders no inspector region and lets the map use its column", async () => {
     const wrapper = mount(GisWorkbenchShell, {
       slots: {
