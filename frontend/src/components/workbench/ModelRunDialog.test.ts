@@ -47,6 +47,21 @@ describe("ModelRunDialog", () => {
     });
     expect(submission).not.toHaveProperty("request");
   });
+
+  it("includes each station's detailed radar parameters in a multi-radar submission", async () => {
+    const wrapper = mount(ModelRunDialog, { props: dialogProps({ terrain: ["dem-1"] }) });
+
+    await wrapper.get('[data-radar-mode="multi"]').trigger("click");
+    const stationParameters = wrapper.findAll('[data-station-parameters]');
+    expect(stationParameters).toHaveLength(2);
+    await stationParameters[0].get('[data-field="coverage.scan_mode"] select').setValue("sector");
+    await wrapper.get("[data-action='run-analysis']").trigger("click");
+
+    const submission = wrapper.emitted("submit")?.[0]?.[0] as {
+      multiRadar: { stations: Array<{ coverage: { scan_mode?: string } }> };
+    };
+    expect(submission.multiRadar.stations[0].coverage.scan_mode).toBe("sector");
+  });
 });
 
 function dialogProps(inputs: { terrain: string[] }) {

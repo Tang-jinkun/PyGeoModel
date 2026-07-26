@@ -36,9 +36,16 @@ type MapTool = "point" | "route" | "start" | "end" | "threat";
 type Field = { label: string; path: string; unit?: string; kind?: "number" | "switch" | "coordinate" | "select"; mapTool?: MapTool; options?: Array<{ label: string; value: string }> };
 type Section = { title: string; fields: Field[] };
 
-const props = defineProps<{ modelId: ModelId; modelValue: BaseModelRequest }>();
+const props = withDefaults(defineProps<{ modelId: ModelId; modelValue: BaseModelRequest; hideCoordinateFields?: boolean }>(), {
+  hideCoordinateFields: false
+});
 const emit = defineEmits<{ "update:modelValue": [request: BaseModelRequest]; "activate-map-tool": [tool: MapTool] }>();
-const schema = computed(() => SCHEMAS[props.modelId]);
+const schema = computed(() => props.hideCoordinateFields
+  ? SCHEMAS[props.modelId].map((section) => ({
+    ...section,
+    fields: section.fields.filter((field) => field.kind !== "coordinate")
+  })).filter((section) => section.fields.length)
+  : SCHEMAS[props.modelId]);
 
 function valueAt(path: string): unknown {
   return path.split(".").reduce<unknown>((value, key) => value && typeof value === "object" ? (value as Record<string, unknown>)[key] : undefined, props.modelValue);
