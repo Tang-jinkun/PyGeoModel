@@ -2,7 +2,7 @@
   <section class="task-result-panel" :data-status="task.status">
     <div class="task-result-panel__tabs" role="tablist" aria-label="任务结果">
       <button
-        v-for="tab in TABS"
+      v-for="tab in tabs"
         :key="tab.id"
         type="button"
         role="tab"
@@ -70,12 +70,14 @@ const props = withDefaults(defineProps<{
   layerStates?: readonly TaskOutputLayerState[];
   sceneGlbState?: SceneGlbOverlayState | null;
   radarPlatformGlbState?: SceneGlbOverlayState | null;
+  showLayers?: boolean;
 }>(), {
   metrics: null,
   outputFiles: () => [],
   layerStates: () => [],
   sceneGlbState: null,
-  radarPlatformGlbState: null
+  radarPlatformGlbState: null,
+  showLayers: true
 });
 
 const emit = defineEmits<{
@@ -94,6 +96,7 @@ const TABS: Array<{ id: ResultTab; label: string }> = [
 ];
 
 const activeTab = ref<ResultTab>("task");
+const tabs = computed(() => props.showLayers ? TABS : TABS.filter(({ id }) => id !== "layers"));
 const definition = computed(() => getModelDefinition(props.modelId));
 const metricDefinitions = computed(() => definition.value.metrics as never);
 const effectiveMetrics = computed(() => props.metrics ?? props.task.metrics as Record<string, unknown> | null ?? null);
