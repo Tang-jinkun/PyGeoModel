@@ -5,7 +5,12 @@ from pydantic import ValidationError
 
 from app.core.config import settings
 from app.schemas.radar import MultiRadarRequest
-from app.services.multi_radar_task_store import create_multi_task, get_multi_task
+from app.services.multi_radar_task_store import (
+    create_multi_task,
+    get_multi_task,
+    list_multi_tasks,
+    mark_multi_running,
+)
 
 
 def station(radar_id: str) -> dict:
@@ -36,3 +41,17 @@ def test_multi_task_round_trip_preserves_station_requests(tmp_path: Path) -> Non
     assert task.task_id.startswith("multi_task_")
     assert stored.request is not None
     assert [item.radar_id for item in stored.request.radars] == ["north", "south"]
+
+
+def test_multi_task_running_state_is_persisted_and_listed(tmp_path: Path) -> None:
+    settings.data_dir = tmp_path
+    settings.ensure_directories()
+    payload = MultiRadarRequest.model_validate(
+        {"dem_id": "dem_a", "radars": [station("north"), station("south")]}
+    )
+    task = create_multi_task(payload)
+
+    mark_multi_running(task.task_id, "Computing station 1 of 2.", 45)
+
+    assert get_multi_task(task.task_id).status == "running"
+    assert list_multi_tasks()[0].message == "Computing station 1 of 2."

@@ -36,12 +36,26 @@ def get_multi_task(task_id: str) -> MultiRadarTaskStatus:
         raise AppError("MULTI_TASK_RECORD_CORRUPT", f"Task '{task_id}' is invalid.", status_code=500) from exc
 
 
+def list_multi_tasks() -> list[MultiRadarTaskStatus]:
+    tasks = [get_multi_task(path.stem) for path in settings.tasks_dir.glob("multi_task_*.json")]
+    return sorted(tasks, key=lambda task: task.created_at or task.task_id, reverse=True)
+
+
+def mark_multi_running(task_id: str, message: str, progress: int) -> None:
+    task = get_multi_task(task_id)
+    task.status = "running"
+    task.progress = progress
+    task.message = message
+    _save(task)
+
+
 def _save(task: MultiRadarTaskStatus) -> None:
     path = _task_path(task.task_id)
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = task.request
     if payload is None:
         raise ValueError("Multi-radar task requires a request payload")
+    task.updated_at = _utc_now()
     path.write_text(
         json.dumps(
             {"task": task.model_dump(exclude={"request"}), "payload": payload.model_dump()},
