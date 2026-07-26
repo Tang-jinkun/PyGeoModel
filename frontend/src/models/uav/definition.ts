@@ -1,4 +1,5 @@
 import type { ModelDefinition, ValidationIssue } from "../shared";
+import { terrainInputSlot } from "../inputSlots";
 import type { UavMetrics, UavRequest } from "./types";
 
 export const uavDefinition = {
@@ -6,6 +7,7 @@ export const uavDefinition = {
   label: "UAV Reconnaissance",
   taskBasePath: "/api/uav/recon",
   spatialInput: "point-or-route",
+  inputSlots: [terrainInputSlot],
   createDefaultRequest: (): UavRequest => ({
     dem_id: "",
     uav: { lon: 79.80513693057287, lat: 31.4827708959419, altitude_m: 500, altitude_mode: "agl", heading_deg: 0, pitch_deg: -45, roll_deg: 0 },

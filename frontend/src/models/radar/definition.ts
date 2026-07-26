@@ -1,4 +1,5 @@
 import type { ModelDefinition, ValidationIssue } from "../shared";
+import { terrainInputSlot } from "../inputSlots";
 import type { RadarMetrics, RadarRequest } from "./types";
 
 export const radarDefinition = {
@@ -6,6 +7,7 @@ export const radarDefinition = {
   label: "Radar Coverage",
   taskBasePath: "/api/radar/coverage",
   spatialInput: "point",
+  inputSlots: [terrainInputSlot],
   createDefaultRequest: (): RadarRequest => ({
     dem_id: "",
     radar: { lon: 79.80513693057287, lat: 31.4827708959419, height_m: 10 },

@@ -4,19 +4,15 @@ import { getModelDefinition } from "../models/registry";
 import { type ActiveDraft, useModelWorkspace } from "./useModelWorkspace";
 
 describe("useModelWorkspace", () => {
-  it("keeps a separate mutable draft for every model", () => {
+  it("keeps explicit input selections isolated by model", () => {
     const workspace = useModelWorkspace();
 
-    workspace.selectModel("uav");
-    workspace.currentDraft.value.request.dem_id = "dem-a";
-    workspace.selectModel("radar");
+    workspace.updateInputSelections("radar", { terrain: ["dem-radar"] });
 
-    expect(workspace.currentDraft.value.request.dem_id).toBe("");
-
-    workspace.setDemForAll("dem-b");
-
-    expect(workspace.drafts.uav.dem_id).toBe("dem-b");
-    expect(workspace.drafts.radar.dem_id).toBe("dem-b");
+    expect(workspace.drafts.radar.dem_id).toBe("dem-radar");
+    expect(workspace.inputSelectionsFor("radar").terrain).toEqual(["dem-radar"]);
+    expect(workspace.drafts.uav.dem_id).toBe("");
+    expect(workspace.inputSelectionsFor("uav").terrain).toEqual([]);
   });
 
   it("pairs the writable current draft with its model and selects an assigned model", () => {

@@ -30,6 +30,8 @@ export interface OutputLayerDefinition {
 export interface ValidationIssue { path: string; message: string }
 export interface ModelDefinition<Request extends BaseModelRequest, Metrics> {
   id: ModelId; label: string; taskBasePath: string; spatialInput: SpatialInputKind;
+  inputSlots: readonly InputSlotDefinition[];
   createDefaultRequest(): Request; validate(request: Request): ValidationIssue[];
   metrics: MetricDefinition<Metrics>[]; outputLayers: OutputLayerDefinition[];
 }
+import type { InputSlotDefinition } from "./inputSlots";

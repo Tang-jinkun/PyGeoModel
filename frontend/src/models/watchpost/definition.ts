@@ -1,4 +1,5 @@
 import type { ModelDefinition, ValidationIssue } from "../shared";
+import { terrainInputSlot } from "../inputSlots";
 import type { WatchpostMetrics, WatchpostRequest } from "./types";
 
 export const watchpostDefinition = {
@@ -6,6 +7,7 @@ export const watchpostDefinition = {
   label: "Watchpost Detection",
   taskBasePath: "/api/watchpost/detection",
   spatialInput: "point",
+  inputSlots: [terrainInputSlot],
   createDefaultRequest: (): WatchpostRequest => ({
     dem_id: "",
     observer: { lon: 79.80513693057287, lat: 31.4827708959419, height_m: 2 },
