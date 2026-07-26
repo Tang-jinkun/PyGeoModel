@@ -10,10 +10,12 @@ export interface MultiRadarStationInput {
   reserved_radar_params?: RadarRequest["reserved_radar_params"];
 }
 
+export type MultiRadarPresentationMode = "aggregate" | "cooperative_3d";
+
 export interface MultiRadarRequest {
   dem_id: string;
   radars: MultiRadarStationInput[];
-  presentation_mode?: "aggregate" | "cooperative_3d";
+  presentation_mode?: MultiRadarPresentationMode;
 }
 
 export type MultiRadarTaskState = "pending" | "running" | "finished" | "partial" | "failed";

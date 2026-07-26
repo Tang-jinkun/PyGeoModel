@@ -2,7 +2,7 @@
   <GisWorkbenchShell :tasks-collapsed="presentation.taskCenterCollapsed.value" @update:tasks-collapsed="presentation.toggleTaskCenter">
     <template #topbar><WorkbenchTopbar :dem-label="selectedDem?.filename ?? 'No DEM selected'" :connected="!taskManager.connectionInterrupted.value" :search="modelSearch" @update:search="modelSearch = $event" /></template>
     <template #dock>
-      <WorkbenchDock :model-value="workspace.selectedModel.value" :active-tab="presentation.dockTab.value" :model-search="modelSearch" :layer-definitions="selectedTaskContext?.task.status === 'finished' ? getModelDefinition(selectedTaskContext.modelId).outputLayers : []" :layer-states="mapWorkspace.layerStates.value" :scene-entries="workbenchSceneEntries" @select-model="selectWorkbenchModel" @update:active-tab="presentation.selectDockTab" @update:model-search="modelSearch = $event" @update-layer-visibility="setLayerVisibility" @update-layer-opacity="setLayerOpacity" @focus-layer="focusLayer" @update-scene-glb="setSceneGlbVisibility" @focus-scene-glb="focusSceneGlb">
+      <WorkbenchDock :model-value="workspace.selectedModel.value" :active-tab="presentation.dockTab.value" :model-search="modelSearch" :layer-definitions="selectedTaskContext?.task.status === 'finished' ? getModelDefinition(selectedTaskContext.modelId).outputLayers : []" :layer-states="mapWorkspace.layerStates.value" :scene-entries="workbenchSceneEntries" :multi-radar-stations="activeMultiRadarTask?.stations ?? []" @select-model="selectWorkbenchModel" @update:active-tab="presentation.selectDockTab" @update:model-search="modelSearch = $event" @update-layer-visibility="setLayerVisibility" @update-layer-opacity="setLayerOpacity" @focus-layer="focusLayer" @update-scene-glb="setSceneGlbVisibility" @focus-scene-glb="focusSceneGlb" @focus-station="focusMultiRadarStation">
         <template #data><WorkbenchDataPane :dems="demManager.dems.value" :model-value="demManager.selectedDem.value" :loading="demManager.loading.value" :uploading="demManager.uploading.value" @update:model-value="demManager.select" @upload="(file) => runCommand(demManager.upload, file)" @delete="(demId) => runCommand(demManager.remove, demId)" @refresh="runCommand(demManager.load)" /></template>
       </WorkbenchDock>
     </template>
@@ -220,7 +220,8 @@ import { applySpatialDraftToRequest, spatialDraftFromRequest } from "./models/sp
 import { useRadarAnalysis } from "./models/radar/useRadarAnalysis";
 import { createHeightLayerLoader } from "./models/radar/heightLayerLoader";
 import { getCoverageTask, type CoverageTaskStatus } from "./api/radar";
-import type { MultiRadarTask } from "./models/multiRadar/types";
+import { createMultiRadarTask, getMultiRadarTask } from "./api/multiRadar";
+import type { MultiRadarPresentationMode, MultiRadarStationInput, MultiRadarTask } from "./models/multiRadar/types";
 import { createFusionSceneTask } from "./models/multiRadar/fusionScene";
 import {
   cooperativeStationSceneTaskIds,
@@ -282,6 +283,7 @@ const multiRadarAdapter = createMultiRadarLayerAdapter({
 const heightLayerLoader = createHeightLayerLoader(fetchJson);
 let heightRenderToken = 0;
 let lastRadarTaskId: string | null = null;
+let multiRadarPollTimer: number | null = null;
 const radarControlLayers = reactive<RadarControlLayer[]>([
   { kind: "volume", label: "Radar volume", color: "#22c55e", visible: true, opacity: 0.62, available: true },
   { kind: "boundary", label: "Request boundary", color: "#94a3b8", visible: false, opacity: 0.45, available: true },
@@ -407,6 +409,7 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(() => {
+  stopMultiRadarPolling();
   radarAnalysis.dispose();
   radarLayers.dispose();
   if (map.value) {
@@ -472,6 +475,8 @@ function selectModel(modelId: ModelId) {
   mapEditing.value = false;
   profilePicking.value = false;
   if (modelId !== "radar") {
+    stopMultiRadarPolling();
+    activeMultiRadarTask.value = null;
     if (map.value) multiRadarAdapter.clear(map.value);
     radarAnalysis.clearProfile();
     radarAnalysis.clearFusion();
@@ -638,11 +643,59 @@ function updateRunInputs(inputs: Record<string, string[]>) {
   if (terrainId) demManager.select(terrainId);
 }
 
-function submitModelRun({ request, inputs }: ModelRunSubmission) {
+function submitModelRun(submission: ModelRunSubmission) {
+  const { inputs } = submission;
   updateRunInputs(inputs);
-  updateDraft(request);
   runDialogOpen.value = false;
-  void submitTask(request);
+  if (submission.multiRadar) {
+    const demId = inputs.terrain?.[0] ?? "";
+    void submitMultiRadarRun(demId, submission.multiRadar.stations, submission.multiRadar.presentationMode);
+    return;
+  }
+  updateDraft(submission.request);
+  void submitTask(submission.request);
+}
+
+async function submitMultiRadarRun(
+  demId: string,
+  stations: MultiRadarStationInput[],
+  presentationMode: MultiRadarPresentationMode
+) {
+  submitting.value = true;
+  try {
+    const task = await createMultiRadarTask({ dem_id: demId, radars: stations, presentation_mode: presentationMode });
+    activeMultiRadarTask.value = task;
+    startMultiRadarPolling(task.task_id);
+  } catch (error) {
+    showError(error);
+  } finally {
+    submitting.value = false;
+  }
+}
+
+function startMultiRadarPolling(taskId: string) {
+  stopMultiRadarPolling();
+  multiRadarPollTimer = window.setInterval(() => {
+    void refreshMultiRadarTask(taskId);
+  }, 1000);
+}
+
+function stopMultiRadarPolling() {
+  if (multiRadarPollTimer !== null) window.clearInterval(multiRadarPollTimer);
+  multiRadarPollTimer = null;
+}
+
+async function refreshMultiRadarTask(taskId: string) {
+  try {
+    const task = await getMultiRadarTask(taskId);
+    activeMultiRadarTask.value = task;
+    if (!["finished", "partial", "failed"].includes(task.status)) return;
+    stopMultiRadarPolling();
+    if (task.status === "finished" || task.status === "partial") await showMultiRadarAggregate(task);
+  } catch (error) {
+    stopMultiRadarPolling();
+    showError(error);
+  }
 }
 
 async function submitTask(request: BaseModelRequest) {

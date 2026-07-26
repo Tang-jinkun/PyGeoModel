@@ -24,6 +24,29 @@ describe("ModelRunDialog", () => {
       inputs: { terrain: ["dem-1"] }
     });
   });
+
+  it("switches a radar dialog to the multi-radar station editor", async () => {
+    const wrapper = mount(ModelRunDialog, { props: dialogProps({ terrain: ["dem-1"] }) });
+
+    await wrapper.get('[data-radar-mode="multi"]').trigger("click");
+
+    expect(wrapper.find('[data-multi-radar-editor]').exists()).toBe(true);
+    expect(wrapper.find('[data-model-parameters]').exists()).toBe(false);
+  });
+
+  it("submits multi-radar data without the single-radar request", async () => {
+    const wrapper = mount(ModelRunDialog, { props: dialogProps({ terrain: ["dem-1"] }) });
+
+    await wrapper.get('[data-radar-mode="multi"]').trigger("click");
+    await wrapper.get("[data-action='run-analysis']").trigger("click");
+
+    const submission = wrapper.emitted("submit")?.[0]?.[0] as Record<string, unknown>;
+    expect(submission).toMatchObject({
+      inputs: { terrain: ["dem-1"] },
+      multiRadar: { presentationMode: "aggregate", stations: [{ radar_id: "R1" }, { radar_id: "R2" }] }
+    });
+    expect(submission).not.toHaveProperty("request");
+  });
 });
 
 function dialogProps(inputs: { terrain: string[] }) {
