@@ -49,11 +49,11 @@ function coordinateAt(path: string) {
   return value && typeof value.lon === "number" && typeof value.lat === "number" ? `${value.lon.toFixed(6)}, ${value.lat.toFixed(6)}` : "Pick on map";
 }
 function replace(path: string, value: unknown) {
-  const next = structuredClone(toRaw(props.modelValue)) as Record<string, unknown>;
+  const next = structuredClone(toRaw(props.modelValue)) as unknown as Record<string, unknown>;
   const keys = path.split("."); let target = next;
   for (const key of keys.slice(0, -1)) target = target[key] as Record<string, unknown>;
   target[keys.at(-1)!] = value;
-  emit("update:modelValue", next as BaseModelRequest);
+  emit("update:modelValue", next as unknown as BaseModelRequest);
 }
 function updateNumber(path: string, event: Event) { const value = (event.target as HTMLInputElement).valueAsNumber; if (Number.isFinite(value)) replace(path, value); }
 function updateBoolean(path: string, event: Event) { replace(path, (event.target as HTMLInputElement).checked); }

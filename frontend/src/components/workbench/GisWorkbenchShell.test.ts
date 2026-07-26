@@ -4,20 +4,20 @@ import { describe, expect, it } from "vitest";
 import GisWorkbenchShell from "./GisWorkbenchShell.vue";
 
 describe("GisWorkbenchShell", () => {
-  it("renders the six workbench regions and collapses the task center", async () => {
+  it("renders no inspector region and lets the map use its column", async () => {
     const wrapper = mount(GisWorkbenchShell, {
       slots: {
         topbar: "top",
         dock: "dock",
         map: "map",
-        inspector: "inspector",
         tasks: "tasks",
         status: "status"
       }
     });
 
     expect(wrapper.text()).toContain("top");
-    expect(wrapper.findAll("[data-workbench-region]")).toHaveLength(6);
+    expect(wrapper.findAll("[data-workbench-region]")).toHaveLength(5);
+    expect(wrapper.find("[data-workbench-region='inspector']").exists()).toBe(false);
 
     await wrapper.get('[aria-label="Collapse task center"]').trigger("click");
 

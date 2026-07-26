@@ -9,7 +9,7 @@ const demA = {
   dem_id: "dem-a",
   filename: "a.tif",
   crs: "EPSG:4326",
-  bounds: [79, 31, 80, 32],
+  bounds: [-180, -90, 180, 90],
   resolution: [30, 30],
   width: 100,
   height: 100,
@@ -117,7 +117,8 @@ describe("MapWorkspace", () => {
       props: {
         kind: "point-or-route",
         draft: createSpatialDraft("point-or-route"),
-        editing: true
+        editing: true,
+        dem: demA
       }
     });
     const map = mapHarness.instances[0];
@@ -143,7 +144,8 @@ describe("MapWorkspace", () => {
       props: {
         kind: "start-end",
         draft: createSpatialDraft("start-end"),
-        editing: true
+        editing: true,
+        dem: demA
       }
     });
     const map = mapHarness.instances[0];
@@ -167,6 +169,7 @@ describe("MapWorkspace", () => {
         kind: "start-end-threats",
         draft: createSpatialDraft("start-end-threats"),
         editing: true,
+        dem: demA,
         editTarget: "threat"
       }
     });
@@ -180,18 +183,17 @@ describe("MapWorkspace", () => {
     }]);
   });
 
-  it("always renders finish, undo, and clear commands while editing", () => {
+  it("leaves editing commands to the parent map-pick bar", () => {
     const wrapper = mount(MapWorkspace, {
       props: {
         kind: "point",
         draft: createSpatialDraft("point"),
-        editing: true
+        editing: true,
+        dem: demA
       }
     });
 
-    expect(wrapper.get('[data-action="finish-editing"]')).toBeTruthy();
-    expect(wrapper.get('[data-action="undo-editing"]')).toBeTruthy();
-    expect(wrapper.get('[data-action="clear-editing"]')).toBeTruthy();
+    expect(wrapper.find('[data-action="finish-editing"]').exists()).toBe(false);
   });
 
   it("runs custom layer cleanup when the map is removed", () => {

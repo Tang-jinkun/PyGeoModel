@@ -2,11 +2,7 @@ import { ref } from "vue";
 
 import { deleteDem, listDems, uploadDem, type DemMetadata } from "../api/dem";
 
-export interface DemWorkspaceSync {
-  setDemForAll(demId: string | null): void;
-}
-
-export function useDemManager(workspace: DemWorkspaceSync) {
+export function useDemManager() {
   const dems = ref<DemMetadata[]>([]);
   const selectedDem = ref<string | null>(null);
   const loading = ref(false);
@@ -37,7 +33,6 @@ export function useDemManager(workspace: DemWorkspaceSync) {
   function select(demId: string | null) {
     selectionGeneration++;
     selectedDem.value = demId;
-    workspace.setDemForAll(demId);
   }
 
   async function upload(file: File) {

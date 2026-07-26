@@ -7,16 +7,12 @@
       </WorkbenchDock>
     </template>
     <template #map>
-      <div class="workspace-map-stack"><MapWorkspace :key="workspace.selectedModel.value" :kind="activeDefinition.spatialInput" :draft="mapWorkspace.draft.value" :editing="mapEditing" :edit-target="mapEditTarget" :dem="selectedDem" @map-ready="setMap" @spatial-edit="applyMapEdit" @finish="mapEditing = false" /></div>
-    </template>
-    <template #inspector>
-      <WorkbenchInspector :mode="presentation.inspectorMode.value" :context="selectedTaskContext" @show-parameters="presentation.showParameters">
-        <template #parameters><div class="workspace-parameter-stack"><header class="workspace-panel-heading"><div><span>鍒嗘瀽妯″瀷鍙傛暟</span><h1 data-parameter-heading>{{ activeDefinition.label }}</h1></div></header><WorkbenchParameterPanel :model-id="workspace.selectedModel.value" :model-value="workspace.currentDraft.value.request" :submitting="submitting" @update:model-value="updateDraft" @submit="submitTask(workspace.currentDraft.value.request)" @activate-map-tool="activateMapTool" /></div></template>
-      </WorkbenchInspector>
+      <div class="workspace-map-stack"><MapWorkspace :key="workspace.selectedModel.value" :kind="activeDefinition.spatialInput" :draft="mapWorkspace.draft.value" :editing="mapEditing" :edit-target="mapEditTarget" :dem="selectedDem" @map-ready="setMap" @spatial-edit="applyMapEdit" @out-of-bounds="showError(new Error('Pick a location inside the selected DEM.'))" /><MapPickBar v-if="mapEditing" :target="mapEditTarget === 'auto' ? 'point' : mapEditTarget" @cancel="finishMapPicking" @undo="applyMapEdit({ type: 'undo' })" @finish="finishMapPicking" /></div>
     </template>
     <template #tasks><WorkbenchTaskCenter :rows="workbenchTaskRows" :active-tab="presentation.taskTab.value" @update:active-tab="presentation.selectTaskTab" @select-task="selectWorkbenchTask" /></template>
     <template #status><div class="workbench-status">褰撳墠 DEM: {{ selectedDem?.filename ?? '鏈€夋嫨' }}<span>EPSG:4326</span><span :data-connected="!taskManager.connectionInterrupted.value">浠诲姟杞</span></div></template>
   </GisWorkbenchShell>
+  <ModelRunDialog v-if="configuredModelId" :open="runDialogOpen" :model-id="configuredModelId" :request="workspace.currentDraft.value.request" :inputs="workspace.inputSelectionsFor(configuredModelId)" :slots="activeDefinition.inputSlots" :assets="demManager.dems.value" :submitting="submitting" @update:open="runDialogOpen = $event" @update:request="updateDraft" @update:inputs="updateRunInputs" @activate-map-tool="activateMapTool" @submit="submitModelRun" />
 
   <!-- legacy shell retained below during migration -->
   <!--
@@ -184,10 +180,10 @@ import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, shallowR
 import GisWorkbenchShell from "./components/workbench/GisWorkbenchShell.vue";
 import WorkbenchDataPane from "./components/workbench/WorkbenchDataPane.vue";
 import WorkbenchDock, { type RadarControlKind, type RadarControlLayer, type RadarHeightOption, type WorkbenchSceneEntry } from "./components/workbench/WorkbenchDock.vue";
-import WorkbenchInspector from "./components/workbench/WorkbenchInspector.vue";
-import WorkbenchParameterPanel from "./components/workbench/WorkbenchParameterPanel.vue";
+import ModelRunDialog, { type ModelRunSubmission } from "./components/workbench/ModelRunDialog.vue";
 import WorkbenchTaskCenter from "./components/workbench/WorkbenchTaskCenter.vue";
 import WorkbenchTopbar from "./components/workbench/WorkbenchTopbar.vue";
+import MapPickBar from "./components/map/MapPickBar.vue";
 import MapWorkspace from "./components/map/MapWorkspace.vue";
 import { useDemManager } from "./composables/useDemManager";
 import { useMapWorkspace, type SceneGlbKind } from "./composables/useMapWorkspace";
@@ -248,7 +244,7 @@ interface HeightManifest {
 }
 
 const workspace = useModelWorkspace();
-const demManager = useDemManager(workspace);
+const demManager = useDemManager();
 const taskManager = useTaskManager({ pollIntervalMs: 1000 });
 const presentation = useWorkbenchPresentation(taskManager.selectedTaskKey);
 const modelSearch = ref("");
@@ -263,6 +259,8 @@ const submitting = ref(false);
 const mapEditing = ref(false);
 const profilePicking = ref(false);
 const mapEditTarget = ref<MapEditTarget>("auto");
+const runDialogOpen = ref(false);
+const configuredModelId = ref<ModelId | null>(null);
 const renderedTaskLayers = new Map<string, string>();
 const renderedHeightLayers = new Map<string, string>();
 const radarLayerErrors = ref<string[]>([]);
@@ -490,6 +488,8 @@ function selectModel(modelId: ModelId) {
 function selectWorkbenchModel(modelId: ModelId) {
   presentation.selectModel();
   selectModel(modelId);
+  configuredModelId.value = modelId;
+  runDialogOpen.value = true;
 }
 
 function selectWorkbenchTask(modelId: ModelId, taskId: string) {
@@ -630,6 +630,21 @@ function updateDraft(request: BaseModelRequest) {
   syncSpatialDraft();
 }
 
+function updateRunInputs(inputs: Record<string, string[]>) {
+  const modelId = configuredModelId.value;
+  if (!modelId) return;
+  workspace.updateInputSelections(modelId, inputs);
+  const terrainId = inputs.terrain?.[0] ?? null;
+  if (terrainId) demManager.select(terrainId);
+}
+
+function submitModelRun({ request, inputs }: ModelRunSubmission) {
+  updateRunInputs(inputs);
+  updateDraft(request);
+  runDialogOpen.value = false;
+  void submitTask(request);
+}
+
 async function submitTask(request: BaseModelRequest) {
   submitting.value = true;
   try {
@@ -658,6 +673,12 @@ function activateMapTool(operation: MapEditTarget = "auto") {
   profilePicking.value = false;
   mapEditTarget.value = operation;
   mapEditing.value = true;
+  runDialogOpen.value = false;
+}
+
+function finishMapPicking() {
+  mapEditing.value = false;
+  if (configuredModelId.value) runDialogOpen.value = true;
 }
 
 function toggleProfilePicking() {
@@ -675,6 +696,7 @@ function applyMapEdit(action: SpatialDraftAction) {
   );
   workspace.currentDraft.value = { modelId: current.modelId, request } as ActiveDraft;
   mapWorkspace.replaceDraft(spatialDraftFromRequest(current.modelId, request));
+  if (action.type !== "undo" && action.type !== "clear" && mapEditTarget.value !== "route") finishMapPicking();
 }
 
 function syncSpatialDraft() {

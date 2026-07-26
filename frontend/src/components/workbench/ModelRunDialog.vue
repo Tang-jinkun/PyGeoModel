@@ -22,7 +22,6 @@ import { Close } from "@element-plus/icons-vue";
 import { ElIcon } from "element-plus";
 import { computed, ref } from "vue";
 
-import type { DemMetadata } from "../../api/dem";
 import { applyInputSelections, type InputSlotDefinition, type ModelInputSelections } from "../../models/inputSlots";
 import { getModelDefinition, type ModelId } from "../../models/registry";
 import type { BaseModelRequest } from "../../models/shared";
@@ -32,7 +31,7 @@ import ModelParameterFields from "./ModelParameterFields.vue";
 type MapTool = "point" | "route" | "start" | "end" | "threat";
 export interface ModelRunSubmission { request: BaseModelRequest; inputs: ModelInputSelections; }
 
-const props = defineProps<{ open: boolean; modelId: ModelId; request: BaseModelRequest; inputs: ModelInputSelections; slots: readonly InputSlotDefinition[]; assets: readonly DemMetadata[]; submitting: boolean }>();
+const props = defineProps<{ open: boolean; modelId: ModelId; request: BaseModelRequest; inputs: ModelInputSelections; slots: readonly InputSlotDefinition[]; assets: readonly { dem_id: string; filename: string }[]; submitting: boolean }>();
 const emit = defineEmits<{ "update:open": [open: boolean]; "update:request": [request: BaseModelRequest]; "update:inputs": [inputs: ModelInputSelections]; "activate-map-tool": [tool: MapTool]; submit: [submission: ModelRunSubmission] }>();
 const showValidation = ref(false);
 const definition = computed(() => getModelDefinition(props.modelId));

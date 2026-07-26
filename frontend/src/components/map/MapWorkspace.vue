@@ -1,23 +1,10 @@
 <template>
   <section ref="workspace" class="map-workspace" aria-label="Interactive map">
     <div ref="mapContainer" class="map-workspace__canvas"></div>
-    <div v-if="editing" class="map-workspace__toolbar" role="toolbar" aria-label="Map editing commands">
-      <ElTooltip content="Finish editing" :show-after="300">
-        <ElButton circle :icon="Check" data-action="finish-editing" aria-label="Finish editing" @click="emit('finish')" />
-      </ElTooltip>
-      <ElTooltip content="Undo edit" :show-after="300">
-        <ElButton circle :icon="RefreshLeft" data-action="undo-editing" aria-label="Undo edit" @click="emitCommand('undo')" />
-      </ElTooltip>
-      <ElTooltip content="Clear spatial input" :show-after="300">
-        <ElButton circle :icon="Delete" data-action="clear-editing" aria-label="Clear spatial input" @click="emitCommand('clear')" />
-      </ElTooltip>
-    </div>
   </section>
 </template>
 
 <script setup lang="ts">
-import { Check, Delete, RefreshLeft } from "@element-plus/icons-vue";
-import { ElButton, ElTooltip } from "element-plus";
 import mapboxgl from "mapbox-gl";
 import { onBeforeUnmount, onMounted, ref, shallowRef, toRaw, watch } from "vue";
 
@@ -37,6 +24,7 @@ import type {
 import type { SpatialInputKind } from "../../models/shared";
 import { applyMapboxAccessToken } from "../../map/mapboxAccessToken";
 import { createTiandituStyle } from "../../map/tiandituStyle";
+import { isCoordinateInDemBounds } from "../../map/mapPickPolicy";
 
 type EditTarget = "auto" | "point" | "route" | "start" | "end" | "threat";
 
@@ -66,9 +54,7 @@ const emit = defineEmits<{
   "coordinate-edit": [coordinate: SpatialCoordinate];
   "spatial-edit": [action: SpatialDraftAction];
   "map-ready": [map: mapboxgl.Map];
-  finish: [];
-  undo: [];
-  clear: [];
+  "out-of-bounds": [coordinate: SpatialCoordinate];
 }>();
 
 const workspace = ref<HTMLElement | null>(null);
@@ -144,6 +130,10 @@ function syncDem(instance: mapboxgl.Map, dem: DemMetadata | null) {
 function handleMapClick(event: mapboxgl.MapMouseEvent) {
   if (!props.editing) return;
   const coordinate = normalizeCoordinate([event.lngLat.lng, event.lngLat.lat]);
+  if (!props.dem || !isCoordinateInDemBounds(coordinate, props.dem.bounds)) {
+    emit("out-of-bounds", coordinate);
+    return;
+  }
   emit("coordinate-edit", coordinate);
   const action = actionForCoordinate(coordinate);
   if (action) emit("spatial-edit", action);
@@ -173,15 +163,6 @@ function normalizeCoordinate([longitude, latitude]: SpatialCoordinate): SpatialC
 
 function roundCoordinate(value: number) {
   return Math.round(value * 1_000_000) / 1_000_000;
-}
-
-function emitCommand(type: "undo" | "clear") {
-  if (type === "undo") {
-    emit("undo");
-  } else {
-    emit("clear");
-  }
-  emit("spatial-edit", { type });
 }
 
 function resizeAfterTransition() {
@@ -214,17 +195,4 @@ defineExpose({ map, resize, focusBounds });
   inset: 0;
 }
 
-.map-workspace__toolbar {
-  position: absolute;
-  z-index: 2;
-  top: 10px;
-  left: 10px;
-  display: flex;
-  gap: 4px;
-  padding: 4px;
-  border: 1px solid #dcdfe6;
-  border-radius: 6px;
-  background: #ffffff;
-  box-shadow: 0 1px 4px rgb(0 0 0 / 14%);
-}
 </style>

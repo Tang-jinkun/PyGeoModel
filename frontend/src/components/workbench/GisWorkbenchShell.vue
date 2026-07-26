@@ -9,9 +9,6 @@
     <section class="gis-workbench__map" data-workbench-region="map">
       <slot name="map" />
     </section>
-    <aside class="gis-workbench__inspector panel" data-workbench-region="inspector">
-      <slot name="inspector" />
-    </aside>
     <section class="gis-workbench__tasks panel" data-workbench-region="tasks">
       <div class="gis-workbench__task-command">
         <button
@@ -85,10 +82,10 @@ function toggleTasks() {
   background: var(--wb-surface);
   grid-template-areas:
     "top top top"
-    "dock map inspector"
-    "tasks tasks tasks"
-    "status status status";
-  grid-template-columns: 292px minmax(360px, 1fr) 328px;
+    "dock map"
+    "tasks tasks"
+    "status status";
+  grid-template-columns: 292px minmax(360px, 1fr);
   grid-template-rows: 52px minmax(0, 1fr) auto 26px;
 }
 
@@ -108,7 +105,6 @@ function toggleTasks() {
 .gis-workbench__topbar { grid-area: top; }
 .gis-workbench__dock { grid-area: dock; }
 .gis-workbench__map { grid-area: map; min-width: 0; min-height: 0; overflow: hidden; border-radius: var(--wb-radius-md); box-shadow: var(--wb-elev-ring); }
-.gis-workbench__inspector { grid-area: inspector; }
 .gis-workbench__tasks { position: relative; grid-area: tasks; }
 .gis-workbench__status { grid-area: status; }
 
@@ -136,7 +132,7 @@ function toggleTasks() {
 .gis-workbench[data-tasks-collapsed="true"] .gis-workbench__collapse :deep(.el-icon) { transform: rotate(180deg); }
 
 @media (max-width: 1279px) {
-  .gis-workbench { grid-template-columns: 252px minmax(320px, 1fr) 300px; }
+  .gis-workbench { grid-template-columns: 252px minmax(320px, 1fr); }
 }
 
 @media (max-width: 820px) {
@@ -150,7 +146,6 @@ function toggleTasks() {
     grid-template-rows: 52px minmax(0, 1fr) auto 26px;
   }
 
-  .gis-workbench__dock,
-  .gis-workbench__inspector { display: none; }
+  .gis-workbench__dock { display: none; }
 }
 </style>

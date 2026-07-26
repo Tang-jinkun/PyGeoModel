@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { deleteDem, listDems, uploadDem, type DemMetadata } from "../api/dem";
 import { useDemManager } from "./useDemManager";
-import { useModelWorkspace } from "./useModelWorkspace";
 
 vi.mock("../api/dem", () => ({
   deleteDem: vi.fn(),
@@ -37,11 +36,7 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-function createManagerWithWorkspace() {
-  const workspace = useModelWorkspace();
-  const manager = useDemManager({ setDemForAll: workspace.setDemForAll });
-  return { manager, workspace };
-}
+function createManager() { return useDemManager(); }
 
 describe("useDemManager", () => {
   beforeEach(() => {
@@ -50,35 +45,33 @@ describe("useDemManager", () => {
     vi.mocked(uploadDem).mockReset();
   });
 
-  it("selects a DEM for every model draft", async () => {
+  it("selects a DEM for the map without mutating model drafts", async () => {
     vi.mocked(listDems).mockResolvedValue([demA]);
-    const { manager, workspace } = createManagerWithWorkspace();
+    const manager = createManager();
 
     await manager.load();
     manager.select(demA.dem_id);
 
     expect(manager.dems.value).toEqual([demA]);
     expect(manager.selectedDem.value).toBe("dem-a");
-    expect(Object.values(workspace.drafts).every(({ dem_id }) => dem_id === "dem-a")).toBe(true);
     expect(manager.loading.value).toBe(false);
   });
 
-  it("selects an uploaded DEM for every model draft", async () => {
+  it("selects an uploaded DEM for the map", async () => {
     vi.mocked(uploadDem).mockResolvedValue(demA);
-    const { manager, workspace } = createManagerWithWorkspace();
+    const manager = createManager();
 
     await manager.upload(new File(["elevation"], demA.filename, { type: "image/tiff" }));
 
     expect(manager.dems.value).toEqual([demA]);
     expect(manager.selectedDem.value).toBe(demA.dem_id);
-    expect(Object.values(workspace.drafts).every(({ dem_id }) => dem_id === demA.dem_id)).toBe(true);
     expect(manager.uploading.value).toBe(false);
   });
 
   it("does not let a late upload replace a newer explicit DEM selection", async () => {
     const pendingUpload = deferred<DemMetadata>();
     vi.mocked(uploadDem).mockReturnValueOnce(pendingUpload.promise);
-    const { manager, workspace } = createManagerWithWorkspace();
+    const manager = createManager();
 
     const upload = manager.upload(new File(["b"], demB.filename));
     manager.select(demA.dem_id);
@@ -87,11 +80,10 @@ describe("useDemManager", () => {
 
     expect(manager.dems.value).toEqual([demB]);
     expect(manager.selectedDem.value).toBe(demA.dem_id);
-    expect(Object.values(workspace.drafts).every(({ dem_id }) => dem_id === demA.dem_id)).toBe(true);
   });
 
   it("clears a selected DEM and every draft only after backend deletion succeeds", async () => {
-    const { manager, workspace } = createManagerWithWorkspace();
+    const manager = createManager();
     vi.mocked(listDems).mockResolvedValue([demA]);
     await manager.load();
     manager.select(demA.dem_id);
@@ -100,14 +92,12 @@ describe("useDemManager", () => {
     await expect(manager.remove(demA.dem_id)).rejects.toThrow("delete failed");
     expect(manager.selectedDem.value).toBe(demA.dem_id);
     expect(manager.dems.value).toEqual([demA]);
-    expect(Object.values(workspace.drafts).every(({ dem_id }) => dem_id === demA.dem_id)).toBe(true);
 
     vi.mocked(deleteDem).mockResolvedValueOnce({ dem_id: demA.dem_id, deleted: true });
     await manager.remove(demA.dem_id);
 
     expect(manager.selectedDem.value).toBeNull();
     expect(manager.dems.value).toEqual([]);
-    expect(Object.values(workspace.drafts).every(({ dem_id }) => dem_id === "")).toBe(true);
   });
 
   it("keeps only the newest load result when an older load resolves last", async () => {
@@ -116,7 +106,7 @@ describe("useDemManager", () => {
     vi.mocked(listDems)
       .mockReturnValueOnce(older.promise)
       .mockReturnValueOnce(newer.promise);
-    const { manager } = createManagerWithWorkspace();
+    const manager = createManager();
 
     const firstLoad = manager.load();
     const secondLoad = manager.load();
@@ -134,7 +124,7 @@ describe("useDemManager", () => {
     vi.mocked(listDems)
       .mockReturnValueOnce(first.promise)
       .mockReturnValueOnce(second.promise);
-    const { manager } = createManagerWithWorkspace();
+    const manager = createManager();
 
     const firstLoad = manager.load();
     const secondLoad = manager.load();
@@ -155,7 +145,7 @@ describe("useDemManager", () => {
     vi.mocked(uploadDem)
       .mockReturnValueOnce(first.promise)
       .mockReturnValueOnce(second.promise);
-    const { manager } = createManagerWithWorkspace();
+    const manager = createManager();
 
     const firstUpload = manager.upload(new File(["a"], demA.filename));
     const secondUpload = manager.upload(new File(["b"], demB.filename));
@@ -175,7 +165,7 @@ describe("useDemManager", () => {
     const pending = deferred<DemMetadata[]>();
     vi.mocked(listDems).mockReturnValueOnce(pending.promise);
     vi.mocked(uploadDem).mockResolvedValue(demB);
-    const { manager } = createManagerWithWorkspace();
+    const manager = createManager();
 
     const load = manager.load();
     await manager.upload(new File(["b"], demB.filename));
@@ -191,7 +181,7 @@ describe("useDemManager", () => {
       .mockResolvedValueOnce([demA])
       .mockReturnValueOnce(pending.promise);
     vi.mocked(deleteDem).mockResolvedValue({ dem_id: demA.dem_id, deleted: true });
-    const { manager } = createManagerWithWorkspace();
+    const manager = createManager();
     await manager.load();
     manager.select(demA.dem_id);
 
