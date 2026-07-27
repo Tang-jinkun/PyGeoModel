@@ -2,7 +2,7 @@
   <GisWorkbenchShell :tasks-collapsed="presentation.taskCenterCollapsed.value" :inspector-open="presentation.inspectorMode.value === 'result' && Boolean(selectedWorkbenchResultContext)" @update:tasks-collapsed="presentation.toggleTaskCenter">
     <template #topbar><WorkbenchTopbar :dem-label="selectedDem?.filename ?? 'No DEM selected'" :connected="!taskManager.connectionInterrupted.value" :search="modelSearch" @update:search="modelSearch = $event" /></template>
     <template #dock>
-      <WorkbenchDock :model-value="workspace.selectedModel.value" :active-tab="presentation.dockTab.value" :model-search="modelSearch" :layer-definitions="selectedTaskContext?.task.status === 'finished' ? getModelDefinition(selectedTaskContext.modelId).outputLayers : []" :layer-states="mapWorkspace.layerStates.value" :scene-entries="workbenchSceneEntries" :multi-radar-stations="activeMultiRadarTask?.stations ?? []" @select-model="selectWorkbenchModel" @update:active-tab="presentation.selectDockTab" @update:model-search="modelSearch = $event" @update-layer-visibility="setLayerVisibility" @update-layer-opacity="setLayerOpacity" @focus-layer="focusLayer" @update-scene-glb="setSceneGlbVisibility" @focus-scene-glb="focusSceneGlb" @focus-station="focusMultiRadarStation">
+      <WorkbenchDock :model-value="workspace.selectedModel.value" :active-tab="presentation.dockTab.value" :model-search="modelSearch" :layer-definitions="selectedLayerDefinitions" :layer-states="selectedLayerStates" :scene-entries="workbenchSceneEntries" :multi-radar-stations="activeMultiRadarTask?.stations ?? []" @select-model="selectWorkbenchModel" @update:active-tab="presentation.selectDockTab" @update:model-search="modelSearch = $event" @update-layer-visibility="setLayerVisibility" @update-layer-opacity="setLayerOpacity" @focus-layer="focusLayer" @update-scene-glb="setSceneGlbVisibility" @focus-scene-glb="focusSceneGlb" @focus-station="focusMultiRadarStation">
         <template #data><WorkbenchDataPane :dems="demManager.dems.value" :model-value="demManager.selectedDem.value" :loading="demManager.loading.value" :uploading="demManager.uploading.value" @update:model-value="demManager.select" @upload="(file) => runCommand(demManager.upload, file)" @delete="(demId) => runCommand(demManager.remove, demId)" @refresh="runCommand(demManager.load)" /></template>
       </WorkbenchDock>
     </template>
@@ -257,7 +257,7 @@ import {
 } from "./models/multiRadar/cooperativeScene";
 import { requestGeoJson } from "./api/http";
 import { createTaskClient } from "./api/tasks";
-import { createMultiRadarLayerAdapter } from "./map/multiRadarLayerAdapter";
+import { createMultiRadarLayerAdapter, MULTI_RADAR_LAYER_DEFINITIONS } from "./map/multiRadarLayerAdapter";
 
 type MapEditTarget = "auto" | "point" | "route" | "start" | "end" | "threat";
 type GenericTask = TaskSummary<BaseModelRequest, unknown, unknown, unknown>;
@@ -290,6 +290,7 @@ const selectedHeightM = ref<number | null>(null);
 const activeHeightData = shallowRef<HeightLayerData[]>([]);
 const activeMultiRadarTask = shallowRef<MultiRadarTask | null>(null);
 const selectedMultiRadarResultTask = shallowRef<MultiRadarTask | null>(null);
+const multiRadarLayerVersion = ref(0);
 const multiRadarTasks = ref<MultiRadarTask[]>([]);
 const multiRadarDetailTasks = new Map<string, CoverageTaskStatus>();
 const multiRadarDetailStationIds = ref<string[]>([]);
@@ -344,6 +345,17 @@ const selectedInspectorMetrics = computed<Record<string, unknown> | null>(() => 
 const selectedInspectorOutputFiles = computed<readonly OutputFile[]>(() => {
   const multiRadarTask = selectedMultiRadarResultTask.value;
   return multiRadarTask ? multiRadarTask.output_files : mapWorkspace.outputFiles.value;
+});
+const selectedLayerDefinitions = computed(() => selectedMultiRadarResultTask.value
+  ? MULTI_RADAR_LAYER_DEFINITIONS
+  : selectedTaskContext.value?.task.status === "finished"
+    ? getModelDefinition(selectedTaskContext.value.modelId).outputLayers
+    : []);
+const selectedLayerStates = computed(() => {
+  multiRadarLayerVersion.value;
+  return selectedMultiRadarResultTask.value
+    ? multiRadarAdapter.layerStates()
+    : mapWorkspace.layerStates.value;
 });
 const workbenchSceneEntries = computed<WorkbenchSceneEntry[]>(() => {
   const context = selectedTaskContext.value;
@@ -513,6 +525,7 @@ function selectModel(modelId: ModelId) {
     stopMultiRadarPolling();
     activeMultiRadarTask.value = null;
     if (map.value) multiRadarAdapter.clear(map.value);
+    multiRadarLayerVersion.value += 1;
     radarAnalysis.clearProfile();
     radarAnalysis.clearFusion();
     if (map.value) {
@@ -570,6 +583,7 @@ async function showMultiRadarAggregate(task: MultiRadarTask, resolvedOutputFiles
       urls.map((url) => requestGeoJson<GeoJSON.GeoJSON>(url!))
     );
     multiRadarAdapter.showAggregate(instance, { visible, overlap, blind, coverageCount, stations });
+    multiRadarLayerVersion.value += 1;
     activeMultiRadarTask.value = task;
     if (task.request?.presentation_mode === "cooperative_3d") {
       await showMultiRadarCooperativeScene(task, outputFiles);
@@ -867,14 +881,28 @@ function handleMapLoad() {
 }
 
 function setLayerVisibility(kind: string, visible: boolean) {
+  if (selectedMultiRadarResultTask.value) {
+    if (map.value) multiRadarAdapter.setLayerVisibility(map.value, kind, visible);
+    multiRadarLayerVersion.value += 1;
+    return;
+  }
   mapWorkspace.setTaskLayerVisibility(kind, visible);
 }
 
 function setLayerOpacity(kind: string, opacity: number) {
+  if (selectedMultiRadarResultTask.value) {
+    if (map.value) multiRadarAdapter.setLayerOpacity(map.value, kind, opacity);
+    multiRadarLayerVersion.value += 1;
+    return;
+  }
   mapWorkspace.setTaskLayerOpacity(kind, opacity);
 }
 
 function focusLayer(kind: string) {
+  if (selectedMultiRadarResultTask.value) {
+    if (map.value) multiRadarAdapter.focusLayer(map.value, kind);
+    return;
+  }
   if (map.value) mapWorkspace.focusTaskLayer(map.value, kind);
 }
 

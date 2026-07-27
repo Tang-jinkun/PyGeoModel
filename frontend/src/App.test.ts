@@ -80,6 +80,24 @@ describe("App model run workflow", () => {
     expect(wrapper.get("[data-result-files] a").attributes("href"))
       .toBe("/api/radar/multi-coverage/multi-1/outputs/visible_union_geojson");
   });
+
+  it("shows multi-radar aggregate overlays in the existing layers tab", async () => {
+    const wrapper = mountApp();
+    await flushPromises();
+
+    await wrapper.findAll(".task-tab").find((tab) => tab.text().includes("历史记录"))!.trigger("click");
+    await wrapper.get('[data-action="layers"]').trigger("click");
+    await flushPromises();
+    await wrapper.get('[data-dock-tab="layers"]').trigger("click");
+
+    expect(wrapper.findAll('[data-layer-kind]').map((node) => node.attributes("data-layer-kind")))
+      .toEqual(expect.arrayContaining([
+        "visible_union_geojson",
+        "overlap_geojson",
+        "blind_geojson",
+        "coverage_count_geojson"
+      ]));
+  });
 });
 
 function mountApp() {
