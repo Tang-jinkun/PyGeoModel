@@ -26,7 +26,7 @@ export interface MultiRadarLayerState {
 
 const AGGREGATE_LAYER_CONFIG = [
   { kind: "visible_union_geojson", label: "Visible union", color: "#16a34a", geometry: "fill", defaultOpacity: 0.22, primary: true, mapId: "multi-radar-visible", opacityProperty: "fill-opacity", dataKey: "visible" },
-  { kind: "overlap_geojson", label: "Overlap", color: "#7c3aed", geometry: "fill", defaultOpacity: 0.3, mapId: "multi-radar-overlap", opacityProperty: "fill-opacity", dataKey: "overlap" },
+  { kind: "overlap_geojson", label: "Overlap", color: "#d4a017", geometry: "fill", defaultOpacity: 0.58, mapId: "multi-radar-overlap", opacityProperty: "fill-opacity", dataKey: "overlap" },
   { kind: "blind_geojson", label: "Blind area", color: "#dc2626", geometry: "fill", defaultOpacity: 0.22, mapId: "multi-radar-blind", opacityProperty: "fill-opacity", dataKey: "blind" },
   { kind: "coverage_count_geojson", label: "Coverage count", color: "#f59e0b", geometry: "line", defaultOpacity: 0.75, mapId: "multi-radar-count", opacityProperty: "line-opacity", dataKey: "coverageCount" }
 ] as const;
@@ -59,7 +59,7 @@ export function createMultiRadarLayerAdapter(options: MultiRadarLayerAdapterOpti
   return {
     showAggregate(map: Map, layers: MultiRadarAggregateLayers) {
       upsertGeoJsonLayer(map, "multi-radar-visible", layers.visible, "fill", { "fill-color": "#16a34a", "fill-opacity": 0.22 });
-      upsertGeoJsonLayer(map, "multi-radar-overlap", layers.overlap, "fill", { "fill-color": "#7c3aed", "fill-opacity": 0.3 });
+      upsertGeoJsonLayer(map, "multi-radar-overlap", layers.overlap, "fill", { "fill-color": "#d4a017", "fill-outline-color": "#facc15", "fill-opacity": 0.58 });
       upsertGeoJsonLayer(map, "multi-radar-blind", layers.blind, "fill", { "fill-color": "#dc2626", "fill-opacity": 0.22 });
       upsertGeoJsonLayer(map, "multi-radar-count", layers.coverageCount, "line", { "line-color": "#f59e0b", "line-width": 1.2, "line-opacity": 0.75 });
       upsertStationLayers(map, layers.stations);
@@ -88,6 +88,10 @@ export function createMultiRadarLayerAdapter(options: MultiRadarLayerAdapterOpti
     focusLayer(map: Map, kind: string) {
       const state = aggregateStates.find((candidate) => candidate.kind === kind);
       return state ? fitGeoJsonBounds(map, state.data) : false;
+    },
+    raiseLayer(map: Map, kind: string) {
+      const config = AGGREGATE_LAYER_CONFIG.find((candidate) => candidate.kind === kind);
+      if (config && map.getLayer(config.mapId)) map.moveLayer(config.mapId);
     },
     selectStationDetail,
     removeStationDetail,

@@ -23,12 +23,18 @@ describe("multi-radar layer adapter", () => {
     expect(adapter.layerStates()).toEqual(expect.arrayContaining([
       expect.objectContaining({ kind: "visible_union_geojson", status: "ready", visible: true })
     ]));
+    expect(map.addLayer).toHaveBeenCalledWith(expect.objectContaining({
+      id: "multi-radar-overlap",
+      paint: expect.objectContaining({ "fill-color": "#d4a017", "fill-outline-color": "#facc15" })
+    }));
 
     adapter.setLayerVisibility(map as never, "visible_union_geojson", false);
     adapter.setLayerOpacity(map as never, "visible_union_geojson", 0.4);
+    adapter.raiseLayer(map as never, "overlap_geojson");
 
     expect(map.setLayoutProperty).toHaveBeenCalledWith("multi-radar-visible", "visibility", "none");
     expect(map.setPaintProperty).toHaveBeenCalledWith("multi-radar-visible", "fill-opacity", 0.4);
+    expect(map.moveLayer).toHaveBeenCalledWith("multi-radar-overlap");
     expect(adapter.layerStates().find((layer) => layer.kind === "visible_union_geojson"))
       .toMatchObject({ visible: false, opacity: 0.4 });
   });
@@ -55,6 +61,7 @@ function fakeMap() {
     removeLayer: vi.fn((id: string) => layers.delete(id)),
     removeSource: vi.fn((id: string) => sources.delete(id)),
     setLayoutProperty: vi.fn(),
-    setPaintProperty: vi.fn()
+    setPaintProperty: vi.fn(),
+    moveLayer: vi.fn()
   };
 }

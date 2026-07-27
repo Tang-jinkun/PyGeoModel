@@ -592,6 +592,7 @@ async function showMultiRadarAggregate(task: MultiRadarTask, resolvedOutputFiles
     } else {
       await showMultiRadarFusion(task, outputFiles);
     }
+    multiRadarAdapter.raiseLayer(instance, "overlap_geojson");
   } catch (error) {
     showError(error);
   }
