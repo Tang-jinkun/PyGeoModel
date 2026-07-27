@@ -4,13 +4,13 @@ import os
 import shutil
 import subprocess
 from pathlib import Path
+from typing import Callable
 from uuid import uuid4
 
 import numpy
 from pyproj import Transformer
 from shapely.geometry import box, mapping
 
-from app.core.config import settings
 from app.core.errors import AppError
 from app.schemas.radar import (
     BeamClipProfile,
@@ -30,7 +30,9 @@ from app.services.coverage_model import (
 )
 from app.services.coverage_range import effective_max_range as _effective_max_range
 from app.services.geometry import make_range_geometry, project_geometry
-from app.services.output_files import OUTPUT_FILENAMES, describe_output_files, list_task_output_files
+from app.services.artifact_contracts import ArtifactSpec, get_output_contract
+from app.services.artifact_store import get_artifact_store
+from app.services.output_files import OUTPUT_FILENAMES, describe_output_files
 from app.services.task_store import mark_failed, mark_finished, mark_running
 from app.scene3d.radar import write_radar_coverage_glb
 from app.scene3d.radar_platform import write_radar_platform_glb
@@ -40,66 +42,11 @@ COVERAGE_MASK_ROW_CHUNK_SIZE = 256
 
 def run_coverage_task(task_id: str, payload: CoverageRequest) -> None:
     try:
-        mark_running(task_id, "Preparing DEM and projection.", 15)
-        output_dir = settings.outputs_dir / task_id
-        output_dir.mkdir(parents=True, exist_ok=True)
-        staging_dir = output_dir / f".staging-{uuid4().hex}"
-        staging_dir.mkdir(parents=True, exist_ok=False)
-
-        dem_path = find_dem_file(payload.dem_id)
-        projected_dem = staging_dir / "dem_projected.tif"
-
-        try:
-            prepared = prepare_coverage_dem(dem_path, projected_dem, payload)
-
-            mark_running(task_id, "Running gdal_viewshed (NORMAL).", 35)
-            viewshed = staging_dir / "viewshed.tif"
-            gdal_command = _run_gdal_viewshed(
-                projected_dem, viewshed, prepared.radar_x, prepared.radar_y, payload, mode="NORMAL"
-            )
-
-            mark_running(task_id, "Running gdal_viewshed (GROUND).", 50)
-            min_visible_height = staging_dir / "min_visible_height.tif"
-            _run_gdal_viewshed(
-                projected_dem, min_visible_height, prepared.radar_x, prepared.radar_y, payload, mode="GROUND"
-            )
-
-            mark_running(task_id, "Generating height layers and voxels.", 70)
-            _generate_height_layers(staging_dir, min_visible_height, prepared, payload)
-            _generate_voxels(staging_dir, min_visible_height, prepared, payload)
-            _generate_clipped_volume(staging_dir, min_visible_height, prepared, payload)
-
-            mark_running(task_id, "Generating target-independent radar GLB.", 80)
-            scene_metadata = write_radar_coverage_glb(
-                staging_dir / OUTPUT_FILENAMES["scene_glb"],
-                task_id=task_id,
-                prepared=prepared,
-                payload=payload,
-                min_visible_height=min_visible_height,
-            )
-            write_radar_platform_glb(
-                staging_dir / OUTPUT_FILENAMES["radar_platform_glb"],
-                task_id=task_id,
-                prepared=prepared,
-                payload=payload,
-                scan_azimuths_deg=scene_metadata["scan_animation"]["azimuth_deg"],
-            )
-
-            mark_running(task_id, "Vectorizing viewshed outputs.", 85)
-            outputs, output_files, metrics, model, diagnostics, warnings = _write_vector_outputs(
-                task_id,
-                staging_dir,
-                output_dir,
-                prepared,
-                payload,
-                viewshed,
-                min_visible_height,
-                gdal_command,
-                scene_metadata,
-            )
-        finally:
-            if staging_dir.exists():
-                shutil.rmtree(staging_dir, ignore_errors=True)
+        outputs, output_files, metrics, model, diagnostics, warnings = build_coverage_artifacts(
+            task_id,
+            payload,
+            lambda message, progress: mark_running(task_id, message, progress),
+        )
         mark_finished(
             task_id,
             metrics=metrics,
@@ -111,6 +58,87 @@ def run_coverage_task(task_id: str, payload: CoverageRequest) -> None:
         )
     except Exception as exc:
         mark_failed(task_id, str(exc))
+
+
+def build_coverage_artifacts(
+    task_id: str,
+    payload: CoverageRequest,
+    progress: Callable[[str, int], None],
+) -> tuple[CoverageOutputs, list[CoverageOutputFile], CoverageMetrics, CoverageModelMetadata, CoverageDiagnostics, list[str]]:
+    store = get_artifact_store()
+    contract = get_output_contract("radar")
+    staging_dir = store.create_staging_dir(task_id)
+    projected_dem = staging_dir / "dem_projected.tif"
+    try:
+        progress("Preparing DEM and projection.", 15)
+        prepared = prepare_coverage_dem(find_dem_file(payload.dem_id), projected_dem, payload)
+
+        progress("Running gdal_viewshed (NORMAL).", 35)
+        viewshed = staging_dir / "viewshed.tif"
+        gdal_command = _run_gdal_viewshed(
+            projected_dem, viewshed, prepared.radar_x, prepared.radar_y, payload, mode="NORMAL"
+        )
+
+        progress("Running gdal_viewshed (GROUND).", 50)
+        min_visible_height = staging_dir / "min_visible_height.tif"
+        _run_gdal_viewshed(
+            projected_dem, min_visible_height, prepared.radar_x, prepared.radar_y, payload, mode="GROUND"
+        )
+
+        progress("Generating height layers and voxels.", 70)
+        _generate_height_layers(staging_dir, min_visible_height, prepared, payload)
+        _generate_voxels(staging_dir, min_visible_height, prepared, payload)
+        _generate_clipped_volume(staging_dir, min_visible_height, prepared, payload)
+
+        progress("Generating target-independent radar GLB.", 80)
+        scene_metadata = write_radar_coverage_glb(
+            staging_dir / OUTPUT_FILENAMES["scene_glb"],
+            task_id=task_id,
+            prepared=prepared,
+            payload=payload,
+            min_visible_height=min_visible_height,
+        )
+        write_radar_platform_glb(
+            staging_dir / OUTPUT_FILENAMES["radar_platform_glb"],
+            task_id=task_id,
+            prepared=prepared,
+            payload=payload,
+            scan_azimuths_deg=scene_metadata["scan_animation"]["azimuth_deg"],
+        )
+
+        progress("Vectorizing viewshed outputs.", 85)
+        _, _, metrics, model, diagnostics, warnings = _write_vector_outputs(
+            task_id,
+            staging_dir,
+            prepared,
+            payload,
+            viewshed,
+            min_visible_height,
+            gdal_command,
+            scene_metadata,
+        )
+        projected_dem.unlink(missing_ok=True)
+        height_layers = payload.advanced.height_layers_m or [0, 100, 300, 500, 1000, 2000, 3000]
+        dynamic_specs = tuple(
+            ArtifactSpec(
+                kind=f"height_{layer_kind}_{_height_filename_token(height)}",
+                filename=f"{layer_kind}_h_{_height_filename_token(height)}.geojson",
+                media_type="application/geo+json",
+                label=f"Radar {layer_kind.title()} Height {height:g} m GeoJSON",
+            )
+            for height in height_layers
+            for layer_kind in ("visible", "blocked")
+        )
+        store.publish(task_id, contract, staging_dir, dynamic_artifacts=dynamic_specs)
+        output_files = [
+            CoverageOutputFile.model_validate(item.model_dump())
+            for item in store.list_descriptors(task_id, contract)
+        ]
+        outputs = _coverage_outputs_from_descriptors(output_files)
+        return outputs, output_files, metrics, model, diagnostics, warnings
+    finally:
+        if staging_dir.exists():
+            shutil.rmtree(staging_dir, ignore_errors=True)
 
 
 def _run_gdal_viewshed(
@@ -366,8 +394,8 @@ def _generate_height_layers(
         _write_height_layer_geojson(blocked_path, blocked_mask, transform, transformer, height, "blocked")
         manifest["height_layers"].append({
             "height_m": height,
-            "visible_filename": visible_path.name,
-            "blocked_filename": blocked_path.name,
+            "visible_kind": f"height_visible_{_height_filename_token(height)}",
+            "blocked_kind": f"height_blocked_{_height_filename_token(height)}",
             "theoretical_area_m2": _mask_area(theoretical_mask, transform),
             "visible_area_m2": _mask_area(visible_mask, transform),
             "blocked_area_m2": _mask_area(blocked_mask, transform),
@@ -601,7 +629,6 @@ def _generate_clipped_volume(
 def _write_vector_outputs(
     task_id: str,
     staging_dir: Path,
-    output_dir: Path,
     prepared: PreparedCoverageDem,
     payload: CoverageRequest,
     viewshed: Path,
@@ -703,22 +730,11 @@ def _write_vector_outputs(
         radar_equation_limited_area_m2=radar_equation_limited_area,
         notes=_build_diagnostic_notes(payload, effective_range, radar_equation_range),
     )
-    outputs = CoverageOutputs(
-        viewshed_tif=f"/outputs/{task_id}/{viewshed.name}",
-        visible_geojson=f"/outputs/{task_id}/{visible_geojson.name}",
-        blocked_geojson=f"/outputs/{task_id}/{blocked_geojson.name}",
-        range_geojson=f"/outputs/{task_id}/{range_geojson.name}",
-        model_metadata_json=f"/outputs/{task_id}/{model_metadata_json.name}",
-        output_manifest_json=f"/outputs/{task_id}/{output_manifest_json.name}",
-        min_visible_height_tif=f"/outputs/{task_id}/{min_visible_height.name}",
-        voxel_manifest_json=f"/outputs/{task_id}/voxel_manifest.json",
-        voxel_points_bin=f"/outputs/{task_id}/voxel_points.bin",
-        clipped_volume_manifest_json=f"/outputs/{task_id}/clipped_volume_manifest.json",
-        clipped_volume_cells_bin=f"/outputs/{task_id}/clipped_volume_cells.bin",
-        height_layers_manifest_json=f"/outputs/{task_id}/height_layers_manifest.json",
-        scene_glb=f"/outputs/{task_id}/{OUTPUT_FILENAMES['scene_glb']}",
-        radar_platform_glb=f"/outputs/{task_id}/{OUTPUT_FILENAMES['radar_platform_glb']}",
-    )
+    contract = get_output_contract("radar")
+    outputs = CoverageOutputs(**{
+        spec.kind: contract.download_path_template.format(task_id=task_id, kind=spec.kind)
+        for spec in contract.artifacts
+    })
     height_layers = payload.advanced.height_layers_m or [0, 100, 300, 500, 1000, 2000, 3000]
     model = CoverageModelMetadata(
         coverage_contract_version=2,
@@ -770,11 +786,17 @@ def _write_vector_outputs(
     _write_output_manifest(output_manifest_json, [], metrics, model, warnings, diagnostics)
     manifest_files = describe_output_files(task_id, output_paths)
     _write_output_manifest(output_manifest_json, manifest_files, metrics, model, warnings, diagnostics)
-    _ensure_staged_outputs_exist(staging_dir)
-    _commit_staged_outputs(staging_dir, output_dir)
-    output_files = list_task_output_files(task_id)
-    _ensure_finished_outputs_exist(output_files)
-    return outputs, output_files, metrics, model, diagnostics, warnings
+    return outputs, manifest_files, metrics, model, diagnostics, warnings
+
+
+def _coverage_outputs_from_descriptors(
+    output_files: list[CoverageOutputFile],
+) -> CoverageOutputs:
+    paths = {item.kind: item.download_path for item in output_files}
+    return CoverageOutputs(**{
+        field: paths.get(field)
+        for field in CoverageOutputs.model_fields
+    })
 
 
 def _write_output_manifest(
@@ -851,43 +873,6 @@ def _write_feature_collection(path: Path, geometry, properties: dict | None = No
 
 def _write_feature_collection_geojson(path: Path, features: list) -> None:
     _write_json_atomic(path, {"type": "FeatureCollection", "features": features})
-
-
-def _ensure_finished_outputs_exist(output_files: list[CoverageOutputFile]) -> None:
-    missing = [item.kind for item in output_files if not item.exists or item.size_bytes is None or item.size_bytes <= 0]
-    if missing:
-        raise AppError(
-            "OUTPUT_INCOMPLETE",
-            f"Coverage task outputs are incomplete: {', '.join(missing)}.",
-            status_code=500,
-        )
-
-
-def _ensure_staged_outputs_exist(staging_dir: Path) -> None:
-    missing = [
-        kind
-        for kind, filename in OUTPUT_FILENAMES.items()
-        if not (staging_dir / filename).exists() or (staging_dir / filename).stat().st_size <= 0
-    ]
-    if missing:
-        raise AppError(
-            "OUTPUT_INCOMPLETE",
-            f"Coverage task staged outputs are incomplete: {', '.join(missing)}.",
-            status_code=500,
-        )
-
-
-def _commit_staged_outputs(staging_dir: Path, output_dir: Path) -> None:
-    output_dir.mkdir(parents=True, exist_ok=True)
-    for filename in OUTPUT_FILENAMES.values():
-        source = staging_dir / filename
-        destination = output_dir / filename
-        source.replace(destination)
-    for source in staging_dir.glob("visible_h_*.geojson"):
-        source.replace(output_dir / source.name)
-    for source in staging_dir.glob("blocked_h_*.geojson"):
-        source.replace(output_dir / source.name)
-    _fsync_directory(output_dir)
 
 
 def _write_json_atomic(path: Path, payload: dict) -> None:

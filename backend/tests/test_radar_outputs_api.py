@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+from unittest.mock import Mock
 
 from fastapi.testclient import TestClient
 import numpy
@@ -9,15 +10,15 @@ from rasterio.transform import from_origin
 from app.core.config import settings
 from app.main import app, create_app
 from app.services.dem_store import read_dem_metadata
+from app.services.artifact_contracts import get_output_contract
+from app.services.artifact_store import ArtifactStore
 
 
 def test_list_coverage_outputs(tmp_path: Path) -> None:
     settings.data_dir = tmp_path
     settings.ensure_directories()
     write_task(tmp_path, "task_a", "finished")
-    output_dir = tmp_path / "outputs" / "task_a"
-    output_dir.mkdir(parents=True)
-    (output_dir / "visible.geojson").write_text("{}", encoding="utf-8")
+    publish_radar_outputs(tmp_path, "task_a")
 
     response = TestClient(app).get("/api/radar/coverage/task_a/outputs")
 
@@ -25,16 +26,16 @@ def test_list_coverage_outputs(tmp_path: Path) -> None:
     payload = response.json()
     visible = next(item for item in payload if item["kind"] == "visible_geojson")
     assert visible["exists"] is True
+    assert visible["download_path"] == "/api/radar/coverage/task_a/outputs/visible_geojson"
     assert visible["download_url"] == "/api/radar/coverage/task_a/outputs/visible_geojson"
+    assert visible["url"] is None
 
 
 def test_download_coverage_output(tmp_path: Path) -> None:
     settings.data_dir = tmp_path
     settings.ensure_directories()
     write_task(tmp_path, "task_a", "finished")
-    output_dir = tmp_path / "outputs" / "task_a"
-    output_dir.mkdir(parents=True)
-    (output_dir / "model_metadata.json").write_text('{"ok": true}', encoding="utf-8")
+    publish_radar_outputs(tmp_path, "task_a", {"model_metadata.json": b'{"ok": true}'})
 
     response = TestClient(app).get("/api/radar/coverage/task_a/outputs/model_metadata_json")
 
@@ -54,14 +55,86 @@ def test_download_coverage_output_requires_finished_task(tmp_path: Path) -> None
     assert response.status_code == 409
 
 
-def test_download_coverage_output_missing_file(tmp_path: Path) -> None:
+def test_finished_task_with_missing_artifact_directory_is_unavailable(tmp_path: Path) -> None:
     settings.data_dir = tmp_path
     settings.ensure_directories()
     write_task(tmp_path, "task_a", "finished")
 
+    detail = TestClient(app).get("/api/radar/coverage/task_a")
     response = TestClient(app).get("/api/radar/coverage/task_a/outputs/model_metadata_json")
 
+    assert detail.status_code == 200
+    assert detail.json()["result_state"] == "unavailable"
+    assert detail.json()["result_reason_code"] == "ARTIFACT_DIRECTORY_MISSING"
+    assert all(item["download_path"] is None for item in detail.json()["output_files"])
+    assert response.status_code == 410
+    assert response.json()["detail"]["code"] == "ARTIFACT_DIRECTORY_MISSING"
+
+
+def test_unknown_output_kind_on_ready_task_returns_not_found(tmp_path: Path) -> None:
+    settings.data_dir = tmp_path
+    settings.ensure_directories()
+    write_task(tmp_path, "task_a", "finished")
+    publish_radar_outputs(tmp_path, "task_a")
+
+    response = TestClient(app).get("/api/radar/coverage/task_a/outputs/not_a_kind")
+
     assert response.status_code == 404
+    assert response.json()["detail"]["code"] == "OUTPUT_KIND_NOT_FOUND"
+
+
+def test_raw_outputs_are_not_statically_served(tmp_path: Path) -> None:
+    settings.data_dir = tmp_path
+    settings.ensure_directories()
+    write_task(tmp_path, "task_a", "finished")
+    publish_radar_outputs(tmp_path, "task_a")
+
+    response = TestClient(create_app()).get("/outputs/task_a/visible.geojson")
+
+    assert response.status_code == 404
+
+
+def test_rerun_requires_idempotency_key(tmp_path: Path) -> None:
+    settings.data_dir = tmp_path
+    settings.ensure_directories()
+    write_task_with_payload(tmp_path, "task_a", "finished")
+
+    response = TestClient(app).post("/api/radar/coverage/task_a/rerun")
+
+    assert response.status_code == 422
+
+
+def test_rerun_reuses_child_and_schedules_once(tmp_path: Path, monkeypatch) -> None:
+    settings.data_dir = tmp_path
+    settings.ensure_directories()
+    write_task_with_payload(tmp_path, "task_a", "finished")
+    scheduled = Mock()
+    monkeypatch.setattr("app.api.radar.read_dem_metadata", lambda *_: None)
+    monkeypatch.setattr("app.api.radar.run_coverage_task", scheduled)
+    headers = {"Idempotency-Key": "radar-rerun-key"}
+
+    response = TestClient(app).post("/api/radar/coverage/task_a/rerun", headers=headers)
+    repeated = TestClient(app).post("/api/radar/coverage/task_a/rerun", headers=headers)
+
+    assert response.status_code == 202
+    assert repeated.status_code == 202
+    assert response.json()["task_id"] != "task_a"
+    assert response.json()["rerun_of"] == "task_a"
+    assert repeated.json()["task_id"] == response.json()["task_id"]
+    assert scheduled.call_count == 1
+
+
+def test_reading_history_never_schedules_work(tmp_path: Path, monkeypatch) -> None:
+    settings.data_dir = tmp_path
+    settings.ensure_directories()
+    write_task_with_payload(tmp_path, "task_a", "finished")
+    scheduled = Mock()
+    monkeypatch.setattr("app.api.radar.run_coverage_task", scheduled)
+
+    response = TestClient(app).get("/api/radar/coverage/task_a")
+
+    assert response.status_code == 200
+    scheduled.assert_not_called()
 
 
 def test_read_coverage_task_includes_request(tmp_path: Path) -> None:
@@ -228,6 +301,24 @@ def test_delete_coverage_task_api(tmp_path: Path) -> None:
     assert not output_dir.exists()
 
 
+def test_delete_coverage_task_is_retry_safe(tmp_path: Path) -> None:
+    settings.data_dir = tmp_path
+    settings.ensure_directories()
+    write_task(tmp_path, "task_a", "finished")
+
+    first = TestClient(app).delete("/api/radar/coverage/task_a")
+    second = TestClient(app).delete("/api/radar/coverage/task_a")
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert second.json() == {
+        "task_id": "task_a",
+        "deleted_task_record": False,
+        "deleted_output_dir": False,
+        "errors": [],
+    }
+
+
 def test_delete_coverage_task_api_rejects_running(tmp_path: Path) -> None:
     settings.data_dir = tmp_path
     settings.ensure_directories()
@@ -342,3 +433,13 @@ def write_task_with_payload(root: Path, task_id: str, status: str) -> None:
         ),
         encoding="utf-8",
     )
+
+
+def publish_radar_outputs(root: Path, task_id: str, overrides: dict[str, bytes] | None = None) -> None:
+    store = ArtifactStore(root / "outputs")
+    contract = get_output_contract("radar")
+    staging = store.create_staging_dir(task_id)
+    overrides = overrides or {}
+    for spec in contract.artifacts:
+        (staging / spec.filename).write_bytes(overrides.get(spec.filename, b"{}"))
+    store.publish(task_id, contract, staging)

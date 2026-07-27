@@ -6,7 +6,9 @@ from app.schemas.radar import CoverageMetrics, CoverageOutputs, CoverageRequest
 import pytest
 
 from app.core.errors import AppError
+from app.services.artifact_store import ArtifactStore
 from app.services.task_store import (
+    create_rerun,
     create_task,
     delete_task,
     get_task,
@@ -35,6 +37,24 @@ def test_create_task_stores_runtime_fields(tmp_path: Path) -> None:
     assert "payload" in payload
     assert "request" not in payload["task"]
     assert not list((tmp_path / "tasks").glob("*.tmp"))
+
+
+def test_create_rerun_is_idempotent_per_original_and_key(tmp_path: Path) -> None:
+    settings.data_dir = tmp_path
+    settings.ensure_directories()
+    original = create_task(make_request("dem_a"))
+
+    child, created = create_rerun(original.task_id, make_request("dem_a"), "same-rerun-key")
+    repeated, repeated_created = create_rerun(
+        original.task_id, make_request("dem_a"), "same-rerun-key"
+    )
+
+    assert created is True
+    assert repeated_created is False
+    assert repeated.task_id == child.task_id
+    assert child.rerun_of == original.task_id
+    original_record = get_task(original.task_id)
+    assert original_record.rerun_of is None
 
 
 def test_list_tasks_sorted_and_infers_legacy_dem_id(tmp_path: Path) -> None:
@@ -215,6 +235,30 @@ def test_delete_task_without_output_dir_reports_record_only(tmp_path: Path) -> N
 
     assert result.deleted_task_record is True
     assert result.deleted_output_dir is False
+
+
+def test_delete_task_reports_artifact_failure_after_deleting_record(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings.data_dir = tmp_path
+    settings.ensure_directories()
+    task = create_task(make_request("dem_a"))
+    mark_finished(task.task_id, metrics=CoverageMetrics(), outputs=CoverageOutputs())
+    output_dir = tmp_path / "outputs" / task.task_id
+    output_dir.mkdir(parents=True)
+    monkeypatch.setattr(
+        ArtifactStore,
+        "delete",
+        lambda *_: (_ for _ in ()).throw(PermissionError("denied")),
+    )
+
+    result = delete_task(task.task_id)
+
+    assert result.deleted_task_record is True
+    assert result.deleted_output_dir is False
+    assert result.errors and result.errors[0].startswith("artifact_directory:")
+    assert not (tmp_path / "tasks" / f"{task.task_id}.json").exists()
+    assert output_dir.exists()
 
 
 def test_delete_task_rejects_running_task(tmp_path: Path) -> None:

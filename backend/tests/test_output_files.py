@@ -1,6 +1,8 @@
 from pathlib import Path
 
 from app.core.config import settings
+from app.services.artifact_contracts import get_output_contract
+from app.services.artifact_store import ArtifactStore
 from app.services.output_files import describe_output_file, describe_output_files, list_task_output_files, resolve_task_output_path
 
 
@@ -12,7 +14,8 @@ def test_describe_output_file_existing_file(tmp_path: Path) -> None:
 
     assert info.kind == "visible_geojson"
     assert info.label == "Visible Area GeoJSON"
-    assert info.url == "/outputs/task_a/visible.geojson"
+    assert info.url is None
+    assert info.download_path == "/api/radar/coverage/task_a/outputs/visible_geojson"
     assert info.download_url == "/api/radar/coverage/task_a/outputs/visible_geojson"
     assert info.filename == "visible.geojson"
     assert info.media_type == "application/geo+json"
@@ -54,17 +57,19 @@ def test_resolve_task_output_path_uses_whitelist_filename(tmp_path: Path) -> Non
     assert path == (tmp_path / "outputs" / "task_a" / "blocked.geojson").resolve()
 
 
-def test_list_task_output_files_refreshes_real_file_state(tmp_path: Path) -> None:
+def test_list_task_output_files_reads_published_manifest(tmp_path: Path) -> None:
     settings.data_dir = tmp_path
     settings.ensure_directories()
-    output_dir = tmp_path / "outputs" / "task_a"
-    output_dir.mkdir(parents=True)
-    (output_dir / "viewshed.tif").write_bytes(b"abc")
+    store = ArtifactStore(tmp_path / "outputs")
+    contract = get_output_contract("radar")
+    staging = store.create_staging_dir("task_a")
+    for spec in contract.artifacts:
+        (staging / spec.filename).write_bytes(b"abc" if spec.kind == "viewshed_tif" else b"{}")
+    store.publish("task_a", contract, staging)
 
     files = list_task_output_files("task_a")
     viewshed = next(item for item in files if item.kind == "viewshed_tif")
-    visible = next(item for item in files if item.kind == "visible_geojson")
 
     assert viewshed.exists is True
     assert viewshed.size_bytes == 3
-    assert visible.exists is False
+    assert viewshed.download_path == "/api/radar/coverage/task_a/outputs/viewshed_tif"

@@ -1,6 +1,5 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 
 from app.api import air_corridor, artillery, dem, mobility, radar, recon_vehicle, uav, watchpost
 from app.core.config import settings
@@ -36,7 +35,6 @@ def create_app() -> FastAPI:
     recover_interrupted_recon_vehicle_tasks()
     recover_interrupted_mobility_tasks()
     recover_interrupted_air_corridor_tasks()
-    app.mount("/outputs", StaticFiles(directory=settings.outputs_dir), name="outputs")
     app.include_router(dem.router, prefix="/api/dem", tags=["DEM"])
     app.include_router(radar.router, prefix="/api/radar", tags=["Radar"])
     app.include_router(uav.router, prefix="/api/uav", tags=["UAV"])
