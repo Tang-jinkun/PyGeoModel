@@ -4,6 +4,7 @@ import math
 import os
 import shutil
 from pathlib import Path
+from typing import Callable
 from uuid import uuid4
 
 import numpy
@@ -14,7 +15,6 @@ from rasterio.warp import Resampling, calculate_default_transform, reproject, tr
 from shapely.geometry import GeometryCollection, LineString, Point, mapping
 from shapely.ops import unary_union
 
-from app.core.config import settings
 from app.core.errors import AppError
 from app.schemas.air_corridor import (
     AirCorridorModelMetadata,
@@ -29,6 +29,8 @@ from app.services.air_corridor_output_files import (
 )
 from app.services.air_corridor_task_store import mark_air_corridor_failed, mark_air_corridor_finished, mark_air_corridor_running
 from app.services.dem_store import find_dem_file
+from app.services.artifact_contracts import get_output_contract
+from app.services.artifact_store import get_artifact_store
 from app.services.geometry import project_geometry
 from app.services.projection import utm_epsg_from_lonlat
 from app.scene3d.air_corridor import write_air_corridor_glb
@@ -68,32 +70,33 @@ class CorridorPathResult:
 
 def run_air_corridor_task(task_id: str, payload: AirCorridorPlanningRequest) -> None:
     try:
-        mark_air_corridor_running(task_id, "Preparing DEM and air corridor projection.", 15)
-        output_dir = settings.outputs_dir / task_id
-        if output_dir.exists():
-            raise AppError(
-                "OUTPUT_DIRECTORY_EXISTS",
-                f"Air corridor output directory already exists: {task_id}.",
-                status_code=500,
-            )
-        staging_dir = output_dir.with_name(
-            f".{output_dir.name}.staging-{uuid4().hex}"
+        outputs, output_files, metrics, model, warnings = build_air_corridor_artifacts(
+            task_id, payload, lambda message, value: mark_air_corridor_running(task_id, message, value)
         )
-        staging_dir.mkdir(parents=True, exist_ok=False)
-
-        try:
-            prepared = _prepare_air_corridor_dem(find_dem_file(payload.dem_id), staging_dir / "dem_projected.tif", payload)
-            mark_air_corridor_running(task_id, "Planning low-risk air corridor.", 55)
-            outputs, output_files, metrics, model, warnings = _write_air_corridor_outputs(
-                task_id, staging_dir, output_dir, prepared, payload
-            )
-        finally:
-            if staging_dir.exists():
-                shutil.rmtree(staging_dir, ignore_errors=True)
-
         mark_air_corridor_finished(task_id, metrics=metrics, outputs=outputs, output_files=output_files, model=model, warnings=warnings)
     except Exception as exc:
         mark_air_corridor_failed(task_id, str(exc))
+
+
+def build_air_corridor_artifacts(task_id: str, payload: AirCorridorPlanningRequest, progress: Callable[[str, int], None]):
+    store = get_artifact_store()
+    contract = get_output_contract("air_corridor")
+    staging_dir = store.create_staging_dir(task_id)
+    projected_dem = staging_dir / "dem_projected.tif"
+    try:
+        progress("Preparing DEM and air corridor projection.", 15)
+        prepared = _prepare_air_corridor_dem(find_dem_file(payload.dem_id), projected_dem, payload)
+        progress("Planning low-risk air corridor.", 55)
+        _, _, metrics, model, warnings = _write_air_corridor_outputs(task_id, staging_dir, prepared, payload)
+        projected_dem.unlink(missing_ok=True)
+        store.publish(task_id, contract, staging_dir)
+        output_files = list_air_corridor_task_output_files(task_id)
+        paths = {item.kind: item.download_path for item in output_files}
+        outputs = AirCorridorPlanningOutputs(**{field: paths.get(field) for field in AirCorridorPlanningOutputs.model_fields})
+        return outputs, output_files, metrics, model, warnings
+    finally:
+        if staging_dir.exists():
+            shutil.rmtree(staging_dir, ignore_errors=True)
 
 
 def _prepare_air_corridor_dem(source: Path, destination: Path, payload: AirCorridorPlanningRequest) -> PreparedAirCorridorDem:
@@ -205,7 +208,6 @@ def _prepare_air_corridor_dem(source: Path, destination: Path, payload: AirCorri
 def _write_air_corridor_outputs(
     task_id: str,
     staging_dir: Path,
-    output_dir: Path,
     prepared: PreparedAirCorridorDem,
     payload: AirCorridorPlanningRequest,
 ):
@@ -288,16 +290,11 @@ def _write_air_corridor_outputs(
         f"Scene3D omitted unit '{omission.unit_id}': {omission.reason}"
         for omission in model.scene3d.omitted_units
     ]
-    outputs = AirCorridorPlanningOutputs(
-        corridor_path_geojson=f"/outputs/{task_id}/corridor_path.geojson",
-        corridor_buffer_geojson=f"/outputs/{task_id}/corridor_buffer.geojson",
-        threat_zones_geojson=f"/outputs/{task_id}/threat_zones.geojson",
-        risk_samples_geojson=f"/outputs/{task_id}/risk_samples.geojson",
-        cost_summary_json=f"/outputs/{task_id}/cost_summary.json",
-        scene_glb=f"/outputs/{task_id}/air_corridor_result.glb",
-        model_metadata_json=f"/outputs/{task_id}/model_metadata.json",
-        output_manifest_json=f"/outputs/{task_id}/output_manifest.json",
-    )
+    contract = get_output_contract("air_corridor")
+    outputs = AirCorridorPlanningOutputs(**{
+        spec.kind: contract.download_path_template.format(task_id=task_id, kind=spec.kind)
+        for spec in contract.artifacts
+    })
     _write_json_atomic(cost_summary, result["cost_summary"])
     _write_json_atomic(
         model_path,
@@ -320,10 +317,7 @@ def _write_air_corridor_outputs(
     )
     if prepared.projected_dem.parent == staging_dir:
         prepared.projected_dem.unlink(missing_ok=True)
-    _ensure_staged_outputs_exist(staging_dir)
-    _commit_staged_outputs(staging_dir, output_dir)
-    output_files = list_air_corridor_task_output_files(task_id)
-    return outputs, output_files, metrics, model, warnings
+    return outputs, manifest_files, metrics, model, warnings
 
 
 def _compute_air_corridor(dem, transform, nodata, prepared: PreparedAirCorridorDem, payload: AirCorridorPlanningRequest) -> dict:
@@ -638,33 +632,6 @@ def _write_risk_samples(path: Path, sample_features: list[dict], transformer: Tr
         geometry = project_geometry(item["geometry"], transformer)
         features.append({"type": "Feature", "properties": item["properties"], "geometry": mapping(geometry)})
     _write_json_atomic(path, {"type": "FeatureCollection", "features": features})
-
-
-def _ensure_staged_outputs_exist(staging_dir: Path) -> None:
-    missing = [
-        kind
-        for kind, filename in AIR_CORRIDOR_OUTPUT_FILENAMES.items()
-        if not (staging_dir / filename).exists() or (staging_dir / filename).stat().st_size <= 0
-    ]
-    if missing:
-        raise AppError("OUTPUT_INCOMPLETE", f"Air corridor task staged outputs are incomplete: {', '.join(missing)}.", status_code=500)
-
-
-def _commit_staged_outputs(staging_dir: Path, output_dir: Path) -> None:
-    if staging_dir.parent != output_dir.parent:
-        raise AppError(
-            "OUTPUT_STAGING_INVALID",
-            "Air corridor staging directory must be a sibling of its output directory.",
-            status_code=500,
-        )
-    if output_dir.exists():
-        raise AppError(
-            "OUTPUT_DIRECTORY_EXISTS",
-            f"Air corridor output directory already exists: {output_dir.name}.",
-            status_code=500,
-        )
-    staging_dir.replace(output_dir)
-    _fsync_directory(output_dir.parent)
 
 
 def _write_json_atomic(path: Path, payload: dict) -> None:

@@ -1,7 +1,6 @@
 import json
 import os
 import re
-import shutil
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from json import JSONDecodeError
@@ -20,6 +19,9 @@ from app.schemas.recon_vehicle import (
     ReconVehicleCoverageTaskSummary,
     ReconVehicleModelMetadata,
     ReconVehicleOutputFile,
+)
+from app.services.single_task_store import (
+    create_idempotent_rerun, delete_task_resources, hydrate_task, preserve_rerun_metadata,
 )
 
 RECON_VEHICLE_TASK_ID_PATTERN = re.compile(r"^recon_vehicle_task_[A-Za-z0-9_-]+$")
@@ -49,6 +51,18 @@ def create_recon_vehicle_task(payload: ReconVehicleCoverageRequest) -> ReconVehi
     return task
 
 
+def create_recon_vehicle_rerun(original_task_id: str, payload: ReconVehicleCoverageRequest, idempotency_key: str) -> tuple[ReconVehicleCoverageTaskStatus, bool]:
+    with _task_lock(original_task_id):
+        if not _task_path(original_task_id).exists():
+            raise AppError("TASK_NOT_FOUND", f"Recon vehicle task '{original_task_id}' was not found.", status_code=404)
+        return create_idempotent_rerun(
+            original_task_id=original_task_id, payload=payload, idempotency_key=idempotency_key,
+            task_id_prefix="recon_vehicle_task_", record_paths=list(settings.tasks_dir.glob("recon_vehicle_task_*.json")),
+            task_type=ReconVehicleCoverageTaskStatus, task_path=_task_path, read_record=_read_task_data,
+            write_record=_write_task_data, get_task=get_recon_vehicle_task,
+        )
+
+
 def save_recon_vehicle_task(task: ReconVehicleCoverageTaskStatus, payload: ReconVehicleCoverageRequest | None = None) -> None:
     with _task_lock(task.task_id):
         _save_task_unlocked(task, payload)
@@ -64,7 +78,7 @@ def get_recon_vehicle_task(task_id: str) -> ReconVehicleCoverageTaskStatus:
         task.request = parse_recon_vehicle_request(payload) or task.request
         if task.dem_id is None and task.request:
             task.dem_id = task.request.dem_id
-        return task
+        return hydrate_task(task, "recon_vehicle")
 
 
 def list_recon_vehicle_tasks() -> list[ReconVehicleCoverageTaskSummary]:
@@ -77,7 +91,7 @@ def list_recon_vehicle_tasks() -> list[ReconVehicleCoverageTaskSummary]:
             continue
         if task.dem_id is None and isinstance(payload, dict):
             task.dem_id = payload.get("dem_id")
-        tasks.append(task)
+        tasks.append(hydrate_task(task, "recon_vehicle"))
     return sorted(tasks, key=lambda item: item.created_at or item.task_id, reverse=True)
 
 
@@ -122,23 +136,17 @@ def mark_recon_vehicle_failed(task_id: str, message: str) -> None:
 
 def delete_recon_vehicle_task(task_id: str) -> ReconVehicleCoverageTaskDeleteResult:
     with _task_lock(task_id):
-        task = get_recon_vehicle_task(task_id)
-        if task.status in {"pending", "running"}:
-            raise AppError("TASK_ACTIVE", "Pending or running recon vehicle tasks cannot be deleted.", status_code=409)
         task_path = _task_path(task_id)
-        output_dir = _task_output_dir(task_id)
-        deleted_task_record = False
-        deleted_output_dir = False
         if task_path.exists():
-            task_path.unlink()
-            deleted_task_record = True
-        if output_dir.exists():
-            shutil.rmtree(output_dir)
-            deleted_output_dir = True
+            task = get_recon_vehicle_task(task_id)
+            if task.status in {"pending", "running"}:
+                raise AppError("TASK_ACTIVE", "Pending or running recon vehicle tasks cannot be deleted.", status_code=409)
+        deleted_task_record, deleted_output_dir, errors = delete_task_resources(task_id, task_path)
         return ReconVehicleCoverageTaskDeleteResult(
             task_id=task_id,
             deleted_task_record=deleted_task_record,
             deleted_output_dir=deleted_output_dir,
+            errors=errors,
         )
 
 
@@ -185,7 +193,9 @@ def _save_task_unlocked(task: ReconVehicleCoverageTaskStatus, payload: ReconVehi
         data["payload"] = payload.model_dump()
     elif task.request is not None:
         data["payload"] = task.request.model_dump()
-    _write_task_data(_task_path(task.task_id), data)
+    path = _task_path(task.task_id)
+    preserve_rerun_metadata(data, path, _read_task_data)
+    _write_task_data(path, data)
 
 
 def _task_path(task_id: str) -> Path:

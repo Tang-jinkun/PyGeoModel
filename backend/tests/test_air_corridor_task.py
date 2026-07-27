@@ -8,14 +8,12 @@ import rasterio
 from rasterio.transform import from_origin
 
 from app.core.config import settings
-from app.core.errors import AppError
 from app.schemas.air_corridor import AirCorridorPlanningRequest
 from app.services.air_corridor_task_store import (
     create_air_corridor_task,
     get_air_corridor_task,
 )
 from app.workers.air_corridor_task import (
-    _commit_staged_outputs,
     _compute_air_corridor,
     _threat_ground_elevations,
     _write_air_corridor_outputs,
@@ -227,26 +225,25 @@ def test_worker_stages_scene_glb_and_metadata(
         _write_air_corridor_outputs(
             task_id,
             staging_dir,
-            output_dir,
             prepared_dem(staging_dir),
             payload,
         )
     )
 
-    assert outputs.scene_glb == f"/outputs/{task_id}/air_corridor_result.glb"
+    assert outputs.scene_glb == f"/api/air-corridor/planning/{task_id}/outputs/scene_glb"
     assert any(item.kind == "scene_glb" and item.exists for item in output_files)
     manifest = json.loads(
-        (output_dir / "output_manifest.json").read_text(encoding="utf-8")
+        (staging_dir / "output_manifest.json").read_text(encoding="utf-8")
     )
     assert any(item["kind"] == "scene_glb" for item in manifest["files"])
     metadata = json.loads(
-        (output_dir / "model_metadata.json").read_text(encoding="utf-8")
+        (staging_dir / "model_metadata.json").read_text(encoding="utf-8")
     )
     assert metadata["model"]["scene3d"]["model_id"] == "air_corridor"
     assert metadata["model"]["scene3d"]["tactical_unit_count"] == 0
     assert metadata["model"]["scene3d"]["omitted_units"] == []
     assert {
-        path.name for path in output_dir.iterdir()
+        path.name for path in staging_dir.iterdir()
     } == set(AIR_CORRIDOR_OUTPUT_FILENAMES.values())
 
 
@@ -322,7 +319,6 @@ def test_worker_propagates_scene_unit_omissions(
         _write_air_corridor_outputs(
             task_id,
             staging_dir,
-            output_dir,
             prepared,
             payload,
         )
@@ -338,10 +334,10 @@ def test_worker_propagates_scene_unit_omissions(
     )
     assert warnings == expected_warnings
     model_document = json.loads(
-        (output_dir / "model_metadata.json").read_text(encoding="utf-8")
+        (staging_dir / "model_metadata.json").read_text(encoding="utf-8")
     )
     manifest = json.loads(
-        (output_dir / "output_manifest.json").read_text(encoding="utf-8")
+        (staging_dir / "output_manifest.json").read_text(encoding="utf-8")
     )
     assert model_document["warnings"] == expected_warnings
     assert manifest["warnings"] == expected_warnings
@@ -465,84 +461,6 @@ def test_glb_export_failure_marks_task_failed_and_leaves_no_artifact(
     assert not (
         settings.outputs_dir / task.task_id / "air_corridor_result.glb"
     ).exists()
-
-
-def test_output_publication_uses_one_sibling_directory_rename(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    staging_dir = tmp_path / ".air_corridor_task_a.staging-test"
-    output_dir = tmp_path / "air_corridor_task_a"
-    staging_dir.mkdir()
-    for filename in AIR_CORRIDOR_OUTPUT_FILENAMES.values():
-        (staging_dir / filename).write_text(filename, encoding="utf-8")
-    original_replace = Path.replace
-    replacements: list[tuple[Path, Path]] = []
-
-    def track_replace(source: Path, target: Path) -> Path:
-        replacements.append((source, Path(target)))
-        return original_replace(source, target)
-
-    monkeypatch.setattr(Path, "replace", track_replace)
-
-    _commit_staged_outputs(staging_dir, output_dir)
-
-    assert replacements == [(staging_dir, output_dir)]
-    assert not staging_dir.exists()
-    assert {
-        path.name for path in output_dir.iterdir()
-    } == set(AIR_CORRIDOR_OUTPUT_FILENAMES.values())
-
-
-def test_output_publication_failure_leaves_no_partial_destination(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    staging_dir = tmp_path / ".air_corridor_task_a.staging-test"
-    output_dir = tmp_path / "air_corridor_task_a"
-    staging_dir.mkdir()
-    for filename in AIR_CORRIDOR_OUTPUT_FILENAMES.values():
-        (staging_dir / filename).write_text(filename, encoding="utf-8")
-    original_replace = Path.replace
-    replacements: list[tuple[Path, Path]] = []
-
-    def fail_publication(source: Path, target: Path) -> Path:
-        target_path = Path(target)
-        replacements.append((source, target_path))
-        if source == staging_dir or (
-            source.parent == staging_dir
-            and sum(item[0].parent == staging_dir for item in replacements) == 2
-        ):
-            raise OSError("injected directory publication failure")
-        return original_replace(source, target_path)
-
-    monkeypatch.setattr(Path, "replace", fail_publication)
-
-    with pytest.raises(OSError, match="injected directory publication failure"):
-        _commit_staged_outputs(staging_dir, output_dir)
-
-    assert replacements == [(staging_dir, output_dir)]
-    assert not output_dir.exists()
-    assert {
-        path.name for path in staging_dir.iterdir()
-    } == set(AIR_CORRIDOR_OUTPUT_FILENAMES.values())
-
-
-def test_output_publication_refuses_to_replace_existing_task_directory(
-    tmp_path: Path,
-) -> None:
-    staging_dir = tmp_path / ".air_corridor_task_a.staging-test"
-    output_dir = tmp_path / "air_corridor_task_a"
-    staging_dir.mkdir()
-    output_dir.mkdir()
-    (staging_dir / "new.txt").write_text("new", encoding="utf-8")
-    (output_dir / "legacy.txt").write_text("legacy", encoding="utf-8")
-
-    with pytest.raises(AppError, match="already exists"):
-        _commit_staged_outputs(staging_dir, output_dir)
-
-    assert (staging_dir / "new.txt").read_text(encoding="utf-8") == "new"
-    assert (output_dir / "legacy.txt").read_text(encoding="utf-8") == "legacy"
 
 
 def test_oversize_glb_failure_rolls_back_sibling_staging_directory(

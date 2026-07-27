@@ -1,4 +1,5 @@
-from fastapi import APIRouter, BackgroundTasks, HTTPException, status
+from typing import Annotated
+from fastapi import APIRouter, BackgroundTasks, Header, HTTPException, status
 from fastapi.responses import FileResponse
 
 from app.core.errors import AppError
@@ -9,11 +10,12 @@ from app.schemas.mobility import (
     MobilityAccessibilityTaskStatus,
     MobilityAccessibilityTaskSummary,
     MobilityOutputFile,
-    MobilityOutputKind,
 )
+from app.services.artifact_contracts import get_output_contract
+from app.services.artifact_store import get_artifact_store
 from app.services.dem_store import find_dem_file, read_dem_metadata
-from app.services.mobility_output_files import list_mobility_task_output_files, resolve_mobility_task_output_path
 from app.services.mobility_task_store import (
+    create_mobility_rerun,
     create_mobility_task,
     delete_mobility_task,
     get_mobility_task,
@@ -49,6 +51,22 @@ def read_accessibility_task(task_id: str) -> MobilityAccessibilityTaskStatus:
         raise HTTPException(status_code=exc.status_code, detail=exc.as_detail()) from exc
 
 
+@router.post("/accessibility/{task_id}/rerun", response_model=MobilityAccessibilityTaskStatus, status_code=status.HTTP_202_ACCEPTED)
+def rerun_accessibility_task(task_id: str, background_tasks: BackgroundTasks, idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=8, max_length=128)]) -> MobilityAccessibilityTaskStatus:
+    try:
+        original = get_mobility_task(task_id)
+        if original.request is None:
+            raise AppError("TASK_REQUEST_UNAVAILABLE", "Saved request is unavailable.", status_code=409)
+        read_dem_metadata(original.request.dem_id)
+        find_dem_file(original.request.dem_id)
+        task, created = create_mobility_rerun(task_id, original.request, idempotency_key)
+        if created:
+            background_tasks.add_task(run_mobility_task, task.task_id, original.request)
+        return task
+    except AppError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.as_detail()) from exc
+
+
 @router.get("/accessibility/{task_id}/metrics", response_model=MobilityAccessibilityMetrics)
 def read_accessibility_metrics(task_id: str) -> MobilityAccessibilityMetrics:
     try:
@@ -67,22 +85,18 @@ def read_accessibility_metrics(task_id: str) -> MobilityAccessibilityMetrics:
 @router.get("/accessibility/{task_id}/outputs", response_model=list[MobilityOutputFile])
 def list_accessibility_outputs(task_id: str) -> list[MobilityOutputFile]:
     try:
-        get_mobility_task(task_id)
-        return list_mobility_task_output_files(task_id)
+        return get_mobility_task(task_id).output_files
     except AppError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.as_detail()) from exc
 
 
 @router.get("/accessibility/{task_id}/outputs/{kind}")
-def download_accessibility_output(task_id: str, kind: MobilityOutputKind) -> FileResponse:
+def download_accessibility_output(task_id: str, kind: str) -> FileResponse:
     try:
         task = get_mobility_task(task_id)
-        if task.status != "finished":
-            raise AppError("TASK_NOT_FINISHED", "Mobility outputs are available only after the task is finished.", status_code=409)
-        path = resolve_mobility_task_output_path(task_id, kind)
-        if not path.exists():
-            raise AppError("OUTPUT_NOT_FOUND", f"Output '{kind}' was not found.", status_code=404)
-        info = next(item for item in list_mobility_task_output_files(task_id) if item.kind == kind)
+        path, info = get_artifact_store().resolve_download(
+            task_id, kind, get_output_contract("mobility"), computation_status=task.status
+        )
         return FileResponse(path, media_type=info.media_type, filename=info.filename)
     except AppError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.as_detail()) from exc

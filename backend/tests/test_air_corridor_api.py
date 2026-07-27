@@ -5,6 +5,8 @@ from fastapi.testclient import TestClient
 
 from app.core.config import settings
 from app.main import app
+from app.services.artifact_contracts import get_output_contract
+from app.services.artifact_store import ArtifactStore
 
 
 def test_read_air_corridor_metrics_returns_json(tmp_path: Path) -> None:
@@ -54,9 +56,14 @@ def test_download_air_corridor_scene_glb(tmp_path: Path) -> None:
     settings.data_dir = tmp_path
     settings.ensure_directories()
     write_air_corridor_task(tmp_path, "air_corridor_task_a", "finished")
-    output_dir = tmp_path / "outputs" / "air_corridor_task_a"
-    output_dir.mkdir(parents=True)
-    (output_dir / "air_corridor_result.glb").write_bytes(b"glTF-test")
+    store = ArtifactStore(tmp_path / "outputs")
+    contract = get_output_contract("air_corridor")
+    staging = store.create_staging_dir("air_corridor_task_a")
+    for spec in contract.artifacts:
+        (staging / spec.filename).write_bytes(
+            b"glTF-test" if spec.kind == "scene_glb" else b"{}"
+        )
+    store.publish("air_corridor_task_a", contract, staging)
 
     response = TestClient(app).get(
         "/api/air-corridor/planning/air_corridor_task_a/outputs/scene_glb"

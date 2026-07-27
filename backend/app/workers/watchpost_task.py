@@ -4,6 +4,7 @@ import os
 import shutil
 import subprocess
 from pathlib import Path
+from typing import Callable
 from uuid import uuid4
 
 import numpy
@@ -15,7 +16,6 @@ from rasterio.warp import Resampling, calculate_default_transform, reproject, tr
 from shapely.geometry import GeometryCollection, mapping, shape
 from shapely.ops import unary_union
 
-from app.core.config import settings
 from app.core.errors import AppError
 from app.schemas.watchpost import (
     WatchpostDetectionMetrics,
@@ -24,6 +24,8 @@ from app.schemas.watchpost import (
     WatchpostModelMetadata,
 )
 from app.services.dem_store import find_dem_file
+from app.services.artifact_contracts import get_output_contract
+from app.services.artifact_store import get_artifact_store
 from app.services.geometry import make_range_geometry, project_geometry
 from app.services.projection import utm_epsg_from_lonlat
 from app.services.watchpost_output_files import (
@@ -54,28 +56,38 @@ class PreparedWatchpostDem:
 
 def run_watchpost_task(task_id: str, payload: WatchpostDetectionRequest) -> None:
     try:
-        mark_watchpost_running(task_id, "Preparing DEM and watchpost projection.", 15)
-        output_dir = settings.outputs_dir / task_id
-        output_dir.mkdir(parents=True, exist_ok=True)
-        staging_dir = output_dir / f".staging-{uuid4().hex}"
-        staging_dir.mkdir(parents=True, exist_ok=False)
-
-        try:
-            prepared = _prepare_watchpost_dem(find_dem_file(payload.dem_id), staging_dir / "dem_projected.tif", payload)
-            mark_watchpost_running(task_id, "Running viewshed.", 45)
-            viewshed = staging_dir / "viewshed.tif"
-            gdal_command = _run_gdal_viewshed(prepared.projected_dem, viewshed, prepared, payload)
-            mark_watchpost_running(task_id, "Vectorizing watchpost detection outputs.", 80)
-            outputs, output_files, metrics, model, warnings = _write_watchpost_outputs(
-                task_id, staging_dir, output_dir, prepared, payload, viewshed, gdal_command
-            )
-        finally:
-            if staging_dir.exists():
-                shutil.rmtree(staging_dir, ignore_errors=True)
-
+        outputs, output_files, metrics, model, warnings = build_watchpost_artifacts(
+            task_id, payload, lambda message, value: mark_watchpost_running(task_id, message, value)
+        )
         mark_watchpost_finished(task_id, metrics=metrics, outputs=outputs, output_files=output_files, model=model, warnings=warnings)
     except Exception as exc:
         mark_watchpost_failed(task_id, str(exc))
+
+
+def build_watchpost_artifacts(task_id: str, payload: WatchpostDetectionRequest, progress: Callable[[str, int], None]):
+    store = get_artifact_store()
+    contract = get_output_contract("watchpost")
+    staging_dir = store.create_staging_dir(task_id)
+    projected_dem = staging_dir / "dem_projected.tif"
+    try:
+        progress("Preparing DEM and watchpost projection.", 15)
+        prepared = _prepare_watchpost_dem(find_dem_file(payload.dem_id), projected_dem, payload)
+        progress("Running viewshed.", 45)
+        viewshed = staging_dir / "viewshed.tif"
+        gdal_command = _run_gdal_viewshed(prepared.projected_dem, viewshed, prepared, payload)
+        progress("Vectorizing watchpost detection outputs.", 80)
+        _, _, metrics, model, warnings = _write_watchpost_outputs(
+            task_id, staging_dir, prepared, payload, viewshed, gdal_command
+        )
+        projected_dem.unlink(missing_ok=True)
+        store.publish(task_id, contract, staging_dir)
+        output_files = list_watchpost_task_output_files(task_id)
+        paths = {item.kind: item.download_path for item in output_files}
+        outputs = WatchpostDetectionOutputs(**{field: paths.get(field) for field in WatchpostDetectionOutputs.model_fields})
+        return outputs, output_files, metrics, model, warnings
+    finally:
+        if staging_dir.exists():
+            shutil.rmtree(staging_dir, ignore_errors=True)
 
 
 def _prepare_watchpost_dem(source: Path, destination: Path, payload: WatchpostDetectionRequest) -> PreparedWatchpostDem:
@@ -206,7 +218,6 @@ def _run_gdal_viewshed(
 def _write_watchpost_outputs(
     task_id: str,
     staging_dir: Path,
-    output_dir: Path,
     prepared: PreparedWatchpostDem,
     payload: WatchpostDetectionRequest,
     viewshed: Path,
@@ -289,14 +300,11 @@ def _write_watchpost_outputs(
         simplify_tolerance_m=tolerance,
         gdal_viewshed_command=gdal_command,
     )
-    outputs = WatchpostDetectionOutputs(
-        viewshed_tif=f"/outputs/{task_id}/viewshed.tif",
-        visible_geojson=f"/outputs/{task_id}/visible.geojson",
-        blocked_geojson=f"/outputs/{task_id}/blocked.geojson",
-        range_geojson=f"/outputs/{task_id}/range.geojson",
-        model_metadata_json=f"/outputs/{task_id}/model_metadata.json",
-        output_manifest_json=f"/outputs/{task_id}/output_manifest.json",
-    )
+    contract = get_output_contract("watchpost")
+    outputs = WatchpostDetectionOutputs(**{
+        spec.kind: contract.download_path_template.format(task_id=task_id, kind=spec.kind)
+        for spec in contract.artifacts
+    })
 
     _write_json_atomic(model_metadata_json, {"model": model.model_dump(), "metrics": metrics.model_dump(), "warnings": []})
     output_paths = {kind: staging_dir / filename for kind, filename in WATCHPOST_OUTPUT_FILENAMES.items()}
@@ -310,10 +318,7 @@ def _write_watchpost_outputs(
             "warnings": [],
         },
     )
-    _ensure_staged_outputs_exist(staging_dir)
-    _commit_staged_outputs(staging_dir, output_dir)
-    output_files = list_watchpost_task_output_files(task_id)
-    return outputs, output_files, metrics, model, []
+    return outputs, manifest_files, metrics, model, []
 
 
 def _geometry_to_mask(geometry, out_shape, transform):
@@ -353,23 +358,6 @@ def _write_feature_collection(path: Path, geometry, properties: dict | None = No
     if geometry is not None and not geometry.is_empty:
         features.append({"type": "Feature", "properties": properties or {}, "geometry": mapping(geometry)})
     _write_json_atomic(path, {"type": "FeatureCollection", "features": features})
-
-
-def _ensure_staged_outputs_exist(staging_dir: Path) -> None:
-    missing = [
-        kind
-        for kind, filename in WATCHPOST_OUTPUT_FILENAMES.items()
-        if not (staging_dir / filename).exists() or (staging_dir / filename).stat().st_size <= 0
-    ]
-    if missing:
-        raise AppError("OUTPUT_INCOMPLETE", f"Watchpost task staged outputs are incomplete: {', '.join(missing)}.", status_code=500)
-
-
-def _commit_staged_outputs(staging_dir: Path, output_dir: Path) -> None:
-    output_dir.mkdir(parents=True, exist_ok=True)
-    for filename in WATCHPOST_OUTPUT_FILENAMES.values():
-        (staging_dir / filename).replace(output_dir / filename)
-    _fsync_directory(output_dir)
 
 
 def _write_json_atomic(path: Path, payload: dict) -> None:

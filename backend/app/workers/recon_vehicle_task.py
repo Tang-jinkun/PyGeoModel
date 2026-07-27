@@ -4,6 +4,7 @@ import os
 import shutil
 import subprocess
 from pathlib import Path
+from typing import Callable
 from uuid import uuid4
 
 import numpy
@@ -15,7 +16,6 @@ from rasterio.warp import Resampling, calculate_default_transform, reproject, tr
 from shapely.geometry import GeometryCollection, Point, mapping, shape
 from shapely.ops import unary_union
 
-from app.core.config import settings
 from app.core.errors import AppError
 from app.schemas.recon_vehicle import (
     ReconVehicleCoverageMetrics,
@@ -25,6 +25,8 @@ from app.schemas.recon_vehicle import (
     ReconVehiclePositionInput,
 )
 from app.services.dem_store import find_dem_file
+from app.services.artifact_contracts import get_output_contract
+from app.services.artifact_store import get_artifact_store
 from app.services.geometry import make_range_geometry, project_geometry
 from app.services.projection import utm_epsg_from_lonlat
 from app.services.recon_vehicle_output_files import (
@@ -59,25 +61,35 @@ class PreparedReconVehicleDem:
 
 def run_recon_vehicle_task(task_id: str, payload: ReconVehicleCoverageRequest) -> None:
     try:
-        mark_recon_vehicle_running(task_id, "Preparing DEM and recon vehicle projection.", 15)
-        output_dir = settings.outputs_dir / task_id
-        output_dir.mkdir(parents=True, exist_ok=True)
-        staging_dir = output_dir / f".staging-{uuid4().hex}"
-        staging_dir.mkdir(parents=True, exist_ok=False)
-
-        try:
-            prepared = _prepare_recon_vehicle_dem(find_dem_file(payload.dem_id), staging_dir / "dem_projected.tif", payload)
-            mark_recon_vehicle_running(task_id, "Computing terrain-visible recon coverage.", 55)
-            outputs, output_files, metrics, model, warnings = _write_recon_vehicle_outputs(
-                task_id, staging_dir, output_dir, prepared, payload
-            )
-        finally:
-            if staging_dir.exists():
-                shutil.rmtree(staging_dir, ignore_errors=True)
-
+        outputs, output_files, metrics, model, warnings = build_recon_vehicle_artifacts(
+            task_id, payload, lambda message, value: mark_recon_vehicle_running(task_id, message, value)
+        )
         mark_recon_vehicle_finished(task_id, metrics=metrics, outputs=outputs, output_files=output_files, model=model, warnings=warnings)
     except Exception as exc:
         mark_recon_vehicle_failed(task_id, str(exc))
+
+
+def build_recon_vehicle_artifacts(task_id: str, payload: ReconVehicleCoverageRequest, progress: Callable[[str, int], None]):
+    store = get_artifact_store()
+    contract = get_output_contract("recon_vehicle")
+    staging_dir = store.create_staging_dir(task_id)
+    projected_dem = staging_dir / "dem_projected.tif"
+    try:
+        progress("Preparing DEM and recon vehicle projection.", 15)
+        prepared = _prepare_recon_vehicle_dem(find_dem_file(payload.dem_id), projected_dem, payload)
+        progress("Computing terrain-visible recon coverage.", 55)
+        _, _, metrics, model, warnings = _write_recon_vehicle_outputs(task_id, staging_dir, prepared, payload)
+        projected_dem.unlink(missing_ok=True)
+        for path in staging_dir.glob("viewshed_*.tif"):
+            path.unlink()
+        store.publish(task_id, contract, staging_dir)
+        output_files = list_recon_vehicle_task_output_files(task_id)
+        paths = {item.kind: item.download_path for item in output_files}
+        outputs = ReconVehicleCoverageOutputs(**{field: paths.get(field) for field in ReconVehicleCoverageOutputs.model_fields})
+        return outputs, output_files, metrics, model, warnings
+    finally:
+        if staging_dir.exists():
+            shutil.rmtree(staging_dir, ignore_errors=True)
 
 
 def _prepare_recon_vehicle_dem(source: Path, destination: Path, payload: ReconVehicleCoverageRequest) -> PreparedReconVehicleDem:
@@ -179,7 +191,6 @@ def _prepare_recon_vehicle_dem(source: Path, destination: Path, payload: ReconVe
 def _write_recon_vehicle_outputs(
     task_id: str,
     staging_dir: Path,
-    output_dir: Path,
     prepared: PreparedReconVehicleDem,
     payload: ReconVehicleCoverageRequest,
 ):
@@ -239,13 +250,11 @@ def _write_recon_vehicle_outputs(
         vehicle_ground_elevation_m=model.vehicle_ground_elevation_m,
         sensor_altitude_m=model.sensor_altitude_m,
     )
-    outputs = ReconVehicleCoverageOutputs(
-        footprint_geojson=f"/outputs/{task_id}/footprint.geojson",
-        visible_geojson=f"/outputs/{task_id}/visible.geojson",
-        blocked_geojson=f"/outputs/{task_id}/blocked.geojson",
-        model_metadata_json=f"/outputs/{task_id}/model_metadata.json",
-        output_manifest_json=f"/outputs/{task_id}/output_manifest.json",
-    )
+    contract = get_output_contract("recon_vehicle")
+    outputs = ReconVehicleCoverageOutputs(**{
+        spec.kind: contract.download_path_template.format(task_id=task_id, kind=spec.kind)
+        for spec in contract.artifacts
+    })
     _write_json_atomic(model_path, {"model": model.model_dump(), "metrics": metrics.model_dump(), "warnings": []})
     output_paths = {kind: staging_dir / filename for kind, filename in RECON_VEHICLE_OUTPUT_FILENAMES.items()}
     manifest_files = describe_recon_vehicle_output_files(task_id, output_paths)
@@ -258,10 +267,7 @@ def _write_recon_vehicle_outputs(
             "warnings": [],
         },
     )
-    _ensure_staged_outputs_exist(staging_dir)
-    _commit_staged_outputs(staging_dir, output_dir)
-    output_files = list_recon_vehicle_task_output_files(task_id)
-    return outputs, output_files, metrics, model, []
+    return outputs, manifest_files, metrics, model, []
 
 
 def _compute_recon_vehicle_masks(
@@ -501,23 +507,6 @@ def _write_feature_collection(path: Path, geometry, properties: dict | None = No
     if geometry is not None and not geometry.is_empty:
         features.append({"type": "Feature", "properties": properties or {}, "geometry": mapping(geometry)})
     _write_json_atomic(path, {"type": "FeatureCollection", "features": features})
-
-
-def _ensure_staged_outputs_exist(staging_dir: Path) -> None:
-    missing = [
-        kind
-        for kind, filename in RECON_VEHICLE_OUTPUT_FILENAMES.items()
-        if not (staging_dir / filename).exists() or (staging_dir / filename).stat().st_size <= 0
-    ]
-    if missing:
-        raise AppError("OUTPUT_INCOMPLETE", f"Recon vehicle task staged outputs are incomplete: {', '.join(missing)}.", status_code=500)
-
-
-def _commit_staged_outputs(staging_dir: Path, output_dir: Path) -> None:
-    output_dir.mkdir(parents=True, exist_ok=True)
-    for filename in RECON_VEHICLE_OUTPUT_FILENAMES.values():
-        (staging_dir / filename).replace(output_dir / filename)
-    _fsync_directory(output_dir)
 
 
 def _write_json_atomic(path: Path, payload: dict) -> None:

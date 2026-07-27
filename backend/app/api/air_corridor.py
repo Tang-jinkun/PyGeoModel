@@ -1,18 +1,20 @@
-from fastapi import APIRouter, BackgroundTasks, HTTPException, status
+from typing import Annotated
+from fastapi import APIRouter, BackgroundTasks, Header, HTTPException, status
 from fastapi.responses import FileResponse
 
 from app.core.errors import AppError
 from app.schemas.air_corridor import (
     AirCorridorOutputFile,
-    AirCorridorOutputKind,
     AirCorridorPlanningMetrics,
     AirCorridorPlanningRequest,
     AirCorridorPlanningTaskDeleteResult,
     AirCorridorPlanningTaskStatus,
     AirCorridorPlanningTaskSummary,
 )
-from app.services.air_corridor_output_files import list_air_corridor_task_output_files, resolve_air_corridor_task_output_path
+from app.services.artifact_contracts import get_output_contract
+from app.services.artifact_store import get_artifact_store
 from app.services.air_corridor_task_store import (
+    create_air_corridor_rerun,
     create_air_corridor_task,
     delete_air_corridor_task,
     get_air_corridor_task,
@@ -49,6 +51,22 @@ def read_planning_task(task_id: str) -> AirCorridorPlanningTaskStatus:
         raise HTTPException(status_code=exc.status_code, detail=exc.as_detail()) from exc
 
 
+@router.post("/planning/{task_id}/rerun", response_model=AirCorridorPlanningTaskStatus, status_code=status.HTTP_202_ACCEPTED)
+def rerun_planning_task(task_id: str, background_tasks: BackgroundTasks, idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=8, max_length=128)]) -> AirCorridorPlanningTaskStatus:
+    try:
+        original = get_air_corridor_task(task_id)
+        if original.request is None:
+            raise AppError("TASK_REQUEST_UNAVAILABLE", "Saved request is unavailable.", status_code=409)
+        read_dem_metadata(original.request.dem_id)
+        find_dem_file(original.request.dem_id)
+        task, created = create_air_corridor_rerun(task_id, original.request, idempotency_key)
+        if created:
+            background_tasks.add_task(run_air_corridor_task, task.task_id, original.request)
+        return task
+    except AppError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.as_detail()) from exc
+
+
 @router.get("/planning/{task_id}/metrics", response_model=AirCorridorPlanningMetrics)
 def read_planning_metrics(task_id: str) -> AirCorridorPlanningMetrics:
     try:
@@ -67,22 +85,18 @@ def read_planning_metrics(task_id: str) -> AirCorridorPlanningMetrics:
 @router.get("/planning/{task_id}/outputs", response_model=list[AirCorridorOutputFile])
 def list_planning_outputs(task_id: str) -> list[AirCorridorOutputFile]:
     try:
-        get_air_corridor_task(task_id)
-        return list_air_corridor_task_output_files(task_id)
+        return get_air_corridor_task(task_id).output_files
     except AppError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.as_detail()) from exc
 
 
 @router.get("/planning/{task_id}/outputs/{kind}")
-def download_planning_output(task_id: str, kind: AirCorridorOutputKind) -> FileResponse:
+def download_planning_output(task_id: str, kind: str) -> FileResponse:
     try:
         task = get_air_corridor_task(task_id)
-        if task.status != "finished":
-            raise AppError("TASK_NOT_FINISHED", "Air corridor outputs are available only after the task is finished.", status_code=409)
-        path = resolve_air_corridor_task_output_path(task_id, kind)
-        if not path.exists():
-            raise AppError("OUTPUT_NOT_FOUND", f"Output '{kind}' was not found.", status_code=404)
-        info = next(item for item in list_air_corridor_task_output_files(task_id) if item.kind == kind)
+        path, info = get_artifact_store().resolve_download(
+            task_id, kind, get_output_contract("air_corridor"), computation_status=task.status
+        )
         return FileResponse(path, media_type=info.media_type, filename=info.filename)
     except AppError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.as_detail()) from exc
