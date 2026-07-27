@@ -11,6 +11,7 @@ from app.services.task_store import recover_interrupted_tasks
 from app.services.uav_task_store import recover_interrupted_uav_tasks
 from app.services.watchpost_task_store import recover_interrupted_watchpost_tasks
 from app.services.tianditu import tianditu_integration_status
+from app.services.reconciliation import cleanup_stale_staging_dirs
 
 
 def create_app() -> FastAPI:
@@ -29,6 +30,7 @@ def create_app() -> FastAPI:
     )
 
     settings.ensure_directories()
+    cleanup_stale_staging_dirs()
     recover_interrupted_tasks()
     recover_interrupted_uav_tasks()
     recover_interrupted_watchpost_tasks()
