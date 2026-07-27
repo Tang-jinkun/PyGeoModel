@@ -33,6 +33,31 @@ describe("WorkbenchInspector", () => {
     expect(wrapper.find("[data-result-files]").exists()).toBe(false);
   });
 
+  it("shows multi-radar metrics and every available download", () => {
+    const wrapper = mount(WorkbenchInspector, {
+      props: {
+        mode: "result",
+        context: multiRadarContext(),
+        outputFiles: [
+          outputFile(),
+          {
+            kind: "overlap_geojson",
+            filename: "overlap.geojson",
+            media_type: "application/geo+json",
+            label: "Overlap GeoJSON",
+            required: true,
+            exists: true,
+            download_path: "/api/radar/multi-coverage/multi-1/outputs/overlap_geojson"
+          }
+        ]
+      }
+    });
+
+    expect(wrapper.find("[data-result-detail]").text()).toContain("多雷达协同");
+    expect(wrapper.get("[data-result-metrics]").text()).toContain("Visible union area");
+    expect(wrapper.get("[data-result-files]").text()).toContain("Overlap GeoJSON");
+  });
+
   it("returns to parameters from a failed task", async () => {
     const wrapper = mount(WorkbenchInspector, { props: { mode: "result", context: { ...finishedContext(), task: { ...finishedContext().task, status: "failed" } } } });
     await wrapper.get('[aria-label="Back to model parameters"]').trigger("click");
@@ -53,5 +78,29 @@ function outputFile() {
     required: true,
     exists: true,
     download_path: "/api/radar/coverage/task-1/outputs/visible_geojson"
+  };
+}
+
+function multiRadarContext() {
+  return {
+    kind: "multi-radar" as const,
+    task: {
+      task_id: "multi-1",
+      dem_id: "dem-1",
+      status: "finished" as const,
+      result_state: "ready" as const,
+      progress: 100,
+      message: "done",
+      metrics: {
+        visible_union_area_m2: 2_500_000,
+        overlap_area_m2: 500_000,
+        blind_area_m2: 1_000_000,
+        theoretical_union_area_m2: 3_500_000,
+        successful_station_count: 2,
+        failed_station_count: 0
+      },
+      output_files: [],
+      stations: []
+    }
   };
 }

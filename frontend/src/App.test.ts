@@ -12,7 +12,11 @@ vi.mock("./api/tasks", () => ({
   createTaskClient: vi.fn(() => ({ create: vi.fn(), get: vi.fn(), list: vi.fn(), metrics: vi.fn(), delete: vi.fn() }))
 }));
 vi.mock("./api/multiRadar", () => ({
-  listMultiRadarTasks: vi.fn(async () => []), createMultiRadarTask: vi.fn(), getMultiRadarTask: vi.fn()
+  listMultiRadarTasks: vi.fn(async () => [finishedMultiRadarTask()]),
+  createMultiRadarTask: vi.fn(),
+  getMultiRadarTask: vi.fn(async () => finishedMultiRadarTask()),
+  getMultiRadarOutputs: vi.fn(async () => [multiRadarOutputFile()]),
+  findMultiRadarOutputPath: vi.fn()
 }));
 vi.mock("./models/radar/layerAdapter", () => ({
   createRadarLayerAdapter: vi.fn(() => ({ errors: {}, clear: vi.fn(), dispose: vi.fn(), setRadarVisible: vi.fn() }))
@@ -62,8 +66,55 @@ describe("App model run workflow", () => {
     expect(status.text()).toContain("当前 DEM：未选择");
     expect(status.find(".workbench-status__live").exists()).toBe(true);
   });
+
+  it("reuses the result inspector for multi-radar task downloads", async () => {
+    const wrapper = mountApp();
+    await flushPromises();
+
+    await wrapper.findAll(".task-tab").find((tab) => tab.text().includes("历史记录"))!.trigger("click");
+    await wrapper.get('[data-action="files"]').trigger("click");
+    await flushPromises();
+
+    expect(wrapper.get(".gis-workbench").attributes("data-inspector-open")).toBe("true");
+    expect(wrapper.get("[data-result-detail]").text()).toContain("多雷达协同");
+    expect(wrapper.get("[data-result-files] a").attributes("href"))
+      .toBe("/api/radar/multi-coverage/multi-1/outputs/visible_union_geojson");
+  });
 });
 
 function mountApp() {
   return mount(App, { global: { stubs: { MapWorkspace: MapWorkspaceStub } } });
+}
+
+function finishedMultiRadarTask() {
+  return {
+    task_id: "multi-1",
+    dem_id: "dem-1",
+    status: "finished" as const,
+    result_state: "ready" as const,
+    progress: 100,
+    message: "done",
+    metrics: {
+      visible_union_area_m2: 2_500_000,
+      overlap_area_m2: 500_000,
+      blind_area_m2: 1_000_000,
+      theoretical_union_area_m2: 3_500_000,
+      successful_station_count: 2,
+      failed_station_count: 0
+    },
+    output_files: [],
+    stations: []
+  };
+}
+
+function multiRadarOutputFile() {
+  return {
+    kind: "visible_union_geojson",
+    filename: "visible_union.geojson",
+    media_type: "application/geo+json",
+    label: "Visible union GeoJSON",
+    required: true,
+    exists: true,
+    download_path: "/api/radar/multi-coverage/multi-1/outputs/visible_union_geojson"
+  };
 }

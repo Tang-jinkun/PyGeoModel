@@ -1,5 +1,5 @@
 <template>
-  <GisWorkbenchShell :tasks-collapsed="presentation.taskCenterCollapsed.value" :inspector-open="presentation.inspectorMode.value === 'result' && Boolean(selectedTaskContext)" @update:tasks-collapsed="presentation.toggleTaskCenter">
+  <GisWorkbenchShell :tasks-collapsed="presentation.taskCenterCollapsed.value" :inspector-open="presentation.inspectorMode.value === 'result' && Boolean(selectedWorkbenchResultContext)" @update:tasks-collapsed="presentation.toggleTaskCenter">
     <template #topbar><WorkbenchTopbar :dem-label="selectedDem?.filename ?? 'No DEM selected'" :connected="!taskManager.connectionInterrupted.value" :search="modelSearch" @update:search="modelSearch = $event" /></template>
     <template #dock>
       <WorkbenchDock :model-value="workspace.selectedModel.value" :active-tab="presentation.dockTab.value" :model-search="modelSearch" :layer-definitions="selectedTaskContext?.task.status === 'finished' ? getModelDefinition(selectedTaskContext.modelId).outputLayers : []" :layer-states="mapWorkspace.layerStates.value" :scene-entries="workbenchSceneEntries" :multi-radar-stations="activeMultiRadarTask?.stations ?? []" @select-model="selectWorkbenchModel" @update:active-tab="presentation.selectDockTab" @update:model-search="modelSearch = $event" @update-layer-visibility="setLayerVisibility" @update-layer-opacity="setLayerOpacity" @focus-layer="focusLayer" @update-scene-glb="setSceneGlbVisibility" @focus-scene-glb="focusSceneGlb" @focus-station="focusMultiRadarStation">
@@ -12,9 +12,9 @@
     <template #inspector>
       <WorkbenchInspector
         :mode="presentation.inspectorMode.value"
-        :context="selectedTaskContext"
-        :metrics="mapWorkspace.taskMetrics.value"
-        :output-files="mapWorkspace.outputFiles.value"
+        :context="selectedWorkbenchResultContext"
+        :metrics="selectedInspectorMetrics"
+        :output-files="selectedInspectorOutputFiles"
         @show-parameters="presentation.showParameters"
       />
     </template>
@@ -213,6 +213,7 @@ import { useMapWorkspace, type SceneGlbKind } from "./composables/useMapWorkspac
 import { useModelWorkspace, type ActiveDraft } from "./composables/useModelWorkspace";
 import { useTaskManager } from "./composables/useTaskManager";
 import { buildWorkbenchTaskRows } from "./workbench/taskPresentation";
+import type { WorkbenchResultContext } from "./workbench/resultContext";
 import { useWorkbenchPresentation } from "./workbench/useWorkbenchPresentation";
 import { shouldShowRadarPreview } from "./workbench/radarPreviewPolicy";
 import type { SpatialDraftAction } from "./map/spatialInput";
@@ -288,6 +289,7 @@ const heightOptions = ref<RadarHeightOption[]>([]);
 const selectedHeightM = ref<number | null>(null);
 const activeHeightData = shallowRef<HeightLayerData[]>([]);
 const activeMultiRadarTask = shallowRef<MultiRadarTask | null>(null);
+const selectedMultiRadarResultTask = shallowRef<MultiRadarTask | null>(null);
 const multiRadarTasks = ref<MultiRadarTask[]>([]);
 const multiRadarDetailTasks = new Map<string, CoverageTaskStatus>();
 const multiRadarDetailStationIds = ref<string[]>([]);
@@ -330,6 +332,18 @@ const selectedTaskContext = computed<SelectedTaskContext | null>(() => {
   if (!MODEL_IDS.includes(modelId)) return null;
   const task = taskManager.getTask(modelId, taskId) as GenericTask | undefined;
   return task ? { modelId, task } : null;
+});
+const selectedWorkbenchResultContext = computed<WorkbenchResultContext | null>(() => {
+  const multiRadarTask = selectedMultiRadarResultTask.value;
+  return multiRadarTask ? { kind: "multi-radar", task: multiRadarTask } : selectedTaskContext.value;
+});
+const selectedInspectorMetrics = computed<Record<string, unknown> | null>(() => {
+  const multiRadarTask = selectedMultiRadarResultTask.value;
+  return multiRadarTask ? multiRadarTask.metrics ?? null : mapWorkspace.taskMetrics.value as Record<string, unknown> | null;
+});
+const selectedInspectorOutputFiles = computed<readonly OutputFile[]>(() => {
+  const multiRadarTask = selectedMultiRadarResultTask.value;
+  return multiRadarTask ? multiRadarTask.output_files : mapWorkspace.outputFiles.value;
 });
 const workbenchSceneEntries = computed<WorkbenchSceneEntry[]>(() => {
   const context = selectedTaskContext.value;
@@ -519,29 +533,34 @@ function selectWorkbenchModel(modelId: ModelId) {
 }
 
 function selectWorkbenchTask(modelId: ModelId, taskId: string) {
+  selectedMultiRadarResultTask.value = null;
   taskManager.select(modelId, taskId);
   presentation.selectTask();
 }
 
-async function selectMultiRadarTask(taskId: string) {
+async function selectMultiRadarTask(taskId: string, intent: "layers" | "files" = "layers") {
   try {
     const task = await getMultiRadarTask(taskId);
-    upsertMultiRadarTask(task);
-    activeMultiRadarTask.value = task;
-    demManager.select(task.dem_id);
-    if ((task.status === "finished" || task.status === "partial") && task.result_state === "ready") {
-      await nextTick(() => showMultiRadarAggregate(task));
+    const outputFiles = await getMultiRadarOutputs(taskId);
+    const resolvedTask = { ...task, output_files: outputFiles };
+    upsertMultiRadarTask(resolvedTask);
+    activeMultiRadarTask.value = resolvedTask;
+    selectedMultiRadarResultTask.value = resolvedTask;
+    demManager.select(resolvedTask.dem_id);
+    presentation.selectTask();
+    if (intent === "layers" && (resolvedTask.status === "finished" || resolvedTask.status === "partial") && resolvedTask.result_state === "ready") {
+      await nextTick(() => showMultiRadarAggregate(resolvedTask, outputFiles));
     }
   } catch (error) {
     showError(error);
   }
 }
 
-async function showMultiRadarAggregate(task: MultiRadarTask) {
+async function showMultiRadarAggregate(task: MultiRadarTask, resolvedOutputFiles?: OutputFile[]) {
   const instance = map.value;
   if (!instance) return;
   try {
-    const outputFiles = await getMultiRadarOutputs(task.task_id);
+    const outputFiles = resolvedOutputFiles ?? await getMultiRadarOutputs(task.task_id);
     const urls = [
       "visible_union_geojson", "overlap_geojson", "blind_geojson",
       "coverage_count_geojson", "stations_geojson"

@@ -3,7 +3,7 @@
     <div v-if="mode === 'result' && context" class="result-detail" data-result-detail>
       <header class="result-header">
         <div>
-          <small>{{ definition.label }}</small>
+          <small>{{ resultLabel }}</small>
           <h1>任务结果</h1>
         </div>
         <button type="button" aria-label="Back to model parameters" title="返回模型配置" @click="emit('show-parameters')">
@@ -57,15 +57,13 @@ import { ElIcon } from "element-plus";
 import { computed } from "vue";
 
 import { resolveApiUrl } from "../../api/http";
-import { getModelDefinition, type ModelId } from "../../models/registry";
-import type { BaseModelRequest, MetricDefinition, OutputFile, TaskSummary } from "../../models/shared";
+import type { OutputFile } from "../../models/shared";
+import { resultContextLabel, resultContextMetricDefinitions, resultContextMetrics, type WorkbenchResultContext } from "../../workbench/resultContext";
 import MetricGrid from "../tasks/MetricGrid.vue";
-
-type Context = { modelId: ModelId; task: TaskSummary<BaseModelRequest, unknown, unknown, unknown> };
 
 const props = withDefaults(defineProps<{
   mode: "parameters" | "result";
-  context?: Context | null;
+  context?: WorkbenchResultContext | null;
   metrics?: Record<string, unknown> | null;
   outputFiles?: readonly OutputFile[];
 }>(), {
@@ -75,15 +73,16 @@ const props = withDefaults(defineProps<{
 });
 
 const emit = defineEmits<{ "show-parameters": [] }>();
-const definition = computed(() => getModelDefinition(props.context!.modelId));
+const resultLabel = computed(() => props.context ? resultContextLabel(props.context) : "");
 const statusLabel = computed(() => ({
   pending: "等待执行",
   running: "正在运行",
   finished: "已完成",
+  partial: "部分完成",
   failed: "执行失败"
 }[props.context?.task.status ?? "pending"]));
-const effectiveMetrics = computed(() => props.metrics ?? (props.context?.task.metrics as Record<string, unknown> | null) ?? null);
-const metricDefinitions = computed(() => definition.value.metrics as MetricDefinition<Record<string, unknown>>[]);
+const effectiveMetrics = computed(() => props.metrics ?? (props.context ? resultContextMetrics(props.context) : null) ?? null);
+const metricDefinitions = computed(() => props.context ? resultContextMetricDefinitions(props.context) : []);
 const availableFiles = computed(() => props.outputFiles.filter((file) => file.exists && file.download_path));
 
 function formatFileSize(size?: number | null) {
