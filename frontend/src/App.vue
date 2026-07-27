@@ -656,21 +656,35 @@ async function showMultiRadarCooperativeScene(task: MultiRadarTask, outputFiles:
     const stationId = stationBySceneTaskId.get(stationTask.task_id);
     if (stationId) cooperativeStationTasks.set(stationId, stationTask);
   }
-  const stationLoads = finished.map(async (stationTask) => {
-    const files = await getCoverageOutputs(stationTask.task_id);
-    await Promise.all([
-      mapWorkspace.setSceneGlbVisibility(instance, demId, "radar", stationTask as never, true, "scene_glb", files),
-      mapWorkspace.setSceneGlbVisibility(instance, demId, "radar", stationTask as never, true, "radar_platform_glb", files)
-    ]);
-  });
-  await Promise.allSettled(stationLoads);
+  const stationOutputs = await Promise.allSettled(finished.map(async (stationTask) => ({
+    stationTask,
+    files: await getCoverageOutputs(stationTask.task_id)
+  })));
+  const stationScenes = stationOutputs.flatMap((result) => (
+    result.status === "fulfilled" ? [result.value] : []
+  ));
+  await Promise.allSettled(stationScenes.map(({ stationTask, files }) => (
+    mapWorkspace.setSceneGlbVisibility(instance, demId, "radar", stationTask as never, true, "scene_glb", files)
+  )));
   const intersectionFile = outputFiles.find((candidate) => candidate.kind === "cooperative_intersection_glb" && candidate.exists && candidate.download_path);
   const intersectionTask = intersectionFile
     ? createCooperativeIntersectionTask(task.task_id, task.dem_id, intersectionFile)
     : null;
   if (intersectionTask) {
-    await mapWorkspace.setSceneGlbVisibility(instance, demId, "radar", intersectionTask as never, true, "scene_glb", [intersectionFile!]);
+    await mapWorkspace.setSceneGlbVisibility(
+      instance,
+      demId,
+      "radar",
+      intersectionTask as never,
+      true,
+      "scene_glb",
+      [intersectionFile!],
+      true
+    );
   }
+  await Promise.allSettled(stationScenes.map(({ stationTask, files }) => (
+    mapWorkspace.setSceneGlbVisibility(instance, demId, "radar", stationTask as never, true, "radar_platform_glb", files)
+  )));
   multiRadarDetailStationIds.value = [...cooperativeStationTasks.keys()];
   mapWorkspace.focusSceneGlbs(instance, [
     ...finished.map((stationTask) => ({ taskId: stationTask.task_id })),

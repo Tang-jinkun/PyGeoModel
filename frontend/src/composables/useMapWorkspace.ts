@@ -58,6 +58,7 @@ export interface SceneGlbLoadRequest {
   taskId: string;
   assetId: string;
   kind: SceneGlbKind;
+  foreground: boolean;
   modelId: string;
   url: string;
   signal: AbortSignal;
@@ -111,6 +112,7 @@ const DEFAULT_SCENE_GLB_ADAPTER: SceneGlbAdapter = {
     }
     try {
       addSceneGlbLayer(request.map, request.assetId, asset, {
+        foreground: request.foreground,
         onLost: request.onLayerLost
       });
     } catch (error) {
@@ -297,7 +299,8 @@ export function useMapWorkspace(kind: SpatialInputKind, initialDraft?: SpatialDr
     task: ModelTaskSummary<K>,
     visible: boolean,
     kind: SceneGlbKind = "scene_glb",
-    liveFiles?: readonly OutputFile[]
+    liveFiles?: readonly OutputFile[],
+    foreground = kind === "radar_platform_glb"
   ) {
     const taskId = task.task_id;
     const assetId = sceneAssetId(taskId, kind);
@@ -357,6 +360,7 @@ export function useMapWorkspace(kind: SpatialInputKind, initialDraft?: SpatialDr
         taskId,
         assetId,
         kind,
+        foreground,
         modelId: sceneMetadataModelId(modelId),
         url,
         signal: controller.signal,

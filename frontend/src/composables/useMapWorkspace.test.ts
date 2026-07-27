@@ -253,12 +253,14 @@ describe("useMapWorkspace", () => {
     expect(sceneGlb.load).toHaveBeenNthCalledWith(1, expect.objectContaining({
       taskId: task.task_id,
       assetId: task.task_id,
-      url: sceneFile.download_path
+      url: sceneFile.download_path,
+      foreground: false
     }));
     expect(sceneGlb.load).toHaveBeenNthCalledWith(2, expect.objectContaining({
       taskId: task.task_id,
       assetId: `${task.task_id}--radar_platform_glb`,
-      url: radarPlatformFile.download_path
+      url: radarPlatformFile.download_path,
+      foreground: true
     }));
     expect(workspace.sceneGlbStateFor(task.task_id, "scene_glb")?.status).toBe("visible");
     expect(workspace.sceneGlbStateFor(task.task_id, "radar_platform_glb")?.status).toBe("visible");

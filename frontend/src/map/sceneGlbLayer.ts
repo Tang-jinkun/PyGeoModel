@@ -23,6 +23,7 @@ const registry = new WeakMap<MapInstance, Map<string, RegisteredSceneGlb>>();
 const terrainTasks = new WeakMap<MapInstance, Set<string>>();
 
 export interface SceneGlbLayerOptions {
+  foreground?: boolean;
   onLost?: () => void;
 }
 
@@ -159,6 +160,7 @@ function createCustomLayer(
       camera.projectionMatrix.copy(mapMatrix).multiply(anchorMatrix);
       mixer?.setTime(performance.now() / 1_000);
       renderer.resetState();
+      if (options.foreground) renderer.clearDepth();
       renderer.render(scene, camera);
       if (mixer) map.triggerRepaint();
     },

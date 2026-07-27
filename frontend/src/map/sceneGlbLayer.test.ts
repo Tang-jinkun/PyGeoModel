@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { DEM_TERRAIN_SOURCE_ID } from "./mapLayers";
 import type { PreparedSceneGlb } from "./sceneGlbAsset";
@@ -15,6 +15,10 @@ import {
   sceneGlbLayerId
 } from "./sceneGlbLayer";
 
+const rendererState = vi.hoisted(() => ({
+  instances: [] as Array<{ clearDepth: ReturnType<typeof vi.fn> }>
+}));
+
 vi.mock("three", async () => {
   const actual = await vi.importActual<typeof import("three")>("three");
   return {
@@ -22,13 +26,22 @@ vi.mock("three", async () => {
     WebGLRenderer: class {
       autoClear = true;
       resetState = vi.fn();
+      clearDepth = vi.fn();
       render = vi.fn();
       dispose = vi.fn();
+
+      constructor() {
+        rendererState.instances.push(this);
+      }
     }
   };
 });
 
 describe("scene GLB map layer", () => {
+  beforeEach(() => {
+    rendererState.instances.length = 0;
+  });
+
   it("creates neutral baseline lights for the custom scene", () => {
     const lights = createSceneGlbLights();
 
@@ -129,6 +142,17 @@ describe("scene GLB map layer", () => {
     } finally {
       now.mockRestore();
     }
+  });
+
+  it("clears shared depth before rendering a foreground GLB", () => {
+    const map = new FakeMap();
+    addSceneGlbLayer(map as never, "task-a", preparedAsset("task-a"), { foreground: true } as never);
+    const layer = map.layers.get("scene-glb-task-a");
+    const render = layer?.render as ((gl: WebGLRenderingContext, matrix: number[]) => void);
+
+    render({} as WebGLRenderingContext, new THREE.Matrix4().identity().toArray());
+
+    expect(rendererState.instances.at(-1)?.clearDepth).toHaveBeenCalledOnce();
   });
 
   it("focuses transformed WGS84 bounds with a stable 3D camera", () => {
