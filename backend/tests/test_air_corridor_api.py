@@ -100,6 +100,7 @@ def test_delete_air_corridor_task_removes_only_its_stale_stages(
         "task_id": task_id,
         "deleted_task_record": True,
         "deleted_output_dir": True,
+        "errors": [],
     }
     assert all(not path.exists() for path in matching_stages)
     assert not final_output.exists()

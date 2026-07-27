@@ -2,6 +2,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+from app.schemas.artifacts import ArtifactDescriptor, TaskResultFields
+
 
 UavOutputKind = Literal[
     "footprint_geojson",
@@ -83,15 +85,8 @@ class UavReconOutputs(BaseModel):
     output_manifest_json: str | None = None
 
 
-class UavOutputFile(BaseModel):
-    kind: UavOutputKind
-    label: str
-    url: str
-    download_url: str
-    filename: str
-    media_type: str
-    size_bytes: int | None = None
-    exists: bool = False
+class UavOutputFile(ArtifactDescriptor):
+    pass
 
 
 class UavModelMetadata(BaseModel):
@@ -116,7 +111,7 @@ class UavModelMetadata(BaseModel):
     route_length_m: float = 0
 
 
-class UavReconTaskSummary(BaseModel):
+class UavReconTaskSummary(TaskResultFields):
     task_id: str
     dem_id: str | None = None
     status: Literal["pending", "running", "finished", "failed"]
@@ -126,7 +121,7 @@ class UavReconTaskSummary(BaseModel):
     updated_at: str | None = None
     metrics: UavReconMetrics | None = None
     outputs: UavReconOutputs | None = None
-    output_files: list[UavOutputFile] = Field(default_factory=list)
+    output_files: list[ArtifactDescriptor] = Field(default_factory=list)
     model: UavModelMetadata | None = None
     warnings: list[str] = Field(default_factory=list)
 
@@ -139,3 +134,4 @@ class UavReconTaskDeleteResult(BaseModel):
     task_id: str
     deleted_task_record: bool = False
     deleted_output_dir: bool = False
+    errors: list[str] = Field(default_factory=list)

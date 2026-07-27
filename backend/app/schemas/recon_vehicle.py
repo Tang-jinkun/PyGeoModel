@@ -2,6 +2,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+from app.schemas.artifacts import ArtifactDescriptor, TaskResultFields
+
 
 ReconVehicleOutputKind = Literal[
     "footprint_geojson",
@@ -87,15 +89,8 @@ class ReconVehicleCoverageOutputs(BaseModel):
     output_manifest_json: str | None = None
 
 
-class ReconVehicleOutputFile(BaseModel):
-    kind: ReconVehicleOutputKind
-    label: str
-    url: str
-    download_url: str
-    filename: str
-    media_type: str
-    size_bytes: int | None = None
-    exists: bool = False
+class ReconVehicleOutputFile(ArtifactDescriptor):
+    pass
 
 
 class ReconVehicleModelMetadata(BaseModel):
@@ -123,7 +118,7 @@ class ReconVehicleModelMetadata(BaseModel):
     gdal_viewshed_commands: list[list[str]] = Field(default_factory=list)
 
 
-class ReconVehicleCoverageTaskSummary(BaseModel):
+class ReconVehicleCoverageTaskSummary(TaskResultFields):
     task_id: str
     dem_id: str | None = None
     status: Literal["pending", "running", "finished", "failed"]
@@ -133,7 +128,7 @@ class ReconVehicleCoverageTaskSummary(BaseModel):
     updated_at: str | None = None
     metrics: ReconVehicleCoverageMetrics | None = None
     outputs: ReconVehicleCoverageOutputs | None = None
-    output_files: list[ReconVehicleOutputFile] = Field(default_factory=list)
+    output_files: list[ArtifactDescriptor] = Field(default_factory=list)
     model: ReconVehicleModelMetadata | None = None
     warnings: list[str] = Field(default_factory=list)
 
@@ -146,3 +141,4 @@ class ReconVehicleCoverageTaskDeleteResult(BaseModel):
     task_id: str
     deleted_task_record: bool = False
     deleted_output_dir: bool = False
+    errors: list[str] = Field(default_factory=list)

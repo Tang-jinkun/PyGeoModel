@@ -3,6 +3,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+from app.schemas.artifacts import ArtifactDescriptor, TaskResultFields
+
 
 CoverageOutputKind = Literal[
     "viewshed_tif",
@@ -156,7 +158,7 @@ class MultiRadarStationSummary(BaseModel):
     scene_message: str = ""
 
 
-class MultiRadarTaskStatus(BaseModel):
+class MultiRadarTaskStatus(TaskResultFields):
     task_id: str
     dem_id: str
     status: Literal["pending", "running", "finished", "partial", "failed"]
@@ -166,6 +168,7 @@ class MultiRadarTaskStatus(BaseModel):
     updated_at: str | None = None
     metrics: MultiRadarMetrics | None = None
     outputs: MultiRadarOutputs | None = None
+    output_files: list[ArtifactDescriptor] = Field(default_factory=list)
     stations: list[MultiRadarStationSummary] = Field(default_factory=list)
     request: MultiRadarRequest | None = None
 
@@ -219,15 +222,8 @@ class CoverageOutputs(BaseModel):
     radar_platform_glb: str | None = None
 
 
-class CoverageOutputFile(BaseModel):
-    kind: CoverageOutputKind
-    label: str
-    url: str
-    download_url: str
-    filename: str
-    media_type: str
-    size_bytes: int | None = None
-    exists: bool = False
+class CoverageOutputFile(ArtifactDescriptor):
+    pass
 
 
 class BeamClipProfile(BaseModel):
@@ -265,7 +261,7 @@ class CoverageModelMetadata(BaseModel):
     scene3d: dict[str, Any] | None = None
 
 
-class CoverageTaskSummary(BaseModel):
+class CoverageTaskSummary(TaskResultFields):
     task_id: str
     dem_id: str | None = None
     status: Literal["pending", "running", "finished", "failed"]
@@ -275,7 +271,7 @@ class CoverageTaskSummary(BaseModel):
     updated_at: str | None = None
     metrics: CoverageMetrics | None = None
     outputs: CoverageOutputs | None = None
-    output_files: list[CoverageOutputFile] = Field(default_factory=list)
+    output_files: list[ArtifactDescriptor] = Field(default_factory=list)
     model: CoverageModelMetadata | None = None
     diagnostics: CoverageDiagnostics | None = None
     warnings: list[str] = Field(default_factory=list)
@@ -289,6 +285,7 @@ class CoverageTaskDeleteResult(BaseModel):
     task_id: str
     deleted_task_record: bool = False
     deleted_output_dir: bool = False
+    errors: list[str] = Field(default_factory=list)
 
 
 class CoverageProfileSample(BaseModel):

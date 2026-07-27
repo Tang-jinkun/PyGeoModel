@@ -2,6 +2,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+from app.schemas.artifacts import ArtifactDescriptor, TaskResultFields
+
 
 AirCorridorOutputKind = Literal[
     "corridor_path_geojson",
@@ -118,15 +120,8 @@ class AirCorridorPlanningOutputs(BaseModel):
     output_manifest_json: str | None = None
 
 
-class AirCorridorOutputFile(BaseModel):
-    kind: AirCorridorOutputKind
-    label: str
-    url: str
-    download_url: str
-    filename: str
-    media_type: str
-    size_bytes: int | None = None
-    exists: bool = False
+class AirCorridorOutputFile(ArtifactDescriptor):
+    pass
 
 
 class Scene3dUnitOmission(BaseModel):
@@ -168,7 +163,7 @@ class AirCorridorModelMetadata(BaseModel):
     scene3d: Scene3dMetadata | None = None
 
 
-class AirCorridorPlanningTaskSummary(BaseModel):
+class AirCorridorPlanningTaskSummary(TaskResultFields):
     task_id: str
     dem_id: str | None = None
     status: Literal["pending", "running", "finished", "failed"]
@@ -178,7 +173,7 @@ class AirCorridorPlanningTaskSummary(BaseModel):
     updated_at: str | None = None
     metrics: AirCorridorPlanningMetrics | None = None
     outputs: AirCorridorPlanningOutputs | None = None
-    output_files: list[AirCorridorOutputFile] = Field(default_factory=list)
+    output_files: list[ArtifactDescriptor] = Field(default_factory=list)
     model: AirCorridorModelMetadata | None = None
     warnings: list[str] = Field(default_factory=list)
 
@@ -191,3 +186,4 @@ class AirCorridorPlanningTaskDeleteResult(BaseModel):
     task_id: str
     deleted_task_record: bool = False
     deleted_output_dir: bool = False
+    errors: list[str] = Field(default_factory=list)

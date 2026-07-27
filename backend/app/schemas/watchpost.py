@@ -2,6 +2,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from app.schemas.artifacts import ArtifactDescriptor, TaskResultFields
+
 
 WatchpostOutputKind = Literal[
     "viewshed_tif",
@@ -64,15 +66,8 @@ class WatchpostDetectionOutputs(BaseModel):
     output_manifest_json: str | None = None
 
 
-class WatchpostOutputFile(BaseModel):
-    kind: WatchpostOutputKind
-    label: str
-    url: str
-    download_url: str
-    filename: str
-    media_type: str
-    size_bytes: int | None = None
-    exists: bool = False
+class WatchpostOutputFile(ArtifactDescriptor):
+    pass
 
 
 class WatchpostModelMetadata(BaseModel):
@@ -93,7 +88,7 @@ class WatchpostModelMetadata(BaseModel):
     gdal_viewshed_command: list[str] = Field(default_factory=list)
 
 
-class WatchpostDetectionTaskSummary(BaseModel):
+class WatchpostDetectionTaskSummary(TaskResultFields):
     task_id: str
     dem_id: str | None = None
     status: Literal["pending", "running", "finished", "failed"]
@@ -103,7 +98,7 @@ class WatchpostDetectionTaskSummary(BaseModel):
     updated_at: str | None = None
     metrics: WatchpostDetectionMetrics | None = None
     outputs: WatchpostDetectionOutputs | None = None
-    output_files: list[WatchpostOutputFile] = Field(default_factory=list)
+    output_files: list[ArtifactDescriptor] = Field(default_factory=list)
     model: WatchpostModelMetadata | None = None
     warnings: list[str] = Field(default_factory=list)
 
@@ -116,3 +111,4 @@ class WatchpostDetectionTaskDeleteResult(BaseModel):
     task_id: str
     deleted_task_record: bool = False
     deleted_output_dir: bool = False
+    errors: list[str] = Field(default_factory=list)
