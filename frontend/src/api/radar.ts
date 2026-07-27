@@ -1,4 +1,5 @@
 import { requestJson } from "./http";
+import type { OutputFile, ResultState } from "../models/shared";
 import type {
   BeamClipProfile as RadarBeamClipProfile,
   RadarAdvancedInput,
@@ -42,16 +43,7 @@ const DEFAULT_COVERAGE_REQUEST: CoverageRequest = {
   reserved_radar_params: {}
 };
 
-export interface CoverageOutputFile {
-  kind: CoverageOutputKind;
-  label: string;
-  url: string;
-  download_url: string;
-  filename: string;
-  media_type: string;
-  size_bytes?: number | null;
-  exists: boolean;
-}
+export type CoverageOutputFile = OutputFile;
 
 export type CoverageOutputKind =
   | "viewshed_tif"
@@ -73,6 +65,9 @@ export interface CoverageTaskSummary {
   task_id: string;
   dem_id?: string | null;
   status: "pending" | "running" | "finished" | "failed";
+  result_state: ResultState;
+  result_reason_code?: string | null;
+  rerun_of?: string | null;
   progress: number;
   message: string;
   created_at?: string | null;
@@ -179,6 +174,11 @@ export async function getCoverageTask(taskId: string): Promise<CoverageTaskStatu
   return normalizeCoverageTaskStatus(await requestJson(`/api/radar/coverage/${taskId}`));
 }
 
+export async function getCoverageOutputs(taskId: string): Promise<OutputFile[]> {
+  const payload = await requestJson<unknown>(`/api/radar/coverage/${taskId}/outputs`);
+  return Array.isArray(payload) ? payload.map(normalizeOutputFile).filter(isOutputFile) : [];
+}
+
 export async function getCoverageProfile(taskId: string, lon: number, lat: number): Promise<CoverageProfileResult> {
   const params = new URLSearchParams({
     lon: String(lon),
@@ -270,19 +270,21 @@ export function normalizeCoverageTaskStatus(payload: unknown): CoverageTaskStatu
 function normalizeCoverageTaskSummary(payload: unknown): CoverageTaskSummary {
   const task = isRecord(payload) ? payload : {};
   const status = normalizeTaskStatus(task.status);
-  const outputs = normalizeOutputs(task.outputs);
   const explicitOutputFiles = Array.isArray(task.output_files) ? task.output_files.map(normalizeOutputFile).filter(isOutputFile) : [];
   return {
     task_id: stringOr(task.task_id, ""),
     dem_id: nullableString(task.dem_id),
     status,
+    result_state: normalizeResultState(task.result_state),
+    result_reason_code: nullableString(task.result_reason_code),
+    rerun_of: nullableString(task.rerun_of),
     progress: clampProgress(task.progress, status),
     message: stringOr(task.message, ""),
     created_at: nullableString(task.created_at),
     updated_at: nullableString(task.updated_at),
     metrics: normalizeMetrics(task.metrics),
-    outputs,
-    output_files: explicitOutputFiles.length ? explicitOutputFiles : deriveOutputFilesFromOutputs(outputs),
+    outputs: normalizeOutputs(task.outputs),
+    output_files: explicitOutputFiles,
     model: normalizeModel(task.model),
     diagnostics: normalizeDiagnostics(task.diagnostics),
     warnings: normalizeWarnings(task.warnings)
@@ -347,126 +349,21 @@ function normalizeOutputs(payload: unknown): CoverageTaskSummary["outputs"] {
 function normalizeOutputFile(payload: unknown): Partial<CoverageOutputFile> {
   const file = isRecord(payload) ? payload : {};
   return {
-    kind: normalizeOutputKind(file.kind),
+    kind: stringOr(file.kind, ""),
     label: stringOr(file.label, stringOr(file.kind, "输出文件")),
-    url: stringOr(file.url, ""),
-    download_url: stringOr(file.download_url, ""),
     filename: stringOr(file.filename, ""),
     media_type: stringOr(file.media_type, "application/octet-stream"),
+    required: booleanOr(file.required, true),
     size_bytes: typeof file.size_bytes === "number" ? file.size_bytes : null,
-    exists: Boolean(file.exists)
+    exists: Boolean(file.exists),
+    download_path: nullableString(file.download_path),
+    url: nullableString(file.url),
+    download_url: nullableString(file.download_url)
   };
 }
 
-function deriveOutputFilesFromOutputs(outputs: CoverageTaskSummary["outputs"]): CoverageOutputFile[] {
-  if (!outputs) {
-    return [];
-  }
-  const specs: Array<{ kind: CoverageOutputKind; label: string; media_type: string; filename: string }> = [
-    {
-      kind: "viewshed_tif",
-      label: "视域栅格",
-      media_type: "image/tiff",
-      filename: "viewshed.tif"
-    },
-    {
-      kind: "visible_geojson",
-      label: "可探测区",
-      media_type: "application/geo+json",
-      filename: "visible.geojson"
-    },
-    {
-      kind: "blocked_geojson",
-      label: "遮挡区",
-      media_type: "application/geo+json",
-      filename: "blocked.geojson"
-    },
-    {
-      kind: "range_geojson",
-      label: "理论范围",
-      media_type: "application/geo+json",
-      filename: "range.geojson"
-    },
-    {
-      kind: "model_metadata_json",
-      label: "模型元数据",
-      media_type: "application/json",
-      filename: "model_metadata.json"
-    },
-    {
-      kind: "output_manifest_json",
-      label: "输出清单",
-      media_type: "application/json",
-      filename: "output_manifest.json"
-    },
-    {
-      kind: "min_visible_height_tif",
-      label: "最低可见高度",
-      media_type: "image/tiff",
-      filename: "min_visible_height.tif"
-    },
-    {
-      kind: "voxel_manifest_json",
-      label: "体素清单",
-      media_type: "application/json",
-      filename: "voxel_manifest.json"
-    },
-    {
-      kind: "voxel_points_bin",
-      label: "体素点云",
-      media_type: "application/octet-stream",
-      filename: "voxel_points.bin"
-    },
-    {
-      kind: "clipped_volume_manifest_json",
-      label: "裁切波束清单",
-      media_type: "application/json",
-      filename: "clipped_volume_manifest.json"
-    },
-    {
-      kind: "clipped_volume_cells_bin",
-      label: "裁切波束体",
-      media_type: "application/octet-stream",
-      filename: "clipped_volume_cells.bin"
-    },
-    {
-      kind: "height_layers_manifest_json",
-      label: "高度层清单",
-      media_type: "application/json",
-      filename: "height_layers_manifest.json"
-    },
-    {
-      kind: "scene_glb",
-      label: "Radar Maximum Detection Domain GLB",
-      media_type: "model/gltf-binary",
-      filename: "radar_detection_domain.glb"
-    },
-    {
-      kind: "radar_platform_glb",
-      label: "Radar Platform GLB",
-      media_type: "model/gltf-binary",
-      filename: "radar_platform.glb"
-    }
-  ];
-  return specs.flatMap((spec) => {
-    const url = outputs[spec.kind];
-    if (!url) {
-      return [];
-    }
-    return [
-      {
-        ...spec,
-        url,
-        download_url: url,
-        size_bytes: null,
-        exists: true
-      }
-    ];
-  });
-}
-
 function isOutputFile(file: Partial<CoverageOutputFile>): file is CoverageOutputFile {
-  return Boolean(file.kind && file.label && file.url && file.download_url && file.filename);
+  return Boolean(file.kind && file.label && file.filename && file.media_type && typeof file.exists === "boolean");
 }
 
 function normalizeModel(payload: unknown): CoverageTaskSummary["model"] {
@@ -549,24 +446,8 @@ function normalizeTaskStatus(value: unknown): CoverageTaskSummary["status"] {
   return value === "running" || value === "finished" || value === "failed" ? value : "pending";
 }
 
-function normalizeOutputKind(value: unknown): CoverageOutputKind | undefined {
-  const kinds: CoverageOutputKind[] = [
-    "viewshed_tif",
-    "visible_geojson",
-    "blocked_geojson",
-    "range_geojson",
-    "model_metadata_json",
-    "output_manifest_json",
-    "min_visible_height_tif",
-    "voxel_manifest_json",
-    "voxel_points_bin",
-    "clipped_volume_manifest_json",
-    "clipped_volume_cells_bin",
-    "height_layers_manifest_json",
-    "scene_glb",
-    "radar_platform_glb"
-  ];
-  return kinds.find((kind) => kind === value);
+function normalizeResultState(value: unknown): ResultState {
+  return value === "ready" || value === "unavailable" ? value : "pending";
 }
 
 function clampProgress(value: unknown, status: CoverageTaskSummary["status"] = "pending") {

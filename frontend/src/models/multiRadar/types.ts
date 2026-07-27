@@ -1,5 +1,5 @@
 import type { RadarAdvancedInput, RadarCoverageInput, RadarInput, RadarMetrics, RadarRequest, RadarTargetInput } from "../radar/types";
-import type { OutputFile } from "../shared";
+import type { OutputFile, ResultState } from "../shared";
 
 export interface MultiRadarStationInput {
   radar_id: string;
@@ -36,6 +36,9 @@ export interface MultiRadarTask {
   task_id: string;
   dem_id: string;
   status: MultiRadarTaskState;
+  result_state: ResultState;
+  result_reason_code?: string | null;
+  rerun_of?: string | null;
   progress: number;
   message: string;
   created_at?: string | null;

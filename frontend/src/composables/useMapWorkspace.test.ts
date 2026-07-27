@@ -202,6 +202,31 @@ describe("useMapWorkspace", () => {
     expect(workspace.sceneGlbStateFor(finishedAirTask.task_id)?.status).toBe("visible");
   });
 
+  it("loads a synthetic scene from explicitly supplied live descriptors", async () => {
+    const sceneGlb = sceneGlbAdapter();
+    const workspace = useMapWorkspace("start-end-threats", undefined, { sceneGlb });
+    const syntheticTask = {
+      ...finishedAirTask,
+      task_id: "multi-radar--fusion",
+      output_files: []
+    };
+
+    await workspace.setSceneGlbVisibility(
+      {} as never,
+      "dem-a",
+      "airCorridor",
+      syntheticTask,
+      true,
+      "scene_glb",
+      [sceneFile]
+    );
+
+    expect(sceneGlb.load).toHaveBeenCalledWith(expect.objectContaining({
+      taskId: syntheticTask.task_id,
+      url: sceneFile.download_path
+    }));
+  });
+
   it("loads and removes scene and radar platform GLBs independently", async () => {
     const sceneGlb = sceneGlbAdapter();
     const task = {

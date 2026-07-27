@@ -73,4 +73,49 @@ describe("radar task normalization", () => {
     expect(task.model?.min_elevation_deg).toBe(0);
     expect(task.model?.max_elevation_deg).toBe(90);
   });
+
+  it("normalizes live result state and canonical download descriptors", () => {
+    const task = normalizeCoverageTaskStatus({
+      task_id: "task_ready",
+      status: "finished",
+      result_state: "ready",
+      result_reason_code: null,
+      rerun_of: "task_old",
+      output_files: [{
+        kind: "visible_geojson",
+        label: "Visible",
+        filename: "visible.geojson",
+        media_type: "application/geo+json",
+        required: true,
+        exists: true,
+        size_bytes: 42,
+        download_path: "/api/radar/coverage/task_ready/outputs/visible_geojson",
+        url: null,
+        download_url: null
+      }]
+    });
+
+    expect(task).toMatchObject({
+      result_state: "ready",
+      result_reason_code: null,
+      rerun_of: "task_old"
+    });
+    expect(task.output_files).toEqual([
+      expect.objectContaining({
+        required: true,
+        download_path: "/api/radar/coverage/task_ready/outputs/visible_geojson"
+      })
+    ]);
+  });
+
+  it("does not synthesize output descriptors from legacy outputs", () => {
+    const task = normalizeCoverageTaskStatus({
+      task_id: "task_legacy_outputs",
+      status: "finished",
+      result_state: "unavailable",
+      outputs: { visible_geojson: "/outputs/task_legacy_outputs/visible.geojson" }
+    });
+
+    expect(task.output_files).toEqual([]);
+  });
 });

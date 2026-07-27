@@ -296,12 +296,13 @@ export function useMapWorkspace(kind: SpatialInputKind, initialDraft?: SpatialDr
     modelId: K,
     task: ModelTaskSummary<K>,
     visible: boolean,
-    kind: SceneGlbKind = "scene_glb"
+    kind: SceneGlbKind = "scene_glb",
+    liveFiles?: readonly OutputFile[]
   ) {
     const taskId = task.task_id;
     const assetId = sceneAssetId(taskId, kind);
     const demId = task.request?.dem_id ?? task.dem_id ?? "";
-    const files = loadedTask.value?.task_id === task.task_id ? outputFiles.value : [];
+    const files = liveFiles ?? (loadedTask.value?.task_id === task.task_id ? outputFiles.value : []);
     ensureSceneGlbState(modelId, task, files);
     if (!visible) {
       sceneGlbControllers.get(assetId)?.abort();

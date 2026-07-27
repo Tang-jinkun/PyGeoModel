@@ -236,7 +236,7 @@ import {
   resolveHeightLayerDescriptors,
   type HeightLayerManifest
 } from "./models/radar/heightLayerLoader";
-import { getCoverageTask, type CoverageTaskStatus } from "./api/radar";
+import { getCoverageOutputs, getCoverageTask, type CoverageTaskStatus } from "./api/radar";
 import { createMultiRadarTask, getMultiRadarOutputs, getMultiRadarTask, listMultiRadarTasks } from "./api/multiRadar";
 import type { MultiRadarPresentationMode, MultiRadarStationInput, MultiRadarTask } from "./models/multiRadar/types";
 import { createFusionSceneTask } from "./models/multiRadar/fusionScene";
@@ -519,7 +519,9 @@ async function selectMultiRadarTask(taskId: string) {
     upsertMultiRadarTask(task);
     activeMultiRadarTask.value = task;
     demManager.select(task.dem_id);
-    if (task.status === "finished" || task.status === "partial") await nextTick(() => showMultiRadarAggregate(task));
+    if ((task.status === "finished" || task.status === "partial") && task.result_state === "ready") {
+      await nextTick(() => showMultiRadarAggregate(task));
+    }
   } catch (error) {
     showError(error);
   }
@@ -556,8 +558,9 @@ async function showMultiRadarDetail(stationId: string, detail: CoverageTaskStatu
     const instance = map.value;
     const demId = demManager.selectedDem.value;
     if (!finished || !instance || !demId) return;
-    await mapWorkspace.setSceneGlbVisibility(instance, demId, "radar", finished as never, true, "scene_glb");
-    await mapWorkspace.setSceneGlbVisibility(instance, demId, "radar", finished as never, true, "radar_platform_glb");
+    const files = await getCoverageOutputs(finished.task_id);
+    await mapWorkspace.setSceneGlbVisibility(instance, demId, "radar", finished as never, true, "scene_glb", files);
+    await mapWorkspace.setSceneGlbVisibility(instance, demId, "radar", finished as never, true, "radar_platform_glb", files);
     if (!multiRadarDetailStationIds.value.includes(stationId)) {
       multiRadarDetailStationIds.value = [...multiRadarDetailStationIds.value, stationId];
     }
@@ -573,8 +576,9 @@ async function showMultiRadarDetail(stationId: string, detail: CoverageTaskStatu
     const demId = demManager.selectedDem.value;
     if (!instance || !demId || finished.status !== "finished") return;
     multiRadarDetailTasks.set(stationId, finished);
-    await mapWorkspace.setSceneGlbVisibility(instance, demId, "radar", finished as never, true, "scene_glb");
-    await mapWorkspace.setSceneGlbVisibility(instance, demId, "radar", finished as never, true, "radar_platform_glb");
+    const files = await getCoverageOutputs(finished.task_id);
+    await mapWorkspace.setSceneGlbVisibility(instance, demId, "radar", finished as never, true, "scene_glb", files);
+    await mapWorkspace.setSceneGlbVisibility(instance, demId, "radar", finished as never, true, "radar_platform_glb", files);
     mapWorkspace.focusSceneGlb(instance, finished.task_id, "scene_glb");
   } catch (error) {
     showError(error);
@@ -587,7 +591,7 @@ async function showMultiRadarFusion(task: MultiRadarTask, outputFiles: readonly 
   const file = outputFiles.find((candidate) => candidate.kind === "fusion_scene_glb" && candidate.exists && candidate.download_path);
   if (!instance || !demId || !file) return;
   const fusionTask = createFusionSceneTask(task.task_id, task.dem_id, file);
-  await mapWorkspace.setSceneGlbVisibility(instance, demId, "radar", fusionTask as never, true, "scene_glb");
+  await mapWorkspace.setSceneGlbVisibility(instance, demId, "radar", fusionTask as never, true, "scene_glb", [file]);
   mapWorkspace.focusSceneGlb(instance, fusionTask.task_id, "scene_glb");
 }
 
@@ -606,17 +610,20 @@ async function showMultiRadarCooperativeScene(task: MultiRadarTask, outputFiles:
     const stationId = stationBySceneTaskId.get(stationTask.task_id);
     if (stationId) cooperativeStationTasks.set(stationId, stationTask);
   }
-  const stationLoads = finished.flatMap((stationTask) => [
-    mapWorkspace.setSceneGlbVisibility(instance, demId, "radar", stationTask as never, true, "scene_glb"),
-    mapWorkspace.setSceneGlbVisibility(instance, demId, "radar", stationTask as never, true, "radar_platform_glb")
-  ]);
+  const stationLoads = finished.map(async (stationTask) => {
+    const files = await getCoverageOutputs(stationTask.task_id);
+    await Promise.all([
+      mapWorkspace.setSceneGlbVisibility(instance, demId, "radar", stationTask as never, true, "scene_glb", files),
+      mapWorkspace.setSceneGlbVisibility(instance, demId, "radar", stationTask as never, true, "radar_platform_glb", files)
+    ]);
+  });
   await Promise.allSettled(stationLoads);
   const intersectionFile = outputFiles.find((candidate) => candidate.kind === "cooperative_intersection_glb" && candidate.exists && candidate.download_path);
   const intersectionTask = intersectionFile
     ? createCooperativeIntersectionTask(task.task_id, task.dem_id, intersectionFile)
     : null;
   if (intersectionTask) {
-    await mapWorkspace.setSceneGlbVisibility(instance, demId, "radar", intersectionTask as never, true, "scene_glb");
+    await mapWorkspace.setSceneGlbVisibility(instance, demId, "radar", intersectionTask as never, true, "scene_glb", [intersectionFile!]);
   }
   multiRadarDetailStationIds.value = [...cooperativeStationTasks.keys()];
   mapWorkspace.focusSceneGlbs(instance, [

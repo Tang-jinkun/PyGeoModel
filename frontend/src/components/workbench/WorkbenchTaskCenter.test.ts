@@ -46,6 +46,7 @@ function multiRadarTask(status: "running" | "finished") {
     task_id: "multi-1",
     dem_id: "dem-1",
     status,
+    result_state: status === "finished" ? "ready" as const : "pending" as const,
     progress: status === "running" ? 48 : 100,
     message: status === "running" ? "Computing 2 of 3 stations." : "finished",
     output_files: [],
