@@ -2,6 +2,7 @@ import importlib.util
 from pathlib import Path
 
 import httpx
+import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -21,7 +22,7 @@ def test_compose_uses_runtime_api_and_configurable_backend_environment() -> None
     assert "VITE_API_BASE" not in compose_text
     assert "VITE_BASE_PATH" not in compose_text
     assert "PYGEOMODEL_API_BASE_URL" in frontend["environment"]
-    assert "${PYGEOMODEL_API_BASE_URL-/PyGeoModel}" in compose_text
+    assert "${PYGEOMODEL_API_BASE_URL-http://127.0.0.1:8000}" in compose_text
     assert "PYGEOMODEL_CORS_ORIGINS" in backend["environment"]
     assert "PYGEOMODEL_TIANDITU_TOKEN" in backend["environment"]
     assert "PYGEOMODEL_BACKEND_BIND" in backend["ports"][0]
@@ -72,3 +73,19 @@ def test_verifier_checks_runtime_health_artifact_and_tile_without_exposing_query
     assert "tile: ok" in output
     assert "SERVICE=WMTS" not in output
     assert "TILECOL" not in output
+
+
+def test_verifier_rejects_frontend_spa_html_from_an_api_route() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/runtime-config.js":
+            return httpx.Response(200, text='window.__PYGEOMODEL_RUNTIME_CONFIG__ = {"apiBaseUrl":""};')
+        if request.url.path == "/api/health":
+            return httpx.Response(200, text="<html>frontend fallback</html>", headers={"Content-Type": "text/html"})
+        return httpx.Response(404)
+
+    with pytest.raises(RuntimeError, match="expected JSON"):
+        verify_deployment(
+            frontend_url="http://example.test/",
+            api_base_url="http://example.test",
+            client=httpx.Client(transport=httpx.MockTransport(handler)),
+        )

@@ -1,5 +1,5 @@
 <template>
-  <GisWorkbenchShell :tasks-collapsed="presentation.taskCenterCollapsed.value" @update:tasks-collapsed="presentation.toggleTaskCenter">
+  <GisWorkbenchShell :tasks-collapsed="presentation.taskCenterCollapsed.value" :inspector-open="presentation.inspectorMode.value === 'result' && Boolean(selectedTaskContext)" @update:tasks-collapsed="presentation.toggleTaskCenter">
     <template #topbar><WorkbenchTopbar :dem-label="selectedDem?.filename ?? 'No DEM selected'" :connected="!taskManager.connectionInterrupted.value" :search="modelSearch" @update:search="modelSearch = $event" /></template>
     <template #dock>
       <WorkbenchDock :model-value="workspace.selectedModel.value" :active-tab="presentation.dockTab.value" :model-search="modelSearch" :layer-definitions="selectedTaskContext?.task.status === 'finished' ? getModelDefinition(selectedTaskContext.modelId).outputLayers : []" :layer-states="mapWorkspace.layerStates.value" :scene-entries="workbenchSceneEntries" :multi-radar-stations="activeMultiRadarTask?.stations ?? []" @select-model="selectWorkbenchModel" @update:active-tab="presentation.selectDockTab" @update:model-search="modelSearch = $event" @update-layer-visibility="setLayerVisibility" @update-layer-opacity="setLayerOpacity" @focus-layer="focusLayer" @update-scene-glb="setSceneGlbVisibility" @focus-scene-glb="focusSceneGlb" @focus-station="focusMultiRadarStation">
@@ -8,6 +8,15 @@
     </template>
     <template #map>
       <div class="workspace-map-stack"><MapWorkspace :key="workspace.selectedModel.value" :kind="activeDefinition.spatialInput" :draft="mapWorkspace.draft.value" :editing="mapEditing" :edit-target="mapEditTarget" :dem="selectedDem" @map-ready="setMap" @spatial-edit="applyMapEdit" @out-of-bounds="showError(new Error('Pick a location inside the selected DEM.'))" /><MapPickBar v-if="mapEditing" :target="mapEditTarget === 'auto' ? 'point' : mapEditTarget" @cancel="finishMapPicking" @undo="applyMapEdit({ type: 'undo' })" @finish="finishMapPicking" /></div>
+    </template>
+    <template #inspector>
+      <WorkbenchInspector
+        :mode="presentation.inspectorMode.value"
+        :context="selectedTaskContext"
+        :metrics="mapWorkspace.taskMetrics.value"
+        :output-files="mapWorkspace.outputFiles.value"
+        @show-parameters="presentation.showParameters"
+      />
     </template>
     <template #tasks><WorkbenchTaskCenter :rows="workbenchTaskRows" :multi-radar-tasks="multiRadarTasks" :active-tab="presentation.taskTab.value" @update:active-tab="presentation.selectTaskTab" @select-task="selectWorkbenchTask" @select-multi-radar-task="selectMultiRadarTask" /></template>
     <template #status>
@@ -193,6 +202,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, shallowR
 import GisWorkbenchShell from "./components/workbench/GisWorkbenchShell.vue";
 import WorkbenchDataPane from "./components/workbench/WorkbenchDataPane.vue";
 import WorkbenchDock, { type RadarControlKind, type RadarControlLayer, type RadarHeightOption, type WorkbenchSceneEntry } from "./components/workbench/WorkbenchDock.vue";
+import WorkbenchInspector from "./components/workbench/WorkbenchInspector.vue";
 import ModelRunDialog, { type ModelRunSubmission } from "./components/workbench/ModelRunDialog.vue";
 import WorkbenchTaskCenter from "./components/workbench/WorkbenchTaskCenter.vue";
 import WorkbenchTopbar from "./components/workbench/WorkbenchTopbar.vue";

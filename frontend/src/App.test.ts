@@ -40,11 +40,12 @@ describe("App model run workflow", () => {
     expect(wrapper.get("[data-model-run-dialog='radar']").isVisible()).toBe(true);
   });
 
-  it("uses the expanded map layout without an inspector or map run command", async () => {
+  it("keeps the result inspector closed until a task is selected", async () => {
     const wrapper = mountApp();
     await flushPromises();
 
-    expect(wrapper.find("[data-workbench-region='inspector']").exists()).toBe(false);
+    expect(wrapper.find("[data-workbench-region='inspector']").exists()).toBe(true);
+    expect(wrapper.get(".gis-workbench").attributes("data-inspector-open")).toBe("false");
     expect(wrapper.find("[data-action='run-analysis-on-map']").exists()).toBe(false);
     expect(wrapper.find("[data-workbench-region='map']").exists()).toBe(true);
   });

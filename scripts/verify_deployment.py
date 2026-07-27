@@ -23,17 +23,17 @@ def verify_deployment(
             raise RuntimeError("runtime config does not contain apiBaseUrl")
         print("runtime-config: ok")
 
-        health = _request(http, _api_url(api_base_url, "/api/health")).json()
+        health = _request_json(http, _api_url(api_base_url, "/api/health"))
         if health.get("status") != "ok":
             raise RuntimeError("backend health is not ok")
         print("health: ok")
 
         if task_id:
             task_path = f"/api/radar/coverage/{task_id}"
-            task = _request(http, _api_url(api_base_url, task_path)).json()
+            task = _request_json(http, _api_url(api_base_url, task_path))
             if task.get("result_state") != "ready":
                 raise RuntimeError("selected task result is not ready")
-            files = _request(http, _api_url(api_base_url, f"{task_path}/outputs")).json()
+            files = _request_json(http, _api_url(api_base_url, f"{task_path}/outputs"))
             descriptor = next(
                 (item for item in files if item.get("exists") and item.get("download_path")),
                 None,
@@ -64,6 +64,14 @@ def _request(client: httpx.Client, url: str, **kwargs) -> httpx.Response:
     response = client.get(url, **kwargs)
     response.raise_for_status()
     return response
+
+
+def _request_json(client: httpx.Client, url: str, **kwargs):
+    response = _request(client, url, **kwargs)
+    content_type = response.headers.get("Content-Type", "").lower()
+    if "json" not in content_type:
+        raise RuntimeError(f"expected JSON response from API, received {content_type or 'unknown content type'}")
+    return response.json()
 
 
 def _api_url(api_base_url: str, path: str) -> str:

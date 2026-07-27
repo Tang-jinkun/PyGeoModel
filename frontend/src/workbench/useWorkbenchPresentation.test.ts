@@ -19,6 +19,7 @@ describe("useWorkbenchPresentation", () => {
 
     presentation.selectTask();
     expect(presentation.inspectorMode.value).toBe("result");
+    expect(presentation.dockTab.value).toBe("layers");
   });
 
   it("keeps dock and task-center presentation state independent", () => {

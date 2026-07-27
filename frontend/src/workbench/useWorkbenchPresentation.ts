@@ -32,6 +32,7 @@ export function useWorkbenchPresentation(selectedTaskKey: Readonly<Ref<string | 
 
   function selectTask() {
     inspectorMode.value = "result";
+    dockTab.value = "layers";
   }
 
   function showParameters() {

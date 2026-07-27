@@ -2,6 +2,8 @@
 
 The frontend image reads `PYGEOMODEL_API_BASE_URL` when its container starts. The value excludes `/api`. Changing this value, CORS origins, the TianDiTu token, or the bind addresses requires container recreation but not an image rebuild. Changing `VITE_MAP_ENGINE` or the Mapbox token requires rebuilding the frontend image.
 
+The Compose default is local direct-port mode: the frontend at `http://127.0.0.1:5173/` calls the backend at `http://127.0.0.1:8000`. Subpath and public direct-port deployments must set the API base explicitly as shown below.
+
 Keep real tokens in the untracked root `.env` file or another protected environment source. Do not place them in Compose YAML or frontend variables.
 
 ## Nginx subpath

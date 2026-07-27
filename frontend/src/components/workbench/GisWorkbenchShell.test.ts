@@ -5,27 +5,28 @@ import GisWorkbenchShell from "./GisWorkbenchShell.vue";
 import source from "./GisWorkbenchShell.vue?raw";
 
 describe("GisWorkbenchShell", () => {
-  it("defines a consistent two-column workbench grid", () => {
+  it("defines a consistent three-column workbench grid", () => {
     const gridTemplate = source.match(/grid-template-areas:\s*([\s\S]*?);/)?.[1] ?? "";
 
-    expect(gridTemplate).toContain('"top top"');
-    expect(gridTemplate).not.toContain('"top top top"');
+    expect(gridTemplate).toContain('"top top top"');
+    expect(gridTemplate).toContain('"dock map inspector"');
   });
 
-  it("renders no inspector region and lets the map use its column", async () => {
+  it("renders the inspector region and task controls", async () => {
     const wrapper = mount(GisWorkbenchShell, {
       slots: {
         topbar: "top",
         dock: "dock",
         map: "map",
+        inspector: "inspector",
         tasks: "tasks",
         status: "status"
       }
     });
 
     expect(wrapper.text()).toContain("top");
-    expect(wrapper.findAll("[data-workbench-region]")).toHaveLength(5);
-    expect(wrapper.find("[data-workbench-region='inspector']").exists()).toBe(false);
+    expect(wrapper.findAll("[data-workbench-region]")).toHaveLength(6);
+    expect(wrapper.get("[data-workbench-region='inspector']").text()).toBe("inspector");
 
     await wrapper.get('[aria-label="Collapse task center"]').trigger("click");
 

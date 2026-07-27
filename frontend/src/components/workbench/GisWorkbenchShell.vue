@@ -1,5 +1,5 @@
 <template>
-  <main class="gis-workbench" :data-tasks-collapsed="collapsed">
+  <main class="gis-workbench" :data-tasks-collapsed="collapsed" :data-inspector-open="inspectorOpen">
     <header class="gis-workbench__topbar panel" data-workbench-region="topbar">
       <slot name="topbar" />
     </header>
@@ -9,6 +9,9 @@
     <section class="gis-workbench__map" data-workbench-region="map">
       <slot name="map" />
     </section>
+    <aside class="gis-workbench__inspector panel" data-workbench-region="inspector">
+      <slot name="inspector" />
+    </aside>
     <section class="gis-workbench__tasks panel" data-workbench-region="tasks">
       <div class="gis-workbench__task-command">
         <button
@@ -35,6 +38,7 @@ import { computed, getCurrentInstance, ref } from "vue";
 
 const props = defineProps<{
   tasksCollapsed?: boolean;
+  inspectorOpen?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -45,6 +49,7 @@ const localCollapsed = ref(false);
 const vnodeProps = getCurrentInstance()?.vnode.props ?? {};
 const isControlled = "tasksCollapsed" in vnodeProps || "tasks-collapsed" in vnodeProps;
 const collapsed = computed(() => isControlled ? props.tasksCollapsed : localCollapsed.value);
+const inspectorOpen = computed(() => props.inspectorOpen ?? true);
 
 function toggleTasks() {
   const next = !collapsed.value;
@@ -81,16 +86,20 @@ function toggleTasks() {
   overflow: hidden;
   background: var(--wb-surface);
   grid-template-areas:
-    "top top"
-    "dock map"
-    "tasks tasks"
-    "status status";
-  grid-template-columns: 292px minmax(360px, 1fr);
+    "top top top"
+    "dock map inspector"
+    "tasks tasks tasks"
+    "status status status";
+  grid-template-columns: 292px minmax(360px, 1fr) minmax(260px, 320px);
   grid-template-rows: 52px minmax(0, 1fr) auto 26px;
 }
 
 .gis-workbench[data-tasks-collapsed="true"] {
   grid-template-rows: 52px minmax(0, 1fr) 38px 26px;
+}
+
+.gis-workbench[data-inspector-open="false"] {
+  grid-template-columns: 292px minmax(360px, 1fr) 0;
 }
 
 .panel {
@@ -105,6 +114,8 @@ function toggleTasks() {
 .gis-workbench__topbar { grid-area: top; }
 .gis-workbench__dock { grid-area: dock; }
 .gis-workbench__map { grid-area: map; min-width: 0; min-height: 0; overflow: hidden; border-radius: var(--wb-radius-md); box-shadow: var(--wb-elev-ring); }
+.gis-workbench__inspector { grid-area: inspector; }
+.gis-workbench[data-inspector-open="false"] .gis-workbench__inspector { display: none; }
 .gis-workbench__tasks { position: relative; grid-area: tasks; }
 .gis-workbench__status { grid-area: status; }
 
@@ -166,7 +177,8 @@ function toggleTasks() {
 .gis-workbench[data-tasks-collapsed="true"] .gis-workbench__collapse :deep(.el-icon) { transform: rotate(180deg); }
 
 @media (max-width: 1279px) {
-  .gis-workbench { grid-template-columns: 252px minmax(320px, 1fr); }
+  .gis-workbench { grid-template-columns: 252px minmax(320px, 1fr) minmax(240px, 280px); }
+  .gis-workbench[data-inspector-open="false"] { grid-template-columns: 252px minmax(320px, 1fr) 0; }
 }
 
 @media (max-width: 820px) {
@@ -181,6 +193,15 @@ function toggleTasks() {
   }
 
   .gis-workbench__dock { display: none; }
+  .gis-workbench__inspector {
+    position: absolute;
+    z-index: 4;
+    top: 68px;
+    right: 8px;
+    bottom: 248px;
+    width: min(320px, calc(100% - 16px));
+  }
+  .gis-workbench[data-tasks-collapsed="true"] .gis-workbench__inspector { bottom: 80px; }
   .gis-workbench__status :deep(.workbench-status) { gap: 12px; }
   .gis-workbench__status :deep(.workbench-status__map-info) { display: none; }
 }
