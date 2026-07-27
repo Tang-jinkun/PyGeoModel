@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import air_corridor, artillery, dem, mobility, radar, recon_vehicle, uav, watchpost
+from app.api import air_corridor, artillery, dem, mobility, radar, recon_vehicle, tianditu, uav, watchpost
 from app.core.config import settings
 from app.services.air_corridor_task_store import recover_interrupted_air_corridor_tasks
 from app.services.artillery_task_store import recover_interrupted_artillery_tasks
@@ -10,6 +10,7 @@ from app.services.recon_vehicle_task_store import recover_interrupted_recon_vehi
 from app.services.task_store import recover_interrupted_tasks
 from app.services.uav_task_store import recover_interrupted_uav_tasks
 from app.services.watchpost_task_store import recover_interrupted_watchpost_tasks
+from app.services.tianditu import tianditu_integration_status
 
 
 def create_app() -> FastAPI:
@@ -43,10 +44,14 @@ def create_app() -> FastAPI:
     app.include_router(recon_vehicle.router, prefix="/api/recon-vehicle", tags=["Recon Vehicle"])
     app.include_router(mobility.router, prefix="/api/mobility", tags=["Mobility"])
     app.include_router(air_corridor.router, prefix="/api/air-corridor", tags=["Air Corridor"])
+    app.include_router(tianditu.router, prefix="/api/map", tags=["Map"])
 
     @app.get("/api/health")
-    def health() -> dict[str, str]:
-        return {"status": "ok"}
+    def health() -> dict[str, object]:
+        return {
+            "status": "ok",
+            "integrations": {"tianditu": tianditu_integration_status()},
+        }
 
     return app
 
