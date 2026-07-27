@@ -45,7 +45,7 @@ const props = withDefaults(defineProps<{
   editTarget: "auto",
   activeThreatId: null,
   dem: null,
-  mapStyle: (): mapboxgl.StyleSpecification => createTiandituStyle(import.meta.env.VITE_TIANDITU_TOKEN ?? "") as mapboxgl.StyleSpecification,
+  mapStyle: (): mapboxgl.StyleSpecification => createTiandituStyle() as mapboxgl.StyleSpecification,
   center: () => [79.80513693057287, 31.4827708959419],
   zoom: 8
 });
