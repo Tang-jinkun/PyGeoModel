@@ -21,7 +21,7 @@ from .primitives import tube_mesh
 from .radar import SCAN_PERIOD_S, _azimuths
 
 
-DISPLAY_SCALE = 100.0
+DISPLAY_SCALE = 1000.0
 ANTENNA_PHASE_CENTER_HEIGHT_M = 9.6
 EQUIPMENT_MATERIAL = MaterialSpec("radar_equipment_olive", (72, 82, 68, 255))
 PEDESTAL_MATERIAL = MaterialSpec("radar_pedestal_metal", (70, 78, 80, 255))
