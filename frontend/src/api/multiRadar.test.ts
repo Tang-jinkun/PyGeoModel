@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 const { requestJson } = vi.hoisted(() => ({ requestJson: vi.fn() }));
 vi.mock("./http", () => ({ requestJson }));
 
-import { createMultiRadarTask, getMultiRadarOutputs } from "./multiRadar";
+import { createMultiRadarTask, findMultiRadarOutputPath, getMultiRadarOutputs } from "./multiRadar";
 
 describe("multi-radar API client", () => {
   it("posts a batch request to the multi-coverage endpoint", async () => {
@@ -51,5 +51,19 @@ describe("multi-radar API client", () => {
     await getMultiRadarOutputs("multi_task_a");
 
     expect(requestJson).toHaveBeenCalledWith("/api/radar/multi-coverage/multi_task_a/outputs");
+  });
+
+  it("keeps a canonical output path unresolved for the HTTP client", () => {
+    expect(findMultiRadarOutputPath([{
+      kind: "visible_union_geojson",
+      filename: "visible_union.geojson",
+      label: "Visible Union GeoJSON",
+      media_type: "application/geo+json",
+      required: true,
+      exists: true,
+      download_path: "/api/radar/multi-coverage/multi_task_a/outputs/visible_union_geojson"
+    }], "visible_union_geojson")).toBe(
+      "/api/radar/multi-coverage/multi_task_a/outputs/visible_union_geojson"
+    );
   });
 });

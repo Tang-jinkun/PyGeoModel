@@ -247,14 +247,14 @@ import {
   type HeightLayerManifest
 } from "./models/radar/heightLayerLoader";
 import { getCoverageOutputs, getCoverageTask, type CoverageTaskStatus } from "./api/radar";
-import { createMultiRadarTask, getMultiRadarOutputs, getMultiRadarTask, listMultiRadarTasks } from "./api/multiRadar";
+import { createMultiRadarTask, findMultiRadarOutputPath, getMultiRadarOutputs, getMultiRadarTask, listMultiRadarTasks } from "./api/multiRadar";
 import type { MultiRadarPresentationMode, MultiRadarStationInput, MultiRadarTask } from "./models/multiRadar/types";
 import { createFusionSceneTask } from "./models/multiRadar/fusionScene";
 import {
   cooperativeStationSceneTaskIds,
   createCooperativeIntersectionTask
 } from "./models/multiRadar/cooperativeScene";
-import { requestGeoJson, resolveApiUrl } from "./api/http";
+import { requestGeoJson } from "./api/http";
 import { createTaskClient } from "./api/tasks";
 import { createMultiRadarLayerAdapter } from "./map/multiRadarLayerAdapter";
 
@@ -545,7 +545,7 @@ async function showMultiRadarAggregate(task: MultiRadarTask) {
     const urls = [
       "visible_union_geojson", "overlap_geojson", "blind_geojson",
       "coverage_count_geojson", "stations_geojson"
-    ].map((kind) => outputUrl(outputFiles, kind));
+    ].map((kind) => findMultiRadarOutputPath(outputFiles, kind));
     if (urls.some((url) => !url)) return;
     const [visible, overlap, blind, coverageCount, stations] = await Promise.all(
       urls.map((url) => requestGeoJson<GeoJSON.GeoJSON>(url!))
@@ -1222,11 +1222,6 @@ function sanitizeId(value: string) {
 
 function mapReady(instance: MapInstance) {
   return typeof instance.isStyleLoaded !== "function" || instance.isStyleLoaded();
-}
-
-function outputUrl(files: readonly OutputFile[], kind: string) {
-  const file = files.find((candidate) => candidate.kind === kind && candidate.exists && candidate.download_path);
-  return file?.download_path ? resolveApiUrl(file.download_path) : null;
 }
 
 function cloneGeoJson(value: object): GeoJSON.GeoJSON {

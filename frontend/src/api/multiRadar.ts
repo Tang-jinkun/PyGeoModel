@@ -27,6 +27,11 @@ export function getMultiRadarOutputs(taskId: string): Promise<OutputFile[]> {
   return requestJson<OutputFile[]>(`/api/radar/multi-coverage/${taskId}/outputs`);
 }
 
+export function findMultiRadarOutputPath(files: readonly OutputFile[], kind: string): string | null {
+  const file = files.find((candidate) => candidate.kind === kind && candidate.exists && candidate.download_path);
+  return file?.download_path ?? null;
+}
+
 export function getMultiRadarStations(taskId: string): Promise<MultiRadarStationSummary[]> {
   return requestJson<MultiRadarStationSummary[]>(`/api/radar/multi-coverage/${taskId}/radars`);
 }
