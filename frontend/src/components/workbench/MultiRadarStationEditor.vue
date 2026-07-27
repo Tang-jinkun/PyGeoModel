@@ -144,8 +144,8 @@ function validateStations(stations: MultiRadarStationInput[], presentationMode: 
   if (stations.length < 2) issues.push("至少需要两个雷达站。");
   const ids = stations.map(({ radar_id }) => radar_id.trim()).filter(Boolean);
   if (ids.length !== stations.length || new Set(ids).size !== ids.length) issues.push("雷达编号必须唯一。");
-  if (presentationMode === "cooperative_3d" && (stations.length < 3 || stations.length > 5)) {
-    issues.push("协同三维模式需要 3 到 5 个雷达站。");
+  if (presentationMode === "cooperative_3d" && (stations.length < 2 || stations.length > 5)) {
+    issues.push("协同三维模式需要 2 到 5 个雷达站。");
   }
   return issues;
 }

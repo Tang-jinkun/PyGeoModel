@@ -2,12 +2,12 @@
 
 ## Goal
 
-Render a cooperative three-to-five-radar scene in which every station keeps
+Render a cooperative two-to-five-radar scene in which every station keeps
 the complete, current single-radar visual treatment. The scene must make the
 shared volume between nearby radar detection domains immediately legible.
 
 This replaces the previous task-level fusion-shell design. It deliberately
-optimizes the three-to-five-station presentation path; large multi-radar
+optimizes the two-to-five-station presentation path; large multi-radar
 calculations remain supported as a separate aggregate workflow.
 
 ## Visual Model
@@ -24,7 +24,7 @@ The scene has one additional fusion artifact: a warm gold, translucent
 intersection volume. It represents every point that at least two submitted
 radars can detect. It is not a union shell and it has no three-or-more
 coverage colour tier. For two nearby radar domains it reads as a terrain-aware
-lens. For three to five stations it can have multiple connected lenses and a
+lens. For two to five stations it can have multiple connected lenses and a
 shared central core.
 
 The individual radar shells retain the existing green language. The
@@ -38,7 +38,7 @@ while preserving a readable cooperative rhythm.
 
 ## Scope and Limits
 
-- A cooperative 3D task accepts three to five radar stations.
+- A cooperative 3D task accepts two to five radar stations.
 - All submitted stations receive full single-radar scene and platform GLBs;
   there is no detail-on-demand path or LRU eviction in this mode.
 - Existing large-batch aggregate coverage remains available, but it does not
@@ -122,6 +122,6 @@ Front-end tests cover:
 - per-station loading failures that leave the remaining scene usable.
 
 Manual verification uses two nearby stations to confirm two full single-radar
-shells and a gold terrain-aware lens, then three to five stations to confirm
+shells and a gold terrain-aware lens, then two to five stations to confirm
 that every shell, platform, and scan remains visible and that the gold volume
 does not obscure the individual radar cues.

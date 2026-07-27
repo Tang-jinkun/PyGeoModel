@@ -56,8 +56,8 @@ async function submit() {
   try {
     const parsed = JSON.parse(radarsJson.value) as MultiRadarStationInput[];
     if (!Array.isArray(parsed) || parsed.length < 2) throw new Error("Provide at least two radar objects.");
-    if (presentationMode.value === "cooperative_3d" && (parsed.length < 3 || parsed.length > 5)) {
-      throw new Error("Cooperative 3D requires three to five radar objects.");
+    if (presentationMode.value === "cooperative_3d" && (parsed.length < 2 || parsed.length > 5)) {
+      throw new Error("Cooperative 3D requires two to five radar objects.");
     }
     submitting.value = true;
     task.value = await createMultiRadarTask({

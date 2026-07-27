@@ -55,7 +55,7 @@ def test_create_multi_radar_task_returns_accepted(tmp_path, monkeypatch) -> None
     assert response.json()["task_id"].startswith("multi_task_")
 
 
-def test_cooperative_task_requires_three_to_five_stations(tmp_path, monkeypatch) -> None:
+def test_cooperative_task_requires_two_to_five_stations(tmp_path, monkeypatch) -> None:
     settings.data_dir = tmp_path
     settings.ensure_directories()
     monkeypatch.setattr(radar, "read_dem_metadata", lambda *_: {})
@@ -67,7 +67,7 @@ def test_cooperative_task_requires_three_to_five_stations(tmp_path, monkeypatch)
     )
 
     assert response.status_code == 422
-    assert "three to five" in response.json()["detail"][0]["msg"]
+    assert "two to five" in response.json()["detail"][0]["msg"]
 
 
 def test_cooperative_task_returns_presentation_mode(tmp_path, monkeypatch) -> None:
@@ -79,7 +79,7 @@ def test_cooperative_task_returns_presentation_mode(tmp_path, monkeypatch) -> No
     monkeypatch.setattr(radar, "run_multi_radar_coverage_task", lambda *_: None)
 
     response = TestClient(create_app()).post(
-        "/api/radar/multi-coverage", json=_cooperative_payload(3)
+        "/api/radar/multi-coverage", json=_cooperative_payload(2)
     )
 
     assert response.status_code == 202

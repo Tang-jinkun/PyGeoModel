@@ -110,7 +110,7 @@ controls embedded in result details.
 
 ### Cooperative Radar
 
-For three-to-five-station cooperative tasks, each station's platform, full
+For two-to-five-station cooperative tasks, each station's platform, full
 single-radar terrain-aware shell, scan plane, and marker is an independently
 controllable child layer. The shared gold `coverage_count >= 2` intersection
 is a separate sibling layer. Selecting the cooperative task focuses the full
@@ -156,7 +156,7 @@ Manual verification includes:
 - visual comparison against the static source at every required viewport;
 - a completed single-radar task with coverage, platform GLB, scene GLB, and
   scan plane controls;
-- a completed three-to-five-radar cooperative task with all station scenes
+- a completed two-to-five-radar cooperative task with all station scenes
   and the gold intersection layer;
 - one workflow for each remaining registered model;
 - DEM selection/upload, task progress, completed task inspection, task

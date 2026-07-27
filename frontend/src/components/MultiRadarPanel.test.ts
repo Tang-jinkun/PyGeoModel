@@ -11,7 +11,7 @@ vi.mock("../api/multiRadar", () => ({
 import MultiRadarPanel from "./MultiRadarPanel.vue";
 
 describe("MultiRadarPanel", () => {
-  it("submits a cooperative 3D batch mode", async () => {
+  it("submits two radars in cooperative 3D mode", async () => {
     createMultiRadarTask.mockResolvedValueOnce({
       task_id: "multi-1", dem_id: "dem-1", status: "pending", stations: []
     });
@@ -22,8 +22,7 @@ describe("MultiRadarPanel", () => {
     await wrapper.get('[data-presentation-mode="cooperative_3d"]').setValue(true);
     await wrapper.get("textarea").setValue(JSON.stringify([
       { radar_id: "a", radar: { lon: 79, lat: 31.5, height_m: 20 }, coverage: { max_range_m: 1000 } },
-      { radar_id: "b", radar: { lon: 79.01, lat: 31.5, height_m: 20 }, coverage: { max_range_m: 1000 } },
-      { radar_id: "c", radar: { lon: 79.02, lat: 31.5, height_m: 20 }, coverage: { max_range_m: 1000 } }
+      { radar_id: "b", radar: { lon: 79.01, lat: 31.5, height_m: 20 }, coverage: { max_range_m: 1000 } }
     ]));
     await wrapper.get("button").trigger("click");
 

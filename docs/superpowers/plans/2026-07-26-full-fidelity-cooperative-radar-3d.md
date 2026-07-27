@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Render a completed three-to-five-station cooperative radar task with every current single-radar GLB and one gold terrain-aware common-detection intersection volume.
+**Goal:** Render a completed two-to-five-station cooperative radar task with every current single-radar GLB and one gold terrain-aware common-detection intersection volume.
 
 **Architecture:** Keep the existing aggregate worker and common visibility grid, but add an explicit `cooperative_3d` presentation mode. A cooperative task owns a normal single-radar coverage child task for every station, then exposes those completed child task IDs in station summaries. The worker writes one `coverage_count >= 2` GLB only; the client loads all station scene/platform artifacts plus that intersection artifact using the existing GLB scene layer.
 
@@ -83,8 +83,8 @@ class MultiRadarRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_cooperative_size(self):
-        if self.presentation_mode == "cooperative_3d" and not 3 <= len(self.radars) <= 5:
-            raise ValueError("Cooperative 3D presentation requires three to five radar stations.")
+        if self.presentation_mode == "cooperative_3d" and not 2 <= len(self.radars) <= 5:
+            raise ValueError("Cooperative 3D presentation requires two to five radar stations.")
         return self
 ```
 

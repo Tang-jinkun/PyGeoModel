@@ -120,8 +120,8 @@ class MultiRadarRequest(BaseModel):
     def validate_radar_ids(self) -> "MultiRadarRequest":
         if len({radar.radar_id for radar in self.radars}) != len(self.radars):
             raise ValueError("radar_id values must be unique")
-        if self.presentation_mode == "cooperative_3d" and not 3 <= len(self.radars) <= 5:
-            raise ValueError("Cooperative 3D presentation requires three to five radar stations.")
+        if self.presentation_mode == "cooperative_3d" and not 2 <= len(self.radars) <= 5:
+            raise ValueError("Cooperative 3D presentation requires two to five radar stations.")
         return self
 
 
