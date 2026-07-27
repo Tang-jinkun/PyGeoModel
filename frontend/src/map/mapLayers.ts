@@ -1,4 +1,12 @@
-import mapboxgl from "mapbox-gl";
+import mapEngine from "./mapEngine";
+import type {
+  FillLayerSpecification,
+  FitBoundsOptions,
+  GeoJSONSource,
+  LineLayerSpecification,
+  LngLatBounds,
+  Map
+} from "./mapEngineTypes";
 
 export type ResultLayerKey = "range" | "blocked" | "visible";
 export type FusionLayerKey = "fusionVisible" | "fusionOverlap" | "fusionBlind";
@@ -54,7 +62,7 @@ const FUSION_LAYER_MAP: Record<FusionLayerKey, { fill: string; outline: string }
   }
 };
 
-export function addOrUpdateDemBoundsLayer(map: mapboxgl.Map, bounds: number[]) {
+export function addOrUpdateDemBoundsLayer(map: Map, bounds: number[]) {
   if (bounds.length !== 4 || !bounds.every(Number.isFinite)) {
     return;
   }
@@ -82,7 +90,7 @@ export function addOrUpdateDemBoundsLayer(map: mapboxgl.Map, bounds: number[]) {
     ]
   };
 
-  const existing = map.getSource(DEM_BOUNDS_SOURCE_ID) as mapboxgl.GeoJSONSource | undefined;
+  const existing = map.getSource(DEM_BOUNDS_SOURCE_ID) as GeoJSONSource | undefined;
   if (existing) {
     existing.setData(data);
   } else {
@@ -118,7 +126,7 @@ export function addOrUpdateDemBoundsLayer(map: mapboxgl.Map, bounds: number[]) {
   }
 }
 
-export function addOrUpdateDemRasterLayer(map: mapboxgl.Map, tileUrl: string, bounds: number[]) {
+export function addOrUpdateDemRasterLayer(map: Map, tileUrl: string, bounds: number[]) {
   if (map.getLayer(DEM_RASTER_LAYER_ID)) {
     map.removeLayer(DEM_RASTER_LAYER_ID);
   }
@@ -153,7 +161,7 @@ export function addOrUpdateDemRasterLayer(map: mapboxgl.Map, tileUrl: string, bo
   );
 }
 
-export function removeDemRasterLayer(map: mapboxgl.Map) {
+export function removeDemRasterLayer(map: Map) {
   if (map.getLayer(DEM_RASTER_LAYER_ID)) {
     map.removeLayer(DEM_RASTER_LAYER_ID);
   }
@@ -162,7 +170,7 @@ export function removeDemRasterLayer(map: mapboxgl.Map) {
   }
 }
 
-export function addOrUpdateDemTerrain(map: mapboxgl.Map, tileUrl: string, bounds: number[], exaggeration = 1.35) {
+export function addOrUpdateDemTerrain(map: Map, tileUrl: string, bounds: number[], exaggeration = 1.35) {
   map.setTerrain(null);
   if (map.getSource(DEM_TERRAIN_SOURCE_ID)) {
     map.removeSource(DEM_TERRAIN_SOURCE_ID);
@@ -183,14 +191,14 @@ export function addOrUpdateDemTerrain(map: mapboxgl.Map, tileUrl: string, bounds
   map.setTerrain({ source: DEM_TERRAIN_SOURCE_ID, exaggeration });
 }
 
-export function removeDemTerrain(map: mapboxgl.Map) {
+export function removeDemTerrain(map: Map) {
   map.setTerrain(null);
   if (map.getSource(DEM_TERRAIN_SOURCE_ID)) {
     map.removeSource(DEM_TERRAIN_SOURCE_ID);
   }
 }
 
-export function removeDemBoundsLayer(map: mapboxgl.Map) {
+export function removeDemBoundsLayer(map: Map) {
   for (const layerId of [DEM_BOUNDS_FILL_LAYER_ID, DEM_BOUNDS_OUTLINE_LAYER_ID]) {
     if (map.getLayer(layerId)) {
       map.removeLayer(layerId);
@@ -202,14 +210,14 @@ export function removeDemBoundsLayer(map: mapboxgl.Map) {
 }
 
 export function addOrUpdateGeoJsonLayer(
-  map: mapboxgl.Map,
+  map: Map,
   id: string,
   url: string,
-  paint: NonNullable<mapboxgl.FillLayerSpecification["paint"]>,
-  linePaint?: NonNullable<mapboxgl.LineLayerSpecification["paint"]>
+  paint: NonNullable<FillLayerSpecification["paint"]>,
+  linePaint?: NonNullable<LineLayerSpecification["paint"]>
 ) {
   const sourceId = `${id}-source`;
-  const existing = map.getSource(sourceId) as mapboxgl.GeoJSONSource | undefined;
+  const existing = map.getSource(sourceId) as GeoJSONSource | undefined;
 
   if (existing) {
     existing.setData(url);
@@ -240,7 +248,7 @@ export function addOrUpdateGeoJsonLayer(
   }
 }
 
-export function addRadarMarker(map: mapboxgl.Map, lon: number, lat: number, heightM = 30) {
+export function addRadarMarker(map: Map, lon: number, lat: number, heightM = 30) {
   const sourceId = "radar-point-source";
   const data: GeoJSON.FeatureCollection = {
     type: "FeatureCollection",
@@ -256,7 +264,7 @@ export function addRadarMarker(map: mapboxgl.Map, lon: number, lat: number, heig
     ]
   };
 
-  const existing = map.getSource(sourceId) as mapboxgl.GeoJSONSource | undefined;
+  const existing = map.getSource(sourceId) as GeoJSONSource | undefined;
   if (existing) {
     existing.setData(data);
   } else {
@@ -297,7 +305,7 @@ export function addRadarMarker(map: mapboxgl.Map, lon: number, lat: number, heig
 }
 
 export function addOrUpdateProfileLayer(
-  map: mapboxgl.Map,
+  map: Map,
   radar: [number, number],
   target: [number, number],
   obstruction?: [number, number] | null
@@ -337,7 +345,7 @@ export function addOrUpdateProfileLayer(
     features
   };
 
-  const existing = map.getSource(PROFILE_SOURCE_ID) as mapboxgl.GeoJSONSource | undefined;
+  const existing = map.getSource(PROFILE_SOURCE_ID) as GeoJSONSource | undefined;
   if (existing) {
     existing.setData(data);
   } else {
@@ -394,14 +402,14 @@ export function addOrUpdateProfileLayer(
 }
 
 export function addOrUpdateGeoJsonDataLayer(
-  map: mapboxgl.Map,
+  map: Map,
   id: string,
   data: GeoJSON.GeoJSON,
-  paint: NonNullable<mapboxgl.FillLayerSpecification["paint"]>,
-  linePaint?: NonNullable<mapboxgl.LineLayerSpecification["paint"]>
+  paint: NonNullable<FillLayerSpecification["paint"]>,
+  linePaint?: NonNullable<LineLayerSpecification["paint"]>
 ) {
   const sourceId = `${id}-source`;
-  const existing = map.getSource(sourceId) as mapboxgl.GeoJSONSource | undefined;
+  const existing = map.getSource(sourceId) as GeoJSONSource | undefined;
 
   if (existing) {
     existing.setData(data);
@@ -432,7 +440,7 @@ export function addOrUpdateGeoJsonDataLayer(
   }
 }
 
-export function removeProfileLayer(map: mapboxgl.Map) {
+export function removeProfileLayer(map: Map) {
   for (const layerId of [PROFILE_OBSTRUCTION_LAYER_ID, PROFILE_TARGET_LAYER_ID, PROFILE_LINE_LAYER_ID]) {
     if (map.getLayer(layerId)) {
       map.removeLayer(layerId);
@@ -443,7 +451,7 @@ export function removeProfileLayer(map: mapboxgl.Map) {
   }
 }
 
-export function removeFusionLayers(map: mapboxgl.Map) {
+export function removeFusionLayers(map: Map) {
   for (const layerId of FUSION_LAYER_IDS) {
     if (map.getLayer(layerId)) {
       map.removeLayer(layerId);
@@ -456,7 +464,7 @@ export function removeFusionLayers(map: mapboxgl.Map) {
   }
 }
 
-function addOrUpdateRadarTower(map: mapboxgl.Map, lon: number, lat: number, heightM: number) {
+function addOrUpdateRadarTower(map: Map, lon: number, lat: number, heightM: number) {
   const sourceId = "radar-tower-source";
   const radiusDeg = 0.002;
   const coordinates: [number, number][] = [];
@@ -480,7 +488,7 @@ function addOrUpdateRadarTower(map: mapboxgl.Map, lon: number, lat: number, heig
     ]
   };
 
-  const existing = map.getSource(sourceId) as mapboxgl.GeoJSONSource | undefined;
+  const existing = map.getSource(sourceId) as GeoJSONSource | undefined;
   if (existing) {
     existing.setData(data);
   } else {
@@ -506,7 +514,7 @@ function addOrUpdateRadarTower(map: mapboxgl.Map, lon: number, lat: number, heig
   }
 }
 
-export function removeResultLayers(map: mapboxgl.Map) {
+export function removeResultLayers(map: Map) {
   const layerIds = [
     "visible-layer",
     "visible-layer-outline",
@@ -540,7 +548,7 @@ export function removeResultLayers(map: mapboxgl.Map) {
   }
 }
 
-export function setResultLayerVisibility(map: mapboxgl.Map, key: ResultLayerKey, visible: boolean) {
+export function setResultLayerVisibility(map: Map, key: ResultLayerKey, visible: boolean) {
   const visibility = visible ? "visible" : "none";
   const ids = RESULT_LAYER_IDS[key];
   for (const layerId of [ids.fill, ids.outline]) {
@@ -550,7 +558,7 @@ export function setResultLayerVisibility(map: mapboxgl.Map, key: ResultLayerKey,
   }
 }
 
-export function setResultLayerOpacity(map: mapboxgl.Map, key: ResultLayerKey, opacity: number) {
+export function setResultLayerOpacity(map: Map, key: ResultLayerKey, opacity: number) {
   const ids = RESULT_LAYER_IDS[key];
   if (map.getLayer(ids.fill)) {
     map.setPaintProperty(ids.fill, "fill-opacity", opacity);
@@ -560,7 +568,7 @@ export function setResultLayerOpacity(map: mapboxgl.Map, key: ResultLayerKey, op
   }
 }
 
-export function setFusionLayerVisibility(map: mapboxgl.Map, key: FusionLayerKey, visible: boolean) {
+export function setFusionLayerVisibility(map: Map, key: FusionLayerKey, visible: boolean) {
   const visibility = visible ? "visible" : "none";
   const ids = FUSION_LAYER_MAP[key];
   for (const layerId of [ids.fill, ids.outline]) {
@@ -570,7 +578,7 @@ export function setFusionLayerVisibility(map: mapboxgl.Map, key: FusionLayerKey,
   }
 }
 
-export function setFusionLayerOpacity(map: mapboxgl.Map, key: FusionLayerKey, opacity: number) {
+export function setFusionLayerOpacity(map: Map, key: FusionLayerKey, opacity: number) {
   const ids = FUSION_LAYER_MAP[key];
   if (map.getLayer(ids.fill)) {
     map.setPaintProperty(ids.fill, "fill-opacity", opacity);
@@ -580,7 +588,7 @@ export function setFusionLayerOpacity(map: mapboxgl.Map, key: FusionLayerKey, op
   }
 }
 
-export function moveRadarMarkerToTop(map: mapboxgl.Map) {
+export function moveRadarMarkerToTop(map: Map) {
   for (const layerId of ["radar-tower", "radar-point-halo", "radar-point"]) {
     if (map.getLayer(layerId)) {
       map.moveLayer(layerId);
@@ -588,8 +596,8 @@ export function moveRadarMarkerToTop(map: mapboxgl.Map) {
   }
 }
 
-export function getGeoJsonBounds(data: GeoJSON.GeoJSON): mapboxgl.LngLatBounds | null {
-  const bounds = new mapboxgl.LngLatBounds();
+export function getGeoJsonBounds(data: GeoJSON.GeoJSON): LngLatBounds | null {
+  const bounds = new mapEngine.LngLatBounds();
   let hasCoordinate = false;
 
   visitCoordinates(data, (coordinate) => {
@@ -602,7 +610,7 @@ export function getGeoJsonBounds(data: GeoJSON.GeoJSON): mapboxgl.LngLatBounds |
   return hasCoordinate ? bounds : null;
 }
 
-export function removeRadarMarker(map: mapboxgl.Map) {
+export function removeRadarMarker(map: Map) {
   for (const layerId of ["radar-point", "radar-point-halo", "radar-tower"]) {
     if (map.getLayer(layerId)) map.removeLayer(layerId);
   }
@@ -612,9 +620,9 @@ export function removeRadarMarker(map: mapboxgl.Map) {
 }
 
 export function fitGeoJsonBounds(
-  map: mapboxgl.Map,
+  map: Map,
   data: GeoJSON.GeoJSON,
-  options: mapboxgl.FitBoundsOptions = { padding: 48, maxZoom: 14 }
+  options: FitBoundsOptions = { padding: 48, maxZoom: 14 }
 ): boolean {
   const bounds = getGeoJsonBounds(data);
   if (!bounds) return false;

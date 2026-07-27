@@ -17,7 +17,9 @@ vi.mock("./api/multiRadar", () => ({
 vi.mock("./models/radar/layerAdapter", () => ({
   createRadarLayerAdapter: vi.fn(() => ({ errors: {}, clear: vi.fn(), dispose: vi.fn(), setRadarVisible: vi.fn() }))
 }));
-vi.mock("mapbox-gl", () => ({ default: { Map: class {}, NavigationControl: class {} } }));
+vi.mock("./map/mapEngine", () => ({
+  default: { Map: class {}, NavigationControl: class {} }
+}));
 
 const MapWorkspaceStub = defineComponent({
   name: "MapWorkspace",

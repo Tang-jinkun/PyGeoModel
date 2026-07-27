@@ -1,5 +1,7 @@
-import * as mapboxgl from "mapbox-gl";
 import * as THREE from "three";
+
+import mapEngine from "./mapEngine";
+import type { CustomLayerInterface, Map } from "./mapEngineTypes";
 
 const CLIPPED_VOLUME_LAYER_ID = "clipped-volume-layer";
 const CLIPPED_VOLUME_LEGACY_LAYER_PREFIX = `${CLIPPED_VOLUME_LAYER_ID}-`;
@@ -30,12 +32,12 @@ interface ClippedVolumeRenderOptions {
   radarLat: number;
 }
 
-type ClippedVolumeCustomLayer = mapboxgl.CustomLayerInterface & {
+type ClippedVolumeCustomLayer = CustomLayerInterface & {
   update: (cells: ClippedVolumeCell[], manifest: ClippedVolumeManifest, options?: ClippedVolumeRenderOptions) => void;
 };
 
 interface ClippedVolumeState {
-  map: mapboxgl.Map | null;
+  map: Map | null;
   camera: THREE.Camera | null;
   scene: THREE.Scene | null;
   renderer: THREE.WebGLRenderer | null;
@@ -48,7 +50,7 @@ interface ClippedVolumeState {
 }
 
 export function addOrUpdateClippedVolumeLayer(
-  map: mapboxgl.Map,
+  map: Map,
   cells: ClippedVolumeCell[],
   manifest: ClippedVolumeManifest,
   options?: Partial<ClippedVolumeRenderOptions>
@@ -63,7 +65,7 @@ export function addOrUpdateClippedVolumeLayer(
   map.addLayer(activeClippedVolumeLayer);
 }
 
-export function removeClippedVolumeLayer(map: mapboxgl.Map) {
+export function removeClippedVolumeLayer(map: Map) {
   removeLayerIfPresent(map, CLIPPED_VOLUME_LAYER_ID);
   for (const layer of map.getStyle().layers ?? []) {
     if (layer.id.startsWith(CLIPPED_VOLUME_LEGACY_LAYER_PREFIX)) {
@@ -235,7 +237,7 @@ function buildInstancedSegments(
   for (let index = 0; index < segments.length; index++) {
     const { cell, bottom, top } = segments[index];
     const mid = (bottom + top) / 2;
-    const coordinate = mapboxgl.MercatorCoordinate.fromLngLat({ lng: cell.lon, lat: cell.lat }, mid);
+    const coordinate = mapEngine.MercatorCoordinate.fromLngLat({ lng: cell.lon, lat: cell.lat }, mid);
     const meter = coordinate.meterInMercatorCoordinateUnits();
     position.set(coordinate.x, coordinate.y, coordinate.z);
     scale.set(cellSizeM * meter, cellSizeM * meter, Math.max(1, top - bottom) * meter);
@@ -315,8 +317,8 @@ function buildScanSegments(cells: ClippedVolumeCell[], kind: "blocked" | "visibl
     if (top <= bottom + 0.5) {
       continue;
     }
-    const lower = mapboxgl.MercatorCoordinate.fromLngLat({ lng: cell.lon, lat: cell.lat }, bottom);
-    const upper = mapboxgl.MercatorCoordinate.fromLngLat({ lng: cell.lon, lat: cell.lat }, top);
+    const lower = mapEngine.MercatorCoordinate.fromLngLat({ lng: cell.lon, lat: cell.lat }, bottom);
+    const upper = mapEngine.MercatorCoordinate.fromLngLat({ lng: cell.lon, lat: cell.lat }, top);
     positions.push(lower.x, lower.y, lower.z, upper.x, upper.y, upper.z);
   }
   if (!positions.length) {
@@ -390,7 +392,7 @@ function distanceScore(fromLon: number, fromLat: number, toLon: number, toLat: n
   return dx * dx + dy * dy;
 }
 
-function removeLayerIfPresent(map: mapboxgl.Map, layerId: string) {
+function removeLayerIfPresent(map: Map, layerId: string) {
   if (map.getLayer(layerId)) {
     map.removeLayer(layerId);
   }

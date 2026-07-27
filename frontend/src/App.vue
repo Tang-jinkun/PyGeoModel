@@ -185,7 +185,7 @@
 </template>
 
 <script setup lang="ts">
-import type mapboxgl from "mapbox-gl";
+import type { GeoJSONSource, Map as MapInstance, MapMouseEvent } from "./map/mapEngineTypes";
 import { ElMessage } from "element-plus";
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, shallowRef, toRaw, watch } from "vue";
 
@@ -266,7 +266,7 @@ const mapWorkspace = useMapWorkspace(
   getModelDefinition(workspace.selectedModel.value).spatialInput,
   spatialDraftFromRequest(workspace.selectedModel.value, toRaw(workspace.currentDraft.value.request))
 );
-const map = shallowRef<mapboxgl.Map | null>(null);
+const map = shallowRef<MapInstance | null>(null);
 const historyOpen = ref(false);
 const submitting = ref(false);
 const mapEditing = ref(false);
@@ -432,7 +432,7 @@ onBeforeUnmount(() => {
     removeFusionLayers(map.value);
     removeRadarMarker(map.value);
     if (import.meta.env.DEV) {
-      const devWindow = window as Window & { __PYGEOMODEL_MAP__?: mapboxgl.Map };
+      const devWindow = window as Window & { __PYGEOMODEL_MAP__?: MapInstance };
       if (devWindow.__PYGEOMODEL_MAP__ === map.value) {
         delete devWindow.__PYGEOMODEL_MAP__;
       }
@@ -802,13 +802,13 @@ function syncSpatialDraft() {
   });
 }
 
-function setMap(instance: mapboxgl.Map) {
+function setMap(instance: MapInstance) {
   if (map.value && map.value !== instance) {
     mapWorkspace.resetSceneGlbStates();
   }
   map.value = instance;
   if (import.meta.env.DEV) {
-    (window as Window & { __PYGEOMODEL_MAP__?: mapboxgl.Map })
+    (window as Window & { __PYGEOMODEL_MAP__?: MapInstance })
       .__PYGEOMODEL_MAP__ = instance;
   }
   instance.on("load", handleMapLoad);
@@ -956,7 +956,7 @@ function syncRadarPreview() {
   });
 }
 
-async function handleRadarMapClick(event: mapboxgl.MapMouseEvent) {
+async function handleRadarMapClick(event: MapMouseEvent) {
   if (!profilePicking.value) return;
   const context = selectedTaskContext.value;
   if (!context || context.modelId !== "radar" || context.task.status !== "finished") return;
@@ -1126,7 +1126,7 @@ function resetRadarOutputControls() {
 }
 
 function renderGeoJsonLayer(
-  instance: mapboxgl.Map,
+  instance: MapInstance,
   id: string,
   data: GeoJSON.GeoJSON,
   definition: OutputLayerDefinition,
@@ -1135,7 +1135,7 @@ function renderGeoJsonLayer(
   registry = renderedTaskLayers
 ) {
   const sourceId = `${id}-source`;
-  const source = instance.getSource(sourceId) as mapboxgl.GeoJSONSource | undefined;
+  const source = instance.getSource(sourceId) as GeoJSONSource | undefined;
   if (source) source.setData(data);
   else instance.addSource(sourceId, { type: "geojson", data });
 
@@ -1157,7 +1157,7 @@ function renderGeoJsonLayer(
 }
 
 function removeGeoJsonLayer(
-  instance: mapboxgl.Map,
+  instance: MapInstance,
   id: string,
   registry = renderedTaskLayers
 ) {
@@ -1196,7 +1196,7 @@ function sanitizeId(value: string) {
   return value.replace(/[^a-zA-Z0-9_-]/g, "-");
 }
 
-function mapReady(instance: mapboxgl.Map) {
+function mapReady(instance: MapInstance) {
   return typeof instance.isStyleLoaded !== "function" || instance.isStyleLoaded();
 }
 

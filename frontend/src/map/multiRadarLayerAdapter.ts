@@ -1,4 +1,4 @@
-import type mapboxgl from "mapbox-gl";
+import type { GeoJSONSource, Map } from "./mapEngineTypes";
 
 export interface MultiRadarAggregateLayers {
   visible: GeoJSON.GeoJSON;
@@ -36,7 +36,7 @@ export function createMultiRadarLayerAdapter(options: MultiRadarLayerAdapterOpti
   }
 
   return {
-    showAggregate(map: mapboxgl.Map, layers: MultiRadarAggregateLayers) {
+    showAggregate(map: Map, layers: MultiRadarAggregateLayers) {
       upsertGeoJsonLayer(map, "multi-radar-visible", layers.visible, "fill", { "fill-color": "#16a34a", "fill-opacity": 0.22 });
       upsertGeoJsonLayer(map, "multi-radar-overlap", layers.overlap, "fill", { "fill-color": "#7c3aed", "fill-opacity": 0.3 });
       upsertGeoJsonLayer(map, "multi-radar-blind", layers.blind, "fill", { "fill-color": "#dc2626", "fill-opacity": 0.22 });
@@ -46,7 +46,7 @@ export function createMultiRadarLayerAdapter(options: MultiRadarLayerAdapterOpti
     selectStationDetail,
     removeStationDetail,
     selectedStationIds: () => [...selected],
-    clear(map: mapboxgl.Map) {
+    clear(map: Map) {
       for (const id of LAYER_IDS) removeLayerAndSource(map, id);
       selected.splice(0).forEach((stationId) => options.removeDetail?.(stationId));
     }
@@ -54,14 +54,14 @@ export function createMultiRadarLayerAdapter(options: MultiRadarLayerAdapterOpti
 }
 
 function upsertGeoJsonLayer(
-  map: mapboxgl.Map,
+  map: Map,
   id: string,
   data: GeoJSON.GeoJSON,
   type: "fill" | "line",
   paint: Record<string, number | string>
 ) {
   const sourceId = `${id}-source`;
-  const source = map.getSource(sourceId) as mapboxgl.GeoJSONSource | undefined;
+  const source = map.getSource(sourceId) as GeoJSONSource | undefined;
   if (source) source.setData(data);
   else map.addSource(sourceId, { type: "geojson", data });
   if (map.getLayer(id)) return;
@@ -72,9 +72,9 @@ function upsertGeoJsonLayer(
   }
 }
 
-function upsertStationLayers(map: mapboxgl.Map, data: GeoJSON.GeoJSON) {
+function upsertStationLayers(map: Map, data: GeoJSON.GeoJSON) {
   const sourceId = "multi-radar-stations-source";
-  const source = map.getSource(sourceId) as mapboxgl.GeoJSONSource | undefined;
+  const source = map.getSource(sourceId) as GeoJSONSource | undefined;
   if (source) source.setData(data);
   else map.addSource(sourceId, { type: "geojson", data, cluster: true, clusterRadius: 42, clusterMaxZoom: 12 });
   if (!map.getLayer("multi-radar-station-clusters")) {
@@ -85,7 +85,7 @@ function upsertStationLayers(map: mapboxgl.Map, data: GeoJSON.GeoJSON) {
   }
 }
 
-function removeLayerAndSource(map: mapboxgl.Map, id: string) {
+function removeLayerAndSource(map: Map, id: string) {
   if (map.getLayer(id)) map.removeLayer(id);
   const sourceId = `${id}-source`;
   if (map.getSource(sourceId)) map.removeSource(sourceId);

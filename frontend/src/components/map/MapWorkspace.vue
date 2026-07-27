@@ -5,7 +5,6 @@
 </template>
 
 <script setup lang="ts">
-import mapboxgl from "mapbox-gl";
 import { onBeforeUnmount, onMounted, ref, shallowRef, toRaw, watch } from "vue";
 
 import { demTerrainUrlTemplate, demTileUrlTemplate, type DemMetadata } from "../../api/dem";
@@ -22,13 +21,12 @@ import type {
   SpatialDraftAction
 } from "../../map/spatialInput";
 import type { SpatialInputKind } from "../../models/shared";
-import { applyMapboxAccessToken } from "../../map/mapboxAccessToken";
+import mapEngine from "../../map/mapEngine";
+import type { Map, MapMouseEvent, StyleSpecification } from "../../map/mapEngineTypes";
 import { createTiandituStyle } from "../../map/tiandituStyle";
 import { isCoordinateInDemBounds } from "../../map/mapPickPolicy";
 
 type EditTarget = "auto" | "point" | "route" | "start" | "end" | "threat";
-
-applyMapboxAccessToken(mapboxgl, import.meta.env.VITE_MAPBOX_ACCESS_TOKEN);
 
 const props = withDefaults(defineProps<{
   kind: SpatialInputKind;
@@ -37,7 +35,7 @@ const props = withDefaults(defineProps<{
   editTarget?: EditTarget;
   activeThreatId?: string | null;
   dem?: DemMetadata | null;
-  mapStyle?: string | mapboxgl.StyleSpecification;
+  mapStyle?: string | StyleSpecification;
   center?: SpatialCoordinate;
   zoom?: number;
 }>(), {
@@ -45,7 +43,7 @@ const props = withDefaults(defineProps<{
   editTarget: "auto",
   activeThreatId: null,
   dem: null,
-  mapStyle: (): mapboxgl.StyleSpecification => createTiandituStyle() as mapboxgl.StyleSpecification,
+  mapStyle: (): StyleSpecification => createTiandituStyle() as StyleSpecification,
   center: () => [79.80513693057287, 31.4827708959419],
   zoom: 8
 });
@@ -53,13 +51,13 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{
   "coordinate-edit": [coordinate: SpatialCoordinate];
   "spatial-edit": [action: SpatialDraftAction];
-  "map-ready": [map: mapboxgl.Map];
+  "map-ready": [map: Map];
   "out-of-bounds": [coordinate: SpatialCoordinate];
 }>();
 
 const workspace = ref<HTMLElement | null>(null);
 const mapContainer = ref<HTMLDivElement | null>(null);
-const map = shallowRef<mapboxgl.Map | null>(null);
+const map = shallowRef<Map | null>(null);
 let resizeObserver: ResizeObserver | null = null;
 let transitionTarget: Element | null = null;
 let styleLoaded = false;
@@ -69,14 +67,14 @@ let lastSyncedTerrainUrl: string | null = null;
 onMounted(() => {
   if (!mapContainer.value || map.value) return;
 
-  const instance = new mapboxgl.Map({
+  const instance = new mapEngine.Map({
     container: mapContainer.value,
     style: typeof props.mapStyle === "string" ? props.mapStyle : toRaw(props.mapStyle),
     center: props.center,
     zoom: props.zoom
   });
   map.value = instance;
-  instance.addControl(new mapboxgl.NavigationControl({ visualizePitch: true }), "top-right");
+  instance.addControl(new mapEngine.NavigationControl({ visualizePitch: true }), "top-right");
   instance.on("click", handleMapClick);
   instance.on("load", handleMapLoad);
   emit("map-ready", instance);
@@ -111,7 +109,7 @@ function handleMapLoad() {
   syncDem(map.value, props.dem);
 }
 
-function syncDem(instance: mapboxgl.Map, dem: DemMetadata | null) {
+function syncDem(instance: Map, dem: DemMetadata | null) {
   if (!dem || dem.bounds.length !== 4) {
     removeDemTerrain(instance);
     removeDemRasterLayer(instance);
@@ -127,7 +125,7 @@ function syncDem(instance: mapboxgl.Map, dem: DemMetadata | null) {
   lastSyncedTerrainUrl = terrainUrl;
 }
 
-function handleMapClick(event: mapboxgl.MapMouseEvent) {
+function handleMapClick(event: MapMouseEvent) {
   if (!props.editing) return;
   const coordinate = normalizeCoordinate([event.lngLat.lng, event.lngLat.lat]);
   if (!props.dem || !isCoordinateInDemBounds(coordinate, props.dem.bounds)) {

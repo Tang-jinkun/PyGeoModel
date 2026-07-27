@@ -1,5 +1,7 @@
-import mapboxgl from "mapbox-gl";
 import proj4 from "proj4";
+
+import mapEngine from "./mapEngine";
+import type { MercatorCoordinate } from "./mapEngineTypes";
 
 export interface Scene3dMetadata {
   schema_version: 1;
@@ -34,7 +36,7 @@ export interface SceneGeographicPosition {
 
 export interface SceneGeoReference {
   metadata: Scene3dMetadata;
-  anchor: mapboxgl.MercatorCoordinate;
+  anchor: MercatorCoordinate;
   project(point: readonly [number, number, number]): SceneGeographicPosition;
 }
 
@@ -81,7 +83,7 @@ export function createSceneGeoReference(metadata: Scene3dMetadata): SceneGeoRefe
     throw new Error("GLB scene3d source CRS must be WGS84 UTM");
   }
   const inverse = proj4(definition, "EPSG:4326");
-  const anchor = mapboxgl.MercatorCoordinate.fromLngLat(
+  const anchor = mapEngine.MercatorCoordinate.fromLngLat(
     { lng: metadata.origin.longitude, lat: metadata.origin.latitude },
     metadata.origin.altitude_amsl_m
   );
@@ -101,7 +103,7 @@ export function createSceneGeoReference(metadata: Scene3dMetadata): SceneGeoRefe
         360
       );
       const altitudeAmslM = metadata.origin.altitude_amsl_m + (zUp ? z : y);
-      const mercator = mapboxgl.MercatorCoordinate.fromLngLat(
+      const mercator = mapEngine.MercatorCoordinate.fromLngLat(
         { lng: longitude, lat: latitude },
         altitudeAmslM
       );

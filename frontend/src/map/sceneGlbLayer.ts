@@ -1,13 +1,13 @@
-import mapboxgl from "mapbox-gl";
 import * as THREE from "three";
 
 import { DEM_TERRAIN_SOURCE_ID } from "./mapLayers";
+import type { CustomLayerInterface, Map as MapInstance } from "./mapEngineTypes";
 import { disposePreparedScene, type PreparedSceneGlb, type SceneGlbBounds } from "./sceneGlbAsset";
 
 const DEFAULT_TERRAIN_EXAGGERATION = 1.35;
 const TRUE_SCALE_TERRAIN_EXAGGERATION = 1;
 
-interface ManagedCustomLayer extends mapboxgl.CustomLayerInterface {
+interface ManagedCustomLayer extends CustomLayerInterface {
   cleanup(): void;
 }
 
@@ -18,8 +18,8 @@ interface RegisteredSceneGlb {
   asset: PreparedSceneGlb;
 }
 
-const registry = new WeakMap<mapboxgl.Map, Map<string, RegisteredSceneGlb>>();
-const terrainTasks = new WeakMap<mapboxgl.Map, Set<string>>();
+const registry = new WeakMap<MapInstance, Map<string, RegisteredSceneGlb>>();
+const terrainTasks = new WeakMap<MapInstance, Set<string>>();
 
 export interface SceneGlbLayerOptions {
   onLost?: () => void;
@@ -30,7 +30,7 @@ export function sceneGlbLayerId(taskId: string) {
 }
 
 export function addSceneGlbLayer(
-  map: mapboxgl.Map,
+  map: MapInstance,
   taskId: string,
   asset: PreparedSceneGlb,
   options: SceneGlbLayerOptions = {}
@@ -58,7 +58,7 @@ export function addSceneGlbLayer(
   }
 }
 
-export function removeSceneGlbLayer(map: mapboxgl.Map, taskId: string) {
+export function removeSceneGlbLayer(map: MapInstance, taskId: string) {
   const registered = registry.get(map)?.get(taskId);
   if (!registered) return;
   if (map.getLayer(registered.layerId)) {
@@ -68,18 +68,18 @@ export function removeSceneGlbLayer(map: mapboxgl.Map, taskId: string) {
   }
 }
 
-export function removeAllSceneGlbLayers(map: mapboxgl.Map) {
+export function removeAllSceneGlbLayers(map: MapInstance) {
   const taskIds = [...(registry.get(map)?.keys() ?? [])];
   for (const taskId of taskIds) removeSceneGlbLayer(map, taskId);
 }
 
-export function focusSceneGlbLayer(map: mapboxgl.Map, taskId: string) {
+export function focusSceneGlbLayer(map: MapInstance, taskId: string) {
   const registered = registry.get(map)?.get(taskId);
   if (!registered) return false;
   return focusSceneGlbBounds(map, [registered.asset.bounds]);
 }
 
-export function focusSceneGlbLayers(map: mapboxgl.Map, taskIds: string[]) {
+export function focusSceneGlbLayers(map: MapInstance, taskIds: string[]) {
   const bounds = taskIds.flatMap((taskId) => {
     const registered = registry.get(map)?.get(taskId);
     return registered ? [registered.asset.bounds] : [];
@@ -87,7 +87,7 @@ export function focusSceneGlbLayers(map: mapboxgl.Map, taskIds: string[]) {
   return focusSceneGlbBounds(map, bounds);
 }
 
-function focusSceneGlbBounds(map: mapboxgl.Map, bounds: SceneGlbBounds[]) {
+function focusSceneGlbBounds(map: MapInstance, bounds: SceneGlbBounds[]) {
   if (!bounds.length) return false;
   const west = Math.min(...bounds.map((item) => item.west));
   const south = Math.min(...bounds.map((item) => item.south));
@@ -100,16 +100,16 @@ function focusSceneGlbBounds(map: mapboxgl.Map, bounds: SceneGlbBounds[]) {
   return true;
 }
 
-export function hasSceneGlbLayer(map: mapboxgl.Map, taskId: string) {
+export function hasSceneGlbLayer(map: MapInstance, taskId: string) {
   return registry.get(map)?.has(taskId) ?? false;
 }
 
-export function getSceneGlbTerrainTaskCount(map: mapboxgl.Map) {
+export function getSceneGlbTerrainTaskCount(map: MapInstance) {
   return terrainTasks.get(map)?.size ?? 0;
 }
 
 function createCustomLayer(
-  map: mapboxgl.Map,
+  map: MapInstance,
   asset: PreparedSceneGlb,
   taskId: string,
   options: SceneGlbLayerOptions
@@ -196,7 +196,7 @@ export function createSceneGlbLights() {
   return lights;
 }
 
-function sceneRegistry(map: mapboxgl.Map) {
+function sceneRegistry(map: MapInstance) {
   let entries = registry.get(map);
   if (!entries) {
     entries = new Map();
@@ -205,7 +205,7 @@ function sceneRegistry(map: mapboxgl.Map) {
   return entries;
 }
 
-function terrainTaskSet(map: mapboxgl.Map) {
+function terrainTaskSet(map: MapInstance) {
   let tasks = terrainTasks.get(map);
   if (!tasks) {
     tasks = new Set();
@@ -214,7 +214,7 @@ function terrainTaskSet(map: mapboxgl.Map) {
   return tasks;
 }
 
-function releaseTerrainTask(map: mapboxgl.Map, taskId: string) {
+function releaseTerrainTask(map: MapInstance, taskId: string) {
   const tasks = terrainTasks.get(map);
   if (!tasks?.delete(taskId)) return;
   if (tasks.size === 0) {
@@ -222,12 +222,12 @@ function releaseTerrainTask(map: mapboxgl.Map, taskId: string) {
   }
 }
 
-function firstSymbolLayerId(map: mapboxgl.Map) {
+function firstSymbolLayerId(map: MapInstance) {
   return map.getStyle().layers?.find((layer) => layer.type === "symbol")?.id;
 }
 
 function applyTerrainScale(
-  map: mapboxgl.Map,
+  map: MapInstance,
   exaggeration: number,
   required: boolean
 ) {

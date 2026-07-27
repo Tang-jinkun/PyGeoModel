@@ -1,7 +1,7 @@
 import { mount } from "@vue/test-utils";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type mapboxgl from "mapbox-gl";
 
+import type { StyleSpecification } from "../../map/mapEngineTypes";
 import { createSpatialDraft } from "../../map/spatialInput";
 import MapWorkspace from "./MapWorkspace.vue";
 
@@ -23,7 +23,7 @@ const mapHarness = vi.hoisted(() => {
   return { instances, constructor: vi.fn() };
 });
 
-vi.mock("mapbox-gl", () => ({
+vi.mock("../../map/mapEngine", () => ({
   default: {
     Map: class {
       constructor(options: unknown) {
@@ -48,7 +48,7 @@ beforeEach(() => {
 
 describe("MapWorkspace", () => {
   it("passes a caller-provided local style object through unchanged", () => {
-    const explicitStyle: mapboxgl.StyleSpecification = {
+    const explicitStyle: StyleSpecification = {
       version: 8,
       sources: {
         workspace: {
