@@ -173,6 +173,13 @@ class MultiRadarTaskStatus(TaskResultFields):
     request: MultiRadarRequest | None = None
 
 
+class MultiRadarTaskDeleteResult(BaseModel):
+    task_id: str
+    deleted_task_record: bool
+    deleted_output_dir: bool
+    errors: list[str] = Field(default_factory=list)
+
+
 class CoverageMetrics(BaseModel):
     requested_theoretical_area_m2: float = 0
     theoretical_area_m2: float = 0

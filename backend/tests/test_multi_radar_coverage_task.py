@@ -81,10 +81,16 @@ def test_multi_worker_keeps_successful_station_when_a_sibling_fails(tmp_path: Pa
 
     stored = get_multi_task(task.task_id)
     assert stored.status == "partial"
+    assert stored.result_state == "ready"
     assert stored.metrics is not None
     assert stored.metrics.visible_union_area_m2 == 1
     assert stored.outputs is not None
     assert (tmp_path / "outputs" / task.task_id / "visible_union.geojson").exists()
+    assert (tmp_path / "outputs" / task.task_id / "artifact-manifest.json").exists()
+    public_kinds = {item.kind for item in stored.output_files}
+    assert "visible_union_geojson" in public_kinds
+    assert "station_masks_npz" not in public_kinds
+    assert "grid_json" not in public_kinds
     assert [(station.radar_id, station.status) for station in stored.stations] == [
         ("good", "finished"),
         ("bad", "failed"),
@@ -221,6 +227,8 @@ def test_cooperative_worker_writes_only_the_common_detection_glb(tmp_path: Path,
 
     stored = get_multi_task(task.task_id)
     assert stored.outputs is not None
-    assert stored.outputs.cooperative_intersection_glb.endswith("cooperative_intersection.glb")
+    assert stored.outputs.cooperative_intersection_glb.endswith(
+        "/outputs/cooperative_intersection_glb"
+    )
     assert stored.outputs.fusion_scene_glb is None
     assert (tmp_path / "outputs" / task.task_id / "cooperative_intersection.glb").exists()

@@ -16,6 +16,7 @@ from app.schemas.radar import (
     FusionResult,
     MultiRadarRequest,
     MultiRadarStation,
+    MultiRadarTaskDeleteResult,
     MultiRadarTaskStatus,
     TargetEvaluationRequest,
     TargetEvaluationResult,
@@ -28,7 +29,13 @@ from app.services.fusion_analysis import analyze_fusion
 from app.services.profile_analysis import analyze_coverage_profile
 from app.services.task_store import create_rerun, create_task, delete_task, get_task, list_tasks
 from app.services.multi_radar_dem import station_coverage_request
-from app.services.multi_radar_task_store import create_multi_task, get_multi_task, list_multi_tasks
+from app.services.multi_radar_task_store import (
+    create_multi_rerun,
+    create_multi_task,
+    delete_multi_task,
+    get_multi_task,
+    list_multi_tasks,
+)
 from app.services.multi_radar_target_evaluation import evaluate_multi_radar_target
 from app.services.target_evaluation import evaluate_coverage_target
 from app.workers.coverage_task import run_coverage_task
@@ -60,6 +67,75 @@ def create_multi_coverage_task(payload: MultiRadarRequest, background_tasks: Bac
 def read_multi_coverage_task(task_id: str) -> MultiRadarTaskStatus:
     try:
         return get_multi_task(task_id)
+    except AppError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.as_detail()) from exc
+
+
+@router.post(
+    "/multi-coverage/{task_id}/rerun",
+    response_model=MultiRadarTaskStatus,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def rerun_multi_coverage_task(
+    task_id: str,
+    background_tasks: BackgroundTasks,
+    idempotency_key: Annotated[
+        str, Header(alias="Idempotency-Key", min_length=8, max_length=128)
+    ],
+) -> MultiRadarTaskStatus:
+    try:
+        original = get_multi_task(task_id)
+        if original.request is None:
+            raise AppError("TASK_REQUEST_UNAVAILABLE", "Saved request is unavailable.", status_code=409)
+        read_dem_metadata(original.request.dem_id)
+        source = find_dem_file(original.request.dem_id)
+        for station in original.request.radars:
+            validate_coverage_extent(
+                source, station_coverage_request(original.request.dem_id, station)
+            )
+        task, created = create_multi_rerun(task_id, original.request, idempotency_key)
+        if created:
+            background_tasks.add_task(run_multi_radar_coverage_task, task.task_id, original.request)
+        return task
+    except AppError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.as_detail()) from exc
+
+
+@router.delete(
+    "/multi-coverage/{task_id}", response_model=MultiRadarTaskDeleteResult
+)
+def delete_multi_coverage_task(task_id: str) -> MultiRadarTaskDeleteResult:
+    try:
+        deleted_record, deleted_outputs, errors = delete_multi_task(task_id)
+        return MultiRadarTaskDeleteResult(
+            task_id=task_id,
+            deleted_task_record=deleted_record,
+            deleted_output_dir=deleted_outputs,
+            errors=errors,
+        )
+    except AppError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.as_detail()) from exc
+
+
+@router.get("/multi-coverage/{task_id}/outputs", response_model=list[CoverageOutputFile])
+def list_multi_coverage_outputs(task_id: str):
+    try:
+        return get_multi_task(task_id).output_files
+    except AppError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.as_detail()) from exc
+
+
+@router.get("/multi-coverage/{task_id}/outputs/{kind}")
+def download_multi_coverage_output(task_id: str, kind: str) -> FileResponse:
+    try:
+        task = get_multi_task(task_id)
+        path, info = get_artifact_store().resolve_download(
+            task_id,
+            kind,
+            get_output_contract("multi_radar"),
+            computation_status=task.status,
+        )
+        return FileResponse(path, media_type=info.media_type, filename=info.filename)
     except AppError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.as_detail()) from exc
 

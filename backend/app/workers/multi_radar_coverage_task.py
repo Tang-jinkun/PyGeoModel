@@ -5,15 +5,15 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Callable
-from uuid import uuid4
 
 import numpy
 from pyproj import Transformer
 from rasterio.transform import from_origin
 from shapely.geometry import Point, mapping
 
-from app.core.config import settings
-from app.schemas.radar import CoverageMetrics, MultiRadarRequest
+from app.schemas.radar import CoverageMetrics, MultiRadarOutputs, MultiRadarRequest
+from app.services.artifact_contracts import get_output_contract
+from app.services.artifact_store import get_artifact_store
 from app.services.coverage_range import effective_max_range
 from app.services.dem_store import find_dem_file
 from app.services.multi_radar_coverage import StationMask, accumulate_station_masks
@@ -50,24 +50,60 @@ class StationEvaluation:
 StationEvaluator = Callable[[SharedMultiRadarDem, object], StationEvaluation]
 
 
+@dataclass(frozen=True)
+class MultiRadarArtifactResult:
+    status: str
+    metrics: dict
+    outputs: MultiRadarOutputs
+    stations: list[dict]
+    message: str
+
+
 def run_multi_radar_coverage_task(
     task_id: str,
     payload: MultiRadarRequest,
     *,
     evaluator: StationEvaluator | None = None,
 ) -> None:
-    output_dir = settings.outputs_dir / task_id
-    staging_dir = output_dir / f".staging-{uuid4().hex}"
     try:
-        mark_multi_running(task_id, "Preparing shared DEM and projection.", 5)
-        output_dir.mkdir(parents=True, exist_ok=True)
-        staging_dir.mkdir(parents=True, exist_ok=False)
-        shared = prepare_shared_multi_radar_dem(find_dem_file(payload.dem_id), staging_dir / "dem_projected.tif", payload)
+        result = build_multi_radar_artifacts(
+            task_id,
+            payload,
+            lambda message, value: mark_multi_running(task_id, message, value),
+            evaluator=evaluator,
+        )
+        mark_multi_completed(
+            task_id,
+            status=result.status,
+            metrics=result.metrics,
+            outputs=result.outputs,
+            stations=result.stations,
+            message=result.message,
+        )
+    except Exception as exc:
+        mark_multi_failed(task_id, str(exc))
+
+
+def build_multi_radar_artifacts(
+    task_id: str,
+    payload: MultiRadarRequest,
+    progress: Callable[[str, int], None],
+    *,
+    evaluator: StationEvaluator | None = None,
+) -> MultiRadarArtifactResult:
+    store = get_artifact_store()
+    contract = get_output_contract("multi_radar")
+    staging_dir = store.create_staging_dir(task_id)
+    try:
+        progress("Preparing shared DEM and projection.", 5)
+        shared = prepare_shared_multi_radar_dem(
+            find_dem_file(payload.dem_id), staging_dir / "dem_projected.tif", payload
+        )
         evaluate = evaluator or _evaluate_station
         completed: list[StationEvaluation] = []
         failures: dict[str, str] = {}
         workers = min(len(payload.radars), os.cpu_count() or 1, 8)
-        mark_multi_running(task_id, f"Computing {len(payload.radars)} stations on one grid.", 15)
+        progress(f"Computing {len(payload.radars)} stations on one grid.", 15)
         with ThreadPoolExecutor(max_workers=max(1, workers)) as executor:
             futures = {executor.submit(evaluate, shared, station): station for station in payload.radars}
             for index, future in enumerate(as_completed(futures), start=1):
@@ -76,26 +112,33 @@ def run_multi_radar_coverage_task(
                     completed.append(future.result())
                 except Exception as exc:
                     failures[station.radar_id] = str(exc)
-                progress = 15 + int(70 * index / len(payload.radars))
-                mark_multi_running(task_id, f"Computed {index} of {len(payload.radars)} stations.", progress)
+                progress(
+                    f"Computed {index} of {len(payload.radars)} stations.",
+                    15 + int(70 * index / len(payload.radars)),
+                )
+        stations = _station_summaries(payload, completed, failures)
         if not completed:
-            mark_multi_completed(
-                task_id, status="failed", metrics={}, outputs={},
-                stations=_station_summaries(payload, completed, failures), message="All radar stations failed."
+            return MultiRadarArtifactResult(
+                status="failed",
+                metrics={},
+                outputs=MultiRadarOutputs(),
+                stations=stations,
+                message="All radar stations failed.",
             )
-            return
+
         aggregate = accumulate_station_masks(
             StationMask(item.radar_id, item.visible_mask, item.range_mask) for item in completed
         )
         if payload.presentation_mode == "cooperative_3d":
-            completed = _generate_cooperative_scene_tasks(task_id, payload, completed)
-        mark_multi_running(task_id, "Writing aggregate coverage outputs.", 90)
+            completed = _generate_cooperative_scene_tasks(task_id, payload, completed, progress)
+        progress("Writing aggregate coverage outputs.", 90)
         fusion_masks = [item.fusion_masks for item in completed if item.fusion_masks is not None]
         fusion_path = None
         cooperative_intersection_path = None
         if fusion_masks:
             rows, columns, fusion_transform = fusion_grid_spec(shared)
             import rasterio
+
             with rasterio.open(shared.projected_dem) as source:
                 terrain = source.read(1)[numpy.ix_(rows, columns)]
             fusion_counts = FusionHeightCounts(
@@ -107,14 +150,15 @@ def run_multi_radar_coverage_task(
             )
             if payload.presentation_mode == "cooperative_3d":
                 candidate = staging_dir / "cooperative_intersection.glb"
-                if write_cooperative_intersection_glb(candidate, task_id=task_id, counts=fusion_counts) is not None:
+                if write_cooperative_intersection_glb(
+                    candidate, task_id=task_id, counts=fusion_counts
+                ) is not None:
                     cooperative_intersection_path = candidate
             else:
                 fusion_path = staging_dir / "fusion_scene.glb"
                 write_multi_radar_fusion_glb(fusion_path, task_id=task_id, counts=fusion_counts)
-        outputs = _write_aggregate_outputs(
-            task_id,
-            output_dir,
+
+        _write_aggregate_outputs(
             staging_dir,
             shared,
             aggregate,
@@ -122,6 +166,14 @@ def run_multi_radar_coverage_task(
             completed,
             fusion_path,
             cooperative_intersection_path,
+        )
+        if shared.projected_dem.parent == staging_dir:
+            shared.projected_dem.unlink(missing_ok=True)
+        store.publish(task_id, contract, staging_dir)
+        descriptors = store.list_descriptors(task_id, contract)
+        paths = {item.kind: item.download_path for item in descriptors}
+        outputs = MultiRadarOutputs(
+            **{field: paths.get(field) for field in MultiRadarOutputs.model_fields}
         )
         cell_area = abs(float(shared.transform.a) * float(shared.transform.e))
         metrics = {
@@ -133,13 +185,13 @@ def run_multi_radar_coverage_task(
             "failed_station_count": len(failures),
         }
         status = "partial" if failures else "finished"
-        mark_multi_completed(
-            task_id, status=status, metrics=metrics, outputs=outputs,
+        return MultiRadarArtifactResult(
+            status=status,
+            metrics=metrics,
+            outputs=outputs,
             stations=_station_summaries(payload, completed, failures),
             message="Finished with station failures." if failures else "finished",
         )
-    except Exception as exc:
-        mark_multi_failed(task_id, str(exc))
     finally:
         if staging_dir.exists():
             shutil.rmtree(staging_dir, ignore_errors=True)
@@ -243,7 +295,12 @@ def _station_fusion_masks(shared, data, local_transform, local_domain, radar_x, 
     return numpy.asarray(sampled_masks, dtype=bool)
 
 
-def _generate_cooperative_scene_tasks(task_id: str, payload: MultiRadarRequest, completed: list[StationEvaluation]):
+def _generate_cooperative_scene_tasks(
+    task_id: str,
+    payload: MultiRadarRequest,
+    completed: list[StationEvaluation],
+    progress: Callable[[str, int], None],
+):
     stations = {station.radar_id: station for station in payload.radars}
 
     def generate(item: StationEvaluation) -> StationEvaluation:
@@ -269,7 +326,10 @@ def _generate_cooperative_scene_tasks(task_id: str, payload: MultiRadarRequest, 
                 results[original.radar_id] = future.result()
             except Exception as exc:
                 results[original.radar_id] = replace(original, scene_message=str(exc))
-            mark_multi_running(task_id, f"Generating full scenes {index} of {len(completed)}.", 85 + int(4 * index / len(completed)))
+            progress(
+                f"Generating full scenes {index} of {len(completed)}.",
+                85 + int(4 * index / len(completed)),
+            )
     return [results[item.radar_id] for item in completed]
 
 
@@ -292,8 +352,6 @@ def _station_summaries(payload, completed: list[StationEvaluation], failures: di
 
 
 def _write_aggregate_outputs(
-    task_id,
-    output_dir: Path,
     staging_dir: Path,
     shared,
     aggregate,
@@ -301,7 +359,7 @@ def _write_aggregate_outputs(
     completed,
     fusion_path: Path | None = None,
     cooperative_intersection_path: Path | None = None,
-) -> dict:
+) -> None:
     transformer = Transformer.from_crs(f"EPSG:{shared.target_epsg}", "EPSG:4326", always_xy=True)
     _write_mask_geojson(staging_dir / "visible_union.geojson", aggregate.visible_union, shared.transform, transformer, {"kind": "visible_union"})
     _write_mask_geojson(staging_dir / "overlap.geojson", aggregate.overlap, shared.transform, transformer, {"kind": "overlap"})
@@ -318,25 +376,6 @@ def _write_aggregate_outputs(
         "transform": list(shared.transform)[:6],
         "shape": list(aggregate.coverage_count.shape),
     }), encoding="utf-8")
-    if fusion_path is not None:
-        fusion_path.replace(output_dir / fusion_path.name)
-    if cooperative_intersection_path is not None:
-        cooperative_intersection_path.replace(output_dir / cooperative_intersection_path.name)
-    for path in staging_dir.glob("*.geojson"):
-        path.replace(output_dir / path.name)
-    (staging_dir / "station_summaries.json").replace(output_dir / "station_summaries.json")
-    (staging_dir / "station_masks.npz").replace(output_dir / "station_masks.npz")
-    (staging_dir / "grid.json").replace(output_dir / "grid.json")
-    filenames = {
-        "visible_union_geojson": "visible_union.geojson", "overlap_geojson": "overlap.geojson",
-        "blind_geojson": "blind.geojson", "coverage_count_geojson": "coverage_count.geojson",
-        "stations_geojson": "stations.geojson", "station_summaries_json": "station_summaries.json",
-    }
-    if fusion_path is not None:
-        filenames["fusion_scene_glb"] = "fusion_scene.glb"
-    if cooperative_intersection_path is not None:
-        filenames["cooperative_intersection_glb"] = "cooperative_intersection.glb"
-    return {name: f"/outputs/{task_id}/{filename}" for name, filename in filenames.items()}
 
 
 def _write_mask_geojson(path, mask, transform, transformer, properties):
