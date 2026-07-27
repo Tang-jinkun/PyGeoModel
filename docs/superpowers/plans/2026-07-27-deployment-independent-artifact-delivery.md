@@ -1411,7 +1411,7 @@ Expected: clean worktree. If verification required an in-scope correction, stage
 - Consumes: reconciliation CLI, verified images, restored DEM records, and the seven explicitly selected historical radar task IDs.
 - Produces: valid manifests and restored live artifacts for the seven selected historical task IDs without changing their task records.
 
-- [ ] **Step 1: Deploy the verified image on loopback and confirm the migration command is present**
+- [x] **Step 1: Deploy the verified image on loopback and confirm the migration command is present**
 
 Recreate the intended Nginx-subpath topology before touching data. The TianDiTu token is supplied through the existing protected environment and is not echoed:
 
@@ -1427,7 +1427,7 @@ docker compose exec -T backend python /app/scripts/reconcile_artifacts.py --help
 
 Expected: both containers are running on loopback, API process health is `ok`, and the new container contains the reconciliation command.
 
-- [ ] **Step 2: Capture dry-run state and upgrade only complete legacy directories**
+- [x] **Step 2: Capture dry-run state and upgrade only complete legacy directories**
 
 Run commands through the backend container because the daemon-mounted data path may differ from the shell-visible host path:
 
@@ -1444,7 +1444,7 @@ docker compose exec -T backend python /app/scripts/reconcile_artifacts.py \
 
 Expected: available capacity is reviewed before recomputation; `task_20260629_134237_25ff1d8b` is ready or upgraded; the seven missing radar tasks are unavailable/repair-eligible; complete legacy directories gain schema-v1 manifests; no missing task is recomputed and no task record timestamp changes.
 
-- [ ] **Step 3: Repair exactly the seven reviewed historical radar task IDs**
+- [x] **Step 3: Repair exactly the seven reviewed historical radar task IDs**
 
 Pass the IDs confirmed by the container inventory and dry-run report explicitly; do not derive the selection from every unavailable task:
 
@@ -1464,7 +1464,7 @@ docker compose exec -T backend python /app/scripts/reconcile_artifacts.py \
 
 Expected: each selected historical task directory is atomically restored with `artifact-manifest.json`; its existing task record, request, metrics, status, timestamps, and ID remain unchanged; live detail reports `result_state=ready`. Never use a wildcard or an automatically generated all-unavailable list.
 
-- [ ] **Step 4: Replace the host Nginx configuration and run public smoke checks**
+- [x] **Step 4: Replace the host Nginx configuration and run public smoke checks**
 
 Back up the active site, install the tested generic edge configuration, validate it before reload, and restore the backup if validation fails:
 
@@ -1484,7 +1484,7 @@ PYTHONPATH=backend python scripts/verify_deployment.py \
 
 Expected: public artifact downloads return `200`, invalid/unknown kinds retain controlled `404`, and TianDiTu tiles return image content without browser-side credentials. The Nginx site has no `/outputs` or TianDiTu-specific location.
 
-- [ ] **Step 5: Confirm post-rollout invariants and retain a host-local audit**
+- [x] **Step 5: Confirm post-rollout invariants and retain a host-local audit**
 
 Run:
 
