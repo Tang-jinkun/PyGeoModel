@@ -1,4 +1,5 @@
 import type { RadarAdvancedInput, RadarCoverageInput, RadarInput, RadarMetrics, RadarRequest, RadarTargetInput } from "../radar/types";
+import type { OutputFile } from "../shared";
 
 export interface MultiRadarStationInput {
   radar_id: string;
@@ -47,16 +48,7 @@ export interface MultiRadarTask {
     successful_station_count: number;
     failed_station_count: number;
   } | null;
-  outputs?: {
-    visible_union_geojson?: string | null;
-    overlap_geojson?: string | null;
-    blind_geojson?: string | null;
-    coverage_count_geojson?: string | null;
-    stations_geojson?: string | null;
-    station_summaries_json?: string | null;
-    fusion_scene_glb?: string | null;
-    cooperative_intersection_glb?: string | null;
-  } | null;
+  output_files: OutputFile[];
   stations: MultiRadarStationSummary[];
   request?: MultiRadarRequest | null;
 }

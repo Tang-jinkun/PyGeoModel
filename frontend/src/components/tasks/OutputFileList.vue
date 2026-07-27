@@ -3,7 +3,7 @@
   <ul v-else class="output-file-list">
     <li v-for="file in availableFiles" :key="`${file.kind}:${file.filename}`">
       <span>{{ file.label || file.filename }}</span>
-      <a :href="file.download_url || file.url" download>
+      <a :href="resolveApiUrl(file.download_path!)" download>
         <ElIcon><Download /></ElIcon>
         <span class="sr-only">下载{{ file.label || file.filename }}</span>
       </a>
@@ -16,13 +16,14 @@ import { Download } from "@element-plus/icons-vue";
 import { ElIcon } from "element-plus";
 import { computed } from "vue";
 
+import { resolveApiUrl } from "../../api/http";
 import type { OutputFile } from "../../models/shared";
 
 const props = defineProps<{
   files: readonly OutputFile[];
 }>();
 
-const availableFiles = computed(() => props.files.filter((file) => file.exists));
+const availableFiles = computed(() => props.files.filter((file) => file.exists && file.download_path));
 </script>
 
 <style scoped>

@@ -12,25 +12,17 @@ export function cooperativeStationSceneTaskIds(task: Pick<MultiRadarTask, "stati
 export function createCooperativeIntersectionTask(
   taskId: string,
   demId: string,
-  url: string,
+  file: OutputFile,
 ): TaskSummary {
-  const file: OutputFile = {
-    kind: "scene_glb",
-    label: "Cooperative common detection",
-    url,
-    download_url: url,
-    filename: "cooperative_intersection.glb",
-    media_type: "model/gltf-binary",
-    exists: true
-  };
   return {
     task_id: `${taskId}--intersection`,
     dem_id: demId,
     status: "finished",
+    result_state: "ready",
     progress: 100,
     message: "finished",
     request: { dem_id: demId },
-    output_files: [file],
+    output_files: [{ ...file, kind: "scene_glb" }],
     warnings: []
   };
 }

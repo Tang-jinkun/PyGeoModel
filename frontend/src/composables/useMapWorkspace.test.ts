@@ -35,29 +35,30 @@ vi.mock("../map/sceneGlbLayer", async (importOriginal) => ({
 const sceneFile: OutputFile = {
   kind: "scene_glb",
   label: "Air Corridor 3D Result GLB",
-  url: "/outputs/air_corridor_task_demo/air_corridor_result.glb",
-  download_url: "/api/air-corridor/planning/air_corridor_task_demo/outputs/scene_glb",
   filename: "air_corridor_result.glb",
   media_type: "model/gltf-binary",
+  required: false,
   size_bytes: 1_980_764,
-  exists: true
+  exists: true,
+  download_path: "/api/air-corridor/planning/air_corridor_task_demo/outputs/scene_glb"
 };
 
 const radarPlatformFile: OutputFile = {
   kind: "radar_platform_glb",
   label: "Radar Platform GLB",
-  url: "/outputs/air_corridor_task_demo/radar_platform.glb",
-  download_url: "/api/radar/coverage/air_corridor_task_demo/outputs/radar_platform_glb",
   filename: "radar_platform.glb",
   media_type: "model/gltf-binary",
+  required: false,
   size_bytes: 420_000,
-  exists: true
+  exists: true,
+  download_path: "/api/radar/coverage/air_corridor_task_demo/outputs/radar_platform_glb"
 };
 
 const finishedAirTask = {
   task_id: "air_corridor_task_demo",
   dem_id: "dem-a",
   status: "finished",
+  result_state: "ready",
   progress: 100,
   message: "finished",
   request: { ...MODEL_REGISTRY.airCorridor.createDefaultRequest(), dem_id: "dem-a" },
@@ -95,16 +96,16 @@ describe("useMapWorkspace", () => {
     expect(fitBounds).toHaveBeenCalledOnce();
   });
 
-  it("loads a GeoJSON layer from download_url before url", async () => {
+  it("loads only a live descriptor download_path", async () => {
     const metrics = vi.fn().mockResolvedValue({});
     const output: OutputFile = {
       kind: "visible_geojson",
       label: "Visible coverage",
-      url: "/view-visible",
-      download_url: "/download-visible",
       filename: "visible.geojson",
       media_type: "application/geo+json",
-      exists: true
+      required: true,
+      exists: true,
+      download_path: "/api/uav/recon/uav-download-url/outputs/visible_geojson"
     };
     const outputs = vi.fn().mockResolvedValue([output]);
     const fetchGeoJson = vi.fn().mockResolvedValue({ type: "FeatureCollection", features: [] });
@@ -115,6 +116,7 @@ describe("useMapWorkspace", () => {
     const task: TaskSummary<UavRequest, UavMetrics> = {
       task_id: "uav-download-url",
       status: "finished",
+      result_state: "ready",
       progress: 100,
       message: "分析完成",
       request: MODEL_REGISTRY.uav.createDefaultRequest(),
@@ -126,7 +128,47 @@ describe("useMapWorkspace", () => {
     await workspace.loadTaskOutputs("uav", task);
 
     expect(fetchGeoJson).toHaveBeenCalledOnce();
-    expect(fetchGeoJson).toHaveBeenCalledWith("/download-visible");
+    expect(fetchGeoJson).toHaveBeenCalledWith("/api/uav/recon/uav-download-url/outputs/visible_geojson");
+  });
+
+  it.each(["pending", "unavailable"] as const)("does not request metadata before outputs are %s", async (result_state) => {
+    const metrics = vi.fn();
+    const outputs = vi.fn();
+    const workspace = useMapWorkspace("point-or-route", undefined, {
+      clientFactory: () => ({ metrics, outputs })
+    });
+
+    await workspace.loadTaskOutputs("uav", { ...finishedAirTask, result_state } as never);
+
+    expect(metrics).not.toHaveBeenCalled();
+    expect(outputs).not.toHaveBeenCalled();
+  });
+
+  it("reports an output-list failure without reading legacy task outputs", async () => {
+    const metrics = vi.fn().mockResolvedValue({ visible_area_m2: 42 });
+    const outputs = vi.fn().mockRejectedValue(new Error("output list unavailable"));
+    const fetchGeoJson = vi.fn();
+    const workspace = useMapWorkspace("point-or-route", undefined, {
+      clientFactory: () => ({ metrics, outputs }),
+      fetchGeoJson
+    });
+    const task: TaskSummary<UavRequest, UavMetrics> = {
+      task_id: "uav-output-list-error",
+      status: "finished",
+      result_state: "ready",
+      progress: 100,
+      message: "done",
+      request: MODEL_REGISTRY.uav.createDefaultRequest(),
+      metrics: null,
+      outputs: { visible_geojson: "/outputs/legacy-visible.geojson" },
+      output_files: [],
+      warnings: []
+    };
+
+    await workspace.loadTaskOutputs("uav", task);
+
+    expect(fetchGeoJson).not.toHaveBeenCalled();
+    expect(workspace.layerStates.value.every((layer) => layer.status === "error")).toBe(true);
   });
 
   it("does not fetch scene_glb until manually enabled", async () => {
@@ -155,7 +197,7 @@ describe("useMapWorkspace", () => {
     expect(sceneGlb.load).toHaveBeenCalledWith(expect.objectContaining({
       taskId: finishedAirTask.task_id,
       modelId: "air_corridor",
-      url: "/api/air-corridor/planning/air_corridor_task_demo/outputs/scene_glb"
+      url: sceneFile.download_path
     }));
     expect(workspace.sceneGlbStateFor(finishedAirTask.task_id)?.status).toBe("visible");
   });
@@ -186,12 +228,12 @@ describe("useMapWorkspace", () => {
     expect(sceneGlb.load).toHaveBeenNthCalledWith(1, expect.objectContaining({
       taskId: task.task_id,
       assetId: task.task_id,
-      url: sceneFile.download_url
+      url: sceneFile.download_path
     }));
     expect(sceneGlb.load).toHaveBeenNthCalledWith(2, expect.objectContaining({
       taskId: task.task_id,
       assetId: `${task.task_id}--radar_platform_glb`,
-      url: radarPlatformFile.download_url
+      url: radarPlatformFile.download_path
     }));
     expect(workspace.sceneGlbStateFor(task.task_id, "scene_glb")?.status).toBe("visible");
     expect(workspace.sceneGlbStateFor(task.task_id, "radar_platform_glb")?.status).toBe("visible");
@@ -261,8 +303,7 @@ describe("useMapWorkspace", () => {
     const sceneGlb = sceneGlbAdapter();
     const secondFile = {
       ...sceneFile,
-      url: "/outputs/air_corridor_task_second/air_corridor_result.glb",
-      download_url: "/api/air-corridor/planning/air_corridor_task_second/outputs/scene_glb"
+      download_path: "/api/air-corridor/planning/air_corridor_task_second/outputs/scene_glb"
     };
     const secondTask = {
       ...finishedAirTask,

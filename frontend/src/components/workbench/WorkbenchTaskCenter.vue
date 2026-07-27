@@ -37,6 +37,7 @@
 <script setup lang="ts">
 import { computed } from "vue";
 
+import { resolveApiUrl } from "../../api/http";
 import type { MultiRadarTask } from "../../models/multiRadar/types";
 import type { WorkbenchTaskRow } from "../../workbench/taskPresentation";
 import type { TaskCenterTab } from "../../workbench/useWorkbenchPresentation";
@@ -66,7 +67,7 @@ function taskInfo(row: WorkbenchTaskRow) {
   const summary = row.task.status === "finished" ? row.primaryMetric || row.task.message : row.task.message || row.primaryMetric;
   return [row.task.dem_id, summary].filter(Boolean).join(" · ") || "--";
 }
-function firstDownload(row: WorkbenchTaskRow) { const file = row.task.output_files.find(({ exists }) => exists); return file?.download_url || file?.url || ""; }
+function firstDownload(row: WorkbenchTaskRow) { const file = row.task.output_files.find(({ exists, download_path }) => exists && download_path); return file?.download_path ? resolveApiUrl(file.download_path) : ""; }
 function shortId(id: string) { return id.length > 10 ? `T-${id.slice(0, 8)}` : id; }
 function taskTime(row: WorkbenchTaskRow) { const value = row.task.updated_at || row.task.created_at; return value ? new Date(value).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "--:--:--"; }
 function multiRadarTaskTime(task: MultiRadarTask) { const value = task.updated_at || task.created_at; return value ? new Date(value).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "--:--:--"; }

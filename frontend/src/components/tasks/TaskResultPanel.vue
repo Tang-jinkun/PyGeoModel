@@ -17,6 +17,10 @@
 
     <div class="task-result-panel__content" role="tabpanel">
       <TaskStatusView v-if="activeTab === 'task'" :task="task" />
+      <div v-if="activeTab === 'task' && task.result_state === 'unavailable'" class="task-result-panel__unavailable" role="status">
+        <span>{{ task.result_reason_code || "结果不可用" }}</span>
+        <button type="button" data-action="rerun" @click="emit('rerun')">重新运行</button>
+      </div>
       <MetricGrid
         v-else-if="activeTab === 'metrics'"
         :definitions="metricDefinitions"
@@ -86,6 +90,7 @@ const emit = defineEmits<{
   "layer-focus": [kind: string];
   "scene-glb-visibility": [kind: SceneGlbKind, visible: boolean];
   "scene-glb-focus": [kind: SceneGlbKind];
+  rerun: [];
 }>();
 
 const TABS: Array<{ id: ResultTab; label: string }> = [
@@ -100,7 +105,7 @@ const tabs = computed(() => props.showLayers ? TABS : TABS.filter(({ id }) => id
 const definition = computed(() => getModelDefinition(props.modelId));
 const metricDefinitions = computed(() => definition.value.metrics as never);
 const effectiveMetrics = computed(() => props.metrics ?? props.task.metrics as Record<string, unknown> | null ?? null);
-const effectiveOutputFiles = computed(() => props.outputFiles.length ? props.outputFiles : props.task.output_files);
+const effectiveOutputFiles = computed(() => props.outputFiles);
 const sceneGlbEntries = computed(() => {
   const states: Record<SceneGlbKind, SceneGlbOverlayState | null> = {
     scene_glb: props.sceneGlbState,

@@ -8,12 +8,12 @@ import SceneGlbControl from "./SceneGlbControl.vue";
 const file: OutputFile = {
   kind: "scene_glb",
   label: "Air Corridor 3D Result GLB",
-  url: "/outputs/air_corridor_result.glb",
-  download_url: "/api/air-corridor/task/outputs/scene_glb",
   filename: "air_corridor_result.glb",
   media_type: "model/gltf-binary",
+  required: false,
   size_bytes: 1_980_764,
-  exists: true
+  exists: true,
+  download_path: "/api/air-corridor/task/outputs/scene_glb"
 };
 
 const idleState: SceneGlbOverlayState = {

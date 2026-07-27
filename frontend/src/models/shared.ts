@@ -1,12 +1,14 @@
 export const MODEL_IDS = ["radar", "uav", "watchpost", "artillery", "reconVehicle", "mobility", "airCorridor"] as const;
 export type ModelId = (typeof MODEL_IDS)[number];
 export type TaskStatus = "pending" | "running" | "finished" | "failed";
+export type ResultState = "pending" | "ready" | "unavailable";
 export type SpatialInputKind = "point" | "point-or-route" | "start-end" | "start-end-threats";
 
 export interface BaseModelRequest { dem_id: string }
 export interface OutputFile {
-  kind: string; label: string; url: string; download_url: string; filename: string;
-  media_type: string; size_bytes?: number | null; exists: boolean;
+  kind: string; label: string; filename: string; media_type: string; required: boolean;
+  size_bytes?: number | null; exists: boolean; download_path?: string | null;
+  url?: string | null; download_url?: string | null;
 }
 export interface TaskSummary<
   Request extends BaseModelRequest = BaseModelRequest,
@@ -14,7 +16,8 @@ export interface TaskSummary<
   Model = Record<string, unknown>,
   Diagnostics = Record<string, unknown>
 > {
-  task_id: string; dem_id?: string | null; status: TaskStatus; progress: number; message: string;
+  task_id: string; dem_id?: string | null; status: TaskStatus; result_state: ResultState;
+  result_reason_code?: string | null; rerun_of?: string | null; progress: number; message: string;
   created_at?: string | null; updated_at?: string | null; request?: Request | null;
   metrics?: Metrics | null; outputs?: Record<string, string | null> | null;
   model?: Model | null; diagnostics?: Diagnostics | null;

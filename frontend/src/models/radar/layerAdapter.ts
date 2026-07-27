@@ -1,4 +1,5 @@
 import { clipProfileFromBounds, resolveBeamRenderRange } from "../../map/beamClipProfile";
+import { resolveApiUrl } from "../../api/http";
 import type { TaskSummary } from "../shared";
 import type {
   BeamClipProfile,
@@ -67,7 +68,7 @@ export function resolveRadarLayerPlan(
   task: RadarTask,
   demBounds: number[]
 ): RadarLayerPlan | null {
-  if (task.status !== "finished" || !task.request) return null;
+  if (task.status !== "finished" || task.result_state !== "ready" || !task.request) return null;
 
   const renderRangeM = resolveBeamRenderRange(
     task.request.coverage.max_range_m,
@@ -297,10 +298,11 @@ function cloneRadarRequest(source: RadarRequest, maxRangeM: number): RadarReques
 }
 
 function resolveOutputUrls(task: RadarTask): Record<string, string> {
+  if (task.result_state !== "ready") return {};
   return Object.fromEntries(
     task.output_files
-      .filter((file) => file.exists && (file.download_url || file.url))
-      .map((file) => [file.kind, file.download_url || file.url])
+      .filter((file) => file.exists && file.download_path)
+      .map((file) => [file.kind, resolveApiUrl(file.download_path!)])
   );
 }
 

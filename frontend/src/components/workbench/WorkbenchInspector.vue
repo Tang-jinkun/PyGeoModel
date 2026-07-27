@@ -6,7 +6,7 @@
         <p class="result-status" :data-status="context.task.status">{{ statusLabel }}</p>
         <p v-if="context.task.message" class="result-message">{{ context.task.message }}</p>
         <details open><summary>核心指标</summary><dl><template v-for="metric in metrics" :key="metric.label"><dt>{{ metric.label }}</dt><dd>{{ metric.value }}</dd></template></dl></details>
-        <details v-if="context.task.output_files?.length" open><summary>输出文件</summary><a v-for="file in context.task.output_files" :key="file.url" :href="file.download_url || file.url" target="_blank">{{ file.label || file.filename }}</a></details>
+        <details v-if="outputFiles.length" open><summary>输出文件</summary><a v-for="file in outputFiles" :key="file.kind" :href="resolveApiUrl(file.download_path!)" target="_blank">{{ file.label || file.filename }}</a></details>
       </div>
     </div>
     <slot v-else name="parameters" />
@@ -19,6 +19,7 @@ import { ElIcon } from "element-plus";
 import { computed } from "vue";
 
 import { getModelDefinition, type ModelId } from "../../models/registry";
+import { resolveApiUrl } from "../../api/http";
 import type { BaseModelRequest, TaskSummary } from "../../models/shared";
 
 type Context = { modelId: ModelId; task: TaskSummary<BaseModelRequest, unknown, unknown, unknown> };
@@ -27,6 +28,7 @@ const emit = defineEmits<{ "show-parameters": [] }>();
 const definitionLabel = computed(() => props.context ? getModelDefinition(props.context.modelId).label : "");
 const statusLabel = computed(() => ({ pending: "等待执行", running: "正在运行", finished: "已完成", failed: "执行失败" }[props.context?.task.status ?? "pending"]));
 const metrics = computed(() => Object.entries((props.context?.task.metrics ?? {}) as Record<string, unknown>).slice(0, 8).map(([key, value]) => ({ label: formatKey(key), value: typeof value === "number" ? formatNumber(value) : String(value) })));
+const outputFiles = computed(() => props.context?.task.output_files.filter((file) => file.exists && file.download_path) ?? []);
 function formatKey(key: string) { return key.replace(/_m2$/, " 面积").replace(/_/g, " "); }
 function formatNumber(value: number) { return Math.abs(value) > 1000 ? value.toLocaleString(undefined, { maximumFractionDigits: 2 }) : value.toFixed(2); }
 </script>

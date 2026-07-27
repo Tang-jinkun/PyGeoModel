@@ -19,5 +19,5 @@ describe("WorkbenchInspector", () => {
 });
 
 function finishedContext() {
-  return { modelId: "radar" as const, task: { task_id: "task-1", status: "finished" as const, progress: 100, message: "done", output_files: [], warnings: [], metrics: { visible_area_m2: 2_500_000 } } };
+  return { modelId: "radar" as const, task: { task_id: "task-1", status: "finished" as const, result_state: "ready" as const, progress: 100, message: "done", output_files: [], warnings: [], metrics: { visible_area_m2: 2_500_000 } } };
 }

@@ -6,6 +6,7 @@ import type {
   MultiRadarTargetEvaluation,
   MultiRadarTask
 } from "../models/multiRadar/types";
+import type { OutputFile } from "../models/shared";
 
 export async function createMultiRadarTask(payload: MultiRadarRequest): Promise<MultiRadarTask> {
   return requestJson<MultiRadarTask>("/api/radar/multi-coverage", {
@@ -20,6 +21,10 @@ export function listMultiRadarTasks(): Promise<MultiRadarTask[]> {
 
 export function getMultiRadarTask(taskId: string): Promise<MultiRadarTask> {
   return requestJson<MultiRadarTask>(`/api/radar/multi-coverage/${taskId}`);
+}
+
+export function getMultiRadarOutputs(taskId: string): Promise<OutputFile[]> {
+  return requestJson<OutputFile[]>(`/api/radar/multi-coverage/${taskId}/outputs`);
 }
 
 export function getMultiRadarStations(taskId: string): Promise<MultiRadarStationSummary[]> {

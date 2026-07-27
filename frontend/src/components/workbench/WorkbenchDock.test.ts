@@ -50,11 +50,11 @@ function sceneFile(): OutputFile {
   return {
     kind: "scene_glb",
     label: "Radar scene 3D Result GLB",
-    url: "/scene.glb",
-    download_url: "/scene.glb",
     filename: "scene.glb",
     media_type: "model/gltf-binary",
-    exists: true
+    required: false,
+    exists: true,
+    download_path: "/api/radar/coverage/task-1/outputs/scene_glb"
   };
 }
 

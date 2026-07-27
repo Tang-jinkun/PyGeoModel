@@ -161,6 +161,7 @@
             @layer-focus="focusLayer"
             @scene-glb-visibility="setSceneGlbVisibility"
             @scene-glb-focus="focusSceneGlb"
+            @rerun="rerunTask(selectedTaskContext.modelId, selectedTaskContext.task)"
           />
         </div>
       </div>
@@ -230,31 +231,27 @@ import {
 import type { BaseModelRequest, OutputFile, OutputLayerDefinition, TaskSummary } from "./models/shared";
 import { applySpatialDraftToRequest, spatialDraftFromRequest } from "./models/spatialAdapter";
 import { useRadarAnalysis } from "./models/radar/useRadarAnalysis";
-import { createHeightLayerLoader } from "./models/radar/heightLayerLoader";
+import {
+  createHeightLayerLoader,
+  resolveHeightLayerDescriptors,
+  type HeightLayerManifest
+} from "./models/radar/heightLayerLoader";
 import { getCoverageTask, type CoverageTaskStatus } from "./api/radar";
-import { createMultiRadarTask, getMultiRadarTask, listMultiRadarTasks } from "./api/multiRadar";
+import { createMultiRadarTask, getMultiRadarOutputs, getMultiRadarTask, listMultiRadarTasks } from "./api/multiRadar";
 import type { MultiRadarPresentationMode, MultiRadarStationInput, MultiRadarTask } from "./models/multiRadar/types";
 import { createFusionSceneTask } from "./models/multiRadar/fusionScene";
 import {
   cooperativeStationSceneTaskIds,
   createCooperativeIntersectionTask
 } from "./models/multiRadar/cooperativeScene";
-import { resolveAssetUrl } from "./api/http";
+import { requestGeoJson, resolveApiUrl } from "./api/http";
+import { createTaskClient } from "./api/tasks";
 import { createMultiRadarLayerAdapter } from "./map/multiRadarLayerAdapter";
 
 type MapEditTarget = "auto" | "point" | "route" | "start" | "end" | "threat";
 type GenericTask = TaskSummary<BaseModelRequest, unknown, unknown, unknown>;
 interface SelectedTaskContext { modelId: ModelId; task: GenericTask }
 interface HeightLayerData extends RadarHeightOption { visibleUrl: string; blockedUrl: string | null }
-interface HeightManifest {
-  height_layers?: Array<{
-    height_m?: number;
-    visible_filename?: string;
-    blocked_filename?: string;
-    visible_area_m2?: number;
-    blocked_area_m2?: number;
-  }>;
-}
 
 const workspace = useModelWorkspace();
 const demManager = useDemManager();
@@ -293,7 +290,7 @@ const multiRadarAdapter = createMultiRadarLayerAdapter({
     multiRadarDetailStationIds.value = multiRadarDetailStationIds.value.filter((id) => id !== stationId);
   }
 });
-const heightLayerLoader = createHeightLayerLoader(fetchJson);
+const heightLayerLoader = createHeightLayerLoader(requestGeoJson);
 let heightRenderToken = 0;
 let lastRadarTaskId: string | null = null;
 let multiRadarPollTimer: number | null = null;
@@ -530,24 +527,23 @@ async function selectMultiRadarTask(taskId: string) {
 
 async function showMultiRadarAggregate(task: MultiRadarTask) {
   const instance = map.value;
-  const outputs = task.outputs;
-  if (!instance || !outputs?.visible_union_geojson || !outputs.overlap_geojson || !outputs.blind_geojson
-    || !outputs.coverage_count_geojson || !outputs.stations_geojson) return;
+  if (!instance) return;
   try {
+    const outputFiles = await getMultiRadarOutputs(task.task_id);
     const urls = [
-      outputs.visible_union_geojson, outputs.overlap_geojson, outputs.blind_geojson,
-      outputs.coverage_count_geojson, outputs.stations_geojson
-    ].map((url) => resolveAssetUrl(url));
+      "visible_union_geojson", "overlap_geojson", "blind_geojson",
+      "coverage_count_geojson", "stations_geojson"
+    ].map((kind) => outputUrl(outputFiles, kind));
     if (urls.some((url) => !url)) return;
     const [visible, overlap, blind, coverageCount, stations] = await Promise.all(
-      urls.map((url) => fetchJson<GeoJSON.GeoJSON>(url!))
+      urls.map((url) => requestGeoJson<GeoJSON.GeoJSON>(url!))
     );
     multiRadarAdapter.showAggregate(instance, { visible, overlap, blind, coverageCount, stations });
     activeMultiRadarTask.value = task;
     if (task.request?.presentation_mode === "cooperative_3d") {
-      await showMultiRadarCooperativeScene(task);
+      await showMultiRadarCooperativeScene(task, outputFiles);
     } else {
-      await showMultiRadarFusion(task);
+      await showMultiRadarFusion(task, outputFiles);
     }
   } catch (error) {
     showError(error);
@@ -585,17 +581,17 @@ async function showMultiRadarDetail(stationId: string, detail: CoverageTaskStatu
   }
 }
 
-async function showMultiRadarFusion(task: MultiRadarTask) {
+async function showMultiRadarFusion(task: MultiRadarTask, outputFiles: readonly OutputFile[]) {
   const instance = map.value;
   const demId = demManager.selectedDem.value;
-  const url = task.outputs?.fusion_scene_glb;
-  if (!instance || !demId || !url) return;
-  const fusionTask = createFusionSceneTask(task.task_id, task.dem_id, url);
+  const file = outputFiles.find((candidate) => candidate.kind === "fusion_scene_glb" && candidate.exists && candidate.download_path);
+  if (!instance || !demId || !file) return;
+  const fusionTask = createFusionSceneTask(task.task_id, task.dem_id, file);
   await mapWorkspace.setSceneGlbVisibility(instance, demId, "radar", fusionTask as never, true, "scene_glb");
   mapWorkspace.focusSceneGlb(instance, fusionTask.task_id, "scene_glb");
 }
 
-async function showMultiRadarCooperativeScene(task: MultiRadarTask) {
+async function showMultiRadarCooperativeScene(task: MultiRadarTask, outputFiles: readonly OutputFile[]) {
   const instance = map.value;
   const demId = demManager.selectedDem.value;
   if (!instance || !demId) return;
@@ -615,9 +611,9 @@ async function showMultiRadarCooperativeScene(task: MultiRadarTask) {
     mapWorkspace.setSceneGlbVisibility(instance, demId, "radar", stationTask as never, true, "radar_platform_glb")
   ]);
   await Promise.allSettled(stationLoads);
-  const intersectionUrl = task.outputs?.cooperative_intersection_glb;
-  const intersectionTask = intersectionUrl
-    ? createCooperativeIntersectionTask(task.task_id, task.dem_id, intersectionUrl)
+  const intersectionFile = outputFiles.find((candidate) => candidate.kind === "cooperative_intersection_glb" && candidate.exists && candidate.download_path);
+  const intersectionTask = intersectionFile
+    ? createCooperativeIntersectionTask(task.task_id, task.dem_id, intersectionFile)
     : null;
   if (intersectionTask) {
     await mapWorkspace.setSceneGlbVisibility(instance, demId, "radar", intersectionTask as never, true, "scene_glb");
@@ -746,6 +742,16 @@ async function submitTask(request: BaseModelRequest) {
     showError(error);
   } finally {
     submitting.value = false;
+  }
+}
+
+async function rerunTask(modelId: ModelId, task: GenericTask) {
+  try {
+    const client = createTaskClient(getModelDefinition(modelId).taskBasePath);
+    const rerun = await client.rerun(task.task_id);
+    taskManager.track(modelId, rerun as never);
+  } catch (error) {
+    showError(error);
   }
 }
 
@@ -1041,16 +1047,17 @@ function renderRadarAnalysisLayers() {
 
 async function loadHeightLayers(plan: RadarLayerPlan): Promise<HeightLayerData[]> {
   const manifestUrl = plan.outputUrls.height_layers_manifest_json;
-  const manifest = await fetchJson<HeightManifest>(manifestUrl);
-  return (manifest.height_layers ?? []).flatMap((layer) => {
-    if (layer.height_m == null || !layer.visible_filename) return [];
-    const visibleArea = formatArea(layer.visible_area_m2);
-    const blockedArea = formatArea(layer.blocked_area_m2);
+  const manifest = await requestGeoJson<HeightLayerManifest>(manifestUrl);
+  return resolveHeightLayerDescriptors(manifest, plan.outputUrls).flatMap((layer) => {
+    const metadata = manifest.height_layers?.find((candidate) => candidate.height_m === layer.heightM);
+    if (!metadata) return [];
+    const visibleArea = formatArea(metadata.visible_area_m2);
+    const blockedArea = formatArea(metadata.blocked_area_m2);
     return [{
-      heightM: layer.height_m,
-      label: `${formatHeight(layer.height_m)} | visible ${visibleArea} | blocked ${blockedArea}`,
-      visibleUrl: resolveRelativeUrl(manifestUrl, layer.visible_filename),
-      blockedUrl: layer.blocked_filename ? resolveRelativeUrl(manifestUrl, layer.blocked_filename) : null
+      heightM: layer.heightM,
+      label: `${formatHeight(layer.heightM)} | visible ${visibleArea} | blocked ${blockedArea}`,
+      visibleUrl: layer.visibleUrl,
+      blockedUrl: layer.blockedUrl
     }];
   }).sort((left, right) => left.heightM - right.heightM);
 }
@@ -1200,14 +1207,9 @@ function mapReady(instance: MapInstance) {
   return typeof instance.isStyleLoaded !== "function" || instance.isStyleLoaded();
 }
 
-async function fetchJson<T>(url: string): Promise<T> {
-  const response = await fetch(url);
-  if (!response.ok) throw new Error(`Layer request failed (${response.status})`);
-  return response.json() as Promise<T>;
-}
-
-function resolveRelativeUrl(base: string, filename: string) {
-  return new URL(filename, new URL(base, window.location.origin)).toString();
+function outputUrl(files: readonly OutputFile[], kind: string) {
+  const file = files.find((candidate) => candidate.kind === kind && candidate.exists && candidate.download_path);
+  return file?.download_path ? resolveApiUrl(file.download_path) : null;
 }
 
 function cloneGeoJson(value: object): GeoJSON.GeoJSON {

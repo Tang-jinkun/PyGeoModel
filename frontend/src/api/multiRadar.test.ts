@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 const { requestJson } = vi.hoisted(() => ({ requestJson: vi.fn() }));
 vi.mock("./http", () => ({ requestJson }));
 
-import { createMultiRadarTask } from "./multiRadar";
+import { createMultiRadarTask, getMultiRadarOutputs } from "./multiRadar";
 
 describe("multi-radar API client", () => {
   it("posts a batch request to the multi-coverage endpoint", async () => {
@@ -43,5 +43,13 @@ describe("multi-radar API client", () => {
         body: expect.stringContaining('"presentation_mode":"cooperative_3d"')
       })
     );
+  });
+
+  it("loads canonical output descriptors from the live outputs endpoint", async () => {
+    requestJson.mockResolvedValueOnce([]);
+
+    await getMultiRadarOutputs("multi_task_a");
+
+    expect(requestJson).toHaveBeenCalledWith("/api/radar/multi-coverage/multi_task_a/outputs");
   });
 });

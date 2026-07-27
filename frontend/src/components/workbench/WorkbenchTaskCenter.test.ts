@@ -48,6 +48,7 @@ function multiRadarTask(status: "running" | "finished") {
     status,
     progress: status === "running" ? 48 : 100,
     message: status === "running" ? "Computing 2 of 3 stations." : "finished",
+    output_files: [],
     stations: []
   };
 }
@@ -55,6 +56,6 @@ function multiRadarTask(status: "running" | "finished") {
 function finishedRadarRow(): WorkbenchTaskRow {
   return {
     key: "radar:radar-1", modelId: "radar", label: "Radar Coverage", statusLabel: "Completed", primaryMetric: "Visible area 2.50 km2", timestamp: 1,
-    task: { task_id: "radar-1", status: "finished", progress: 100, message: "done", output_files: [], warnings: [], metrics: { visible_area_m2: 2_500_000, blocked_ratio: 0.31 } }
+    task: { task_id: "radar-1", status: "finished", result_state: "ready", progress: 100, message: "done", output_files: [], warnings: [], metrics: { visible_area_m2: 2_500_000, blocked_ratio: 0.31 } }
   };
 }

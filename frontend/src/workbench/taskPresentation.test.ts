@@ -44,6 +44,7 @@ function task(
   return {
     task_id: taskId,
     status,
+    result_state: status === "finished" ? "ready" : "pending",
     progress: status === "finished" ? 100 : 50,
     message: "Task message",
     updated_at: updatedAt,

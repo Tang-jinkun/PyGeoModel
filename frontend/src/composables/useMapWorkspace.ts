@@ -1,6 +1,6 @@
 import { ref, shallowRef } from "vue";
 
-import { resolveAssetUrl } from "../api/http";
+import { resolveApiUrl } from "../api/http";
 import { createTaskClient } from "../api/tasks";
 import { fitGeoJsonBounds } from "../map/mapLayers";
 import type { Map as MapInstance } from "../map/mapEngineTypes";
@@ -222,11 +222,10 @@ export function useMapWorkspace(kind: SpatialInputKind, initialDraft?: SpatialDr
     const definition = getModelDefinition(modelId);
     loadedTask.value = task as TaskSummary<never, unknown, unknown, unknown>;
     taskMetrics.value = toMetricRecord(task.metrics);
-    outputFiles.value = [...task.output_files];
-    layerStates.value = definition.outputLayers.map((layer) => createLayerState(layer, task.status === "finished" ? "loading" : "idle"));
-    ensureSceneGlbState(modelId, task, outputFiles.value);
+    outputFiles.value = [];
+    layerStates.value = definition.outputLayers.map((layer) => createLayerState(layer, task.result_state === "ready" ? "loading" : "idle"));
 
-    if (task.status !== "finished") return snapshot(modelId, task);
+    if (task.result_state !== "ready") return snapshot(modelId, task);
 
     const client = clientFor(modelId);
     const [metricsResult, outputsResult] = await Promise.allSettled([
@@ -236,12 +235,22 @@ export function useMapWorkspace(kind: SpatialInputKind, initialDraft?: SpatialDr
     if (version !== outputLoadVersion) return null;
 
     if (metricsResult.status === "fulfilled") taskMetrics.value = toMetricRecord(metricsResult.value);
-    if (outputsResult.status === "fulfilled") outputFiles.value = [...outputsResult.value];
+    if (outputsResult.status === "rejected") {
+      for (const layer of definition.outputLayers) {
+        updateLayer(version, layer.kind, {
+          status: "error",
+          data: null,
+          error: `${localizedLayerLabel(layer.kind, layer.label)}加载失败`
+        });
+      }
+      return snapshot(modelId, task);
+    }
+    outputFiles.value = outputsResult.value.filter((file) => file.exists && file.download_path);
     ensureSceneGlbState(modelId, task, outputFiles.value);
 
     const files = outputFiles.value;
     const layerLoads = definition.outputLayers.map(async (layer) => {
-      const url = resolveLayerUrl(layer.kind, files, task.outputs);
+      const url = resolveLayerUrl(layer.kind, files);
       if (!url) {
         updateLayer(version, layer.kind, { status: "idle", error: null });
         return;
@@ -292,7 +301,8 @@ export function useMapWorkspace(kind: SpatialInputKind, initialDraft?: SpatialDr
     const taskId = task.task_id;
     const assetId = sceneAssetId(taskId, kind);
     const demId = task.request?.dem_id ?? task.dem_id ?? "";
-    ensureSceneGlbState(modelId, task, taskFiles(task));
+    const files = loadedTask.value?.task_id === task.task_id ? outputFiles.value : [];
+    ensureSceneGlbState(modelId, task, files);
     if (!visible) {
       sceneGlbControllers.get(assetId)?.abort();
       sceneGlbControllers.delete(assetId);
@@ -315,10 +325,10 @@ export function useMapWorkspace(kind: SpatialInputKind, initialDraft?: SpatialDr
       });
       return;
     }
-    const file = taskFiles(task).find((candidate) => (
+    const file = files.find((candidate) => (
       candidate.kind === kind && candidate.exists
     ));
-    const url = resolveAssetUrl(file?.download_url || file?.url);
+    const url = file?.download_path ? resolveApiUrl(file.download_path) : null;
     if (!url) {
       updateSceneGlbState(assetId, {
         status: "error",
@@ -510,10 +520,6 @@ export function useMapWorkspace(kind: SpatialInputKind, initialDraft?: SpatialDr
     clearTaskOutputs
   };
 
-  function taskFiles<K extends ModelId>(task: ModelTaskSummary<K>) {
-    return loadedTask.value?.task_id === task.task_id ? outputFiles.value : task.output_files;
-  }
-
   function ensureSceneGlbState<K extends ModelId>(
     modelId: K,
     task: ModelTaskSummary<K>,
@@ -565,9 +571,9 @@ function createLayerState(
   };
 }
 
-function resolveLayerUrl(kind: string, files: readonly OutputFile[], legacyOutputs?: Record<string, string | null> | null) {
+function resolveLayerUrl(kind: string, files: readonly OutputFile[]) {
   const file = files.find((candidate) => candidate.kind === kind && candidate.exists);
-  return file?.download_url || file?.url || legacyOutputs?.[kind] || null;
+  return file?.download_path ? resolveApiUrl(file.download_path) : null;
 }
 
 function toMetricRecord(value: unknown) {
