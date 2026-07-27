@@ -1,5 +1,6 @@
 import * as THREE from "three";
 
+import { customLayerProjectionMatrix } from "./customLayerProjection";
 import mapEngine from "./mapEngine";
 import type { CustomLayerInterface, Map } from "./mapEngineTypes";
 
@@ -150,11 +151,11 @@ function createClippedVolumeLayer(
       state.renderer.autoClear = false;
       rebuildVolume(state);
     },
-    render(_gl, matrix) {
+    render(_gl, renderInput) {
       if (!state.map || !state.camera || !state.scene || !state.renderer) {
         return;
       }
-      state.camera.projectionMatrix = new THREE.Matrix4().fromArray(matrix as number[]);
+      state.camera.projectionMatrix = new THREE.Matrix4().fromArray(customLayerProjectionMatrix(renderInput));
       state.renderer.resetState();
       updateClippedScanSlice(state);
       state.renderer.render(state.scene, state.camera);

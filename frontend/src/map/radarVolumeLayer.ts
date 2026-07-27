@@ -2,6 +2,7 @@ import * as THREE from "three";
 
 import type { RadarRequest as CoverageRequest } from "../models/radar/types";
 import { createRadiusResolver, type BeamClipProfile } from "./beamClipProfile";
+import { customLayerProjectionMatrix } from "./customLayerProjection";
 import mapEngine from "./mapEngine";
 import type { CustomLayerInterface, Map, MercatorCoordinate } from "./mapEngineTypes";
 
@@ -97,11 +98,11 @@ function createRadarVolumeLayer(
       state.renderer.autoClear = false;
       rebuildMesh(state);
     },
-    render(_gl, matrix) {
+    render(_gl, renderInput) {
       if (!state.map || !state.camera || !state.scene || !state.renderer) {
         return;
       }
-      state.camera.projectionMatrix = new THREE.Matrix4().fromArray(matrix as number[]);
+      state.camera.projectionMatrix = new THREE.Matrix4().fromArray(customLayerProjectionMatrix(renderInput));
       const nextAnchorAltitudeM = getRadarAnchorAltitudeM(state.request, state.map);
       if (state.anchorAltitudeM == null || Math.abs(nextAnchorAltitudeM - state.anchorAltitudeM) > 1) {
         rebuildMesh(state);

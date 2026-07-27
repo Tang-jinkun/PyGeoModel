@@ -1,5 +1,6 @@
 import * as THREE from "three";
 
+import { customLayerProjectionMatrix } from "./customLayerProjection";
 import { DEM_TERRAIN_SOURCE_ID } from "./mapLayers";
 import type { CustomLayerInterface, Map as MapInstance } from "./mapEngineTypes";
 import { disposePreparedScene, type PreparedSceneGlb, type SceneGlbBounds } from "./sceneGlbAsset";
@@ -151,9 +152,9 @@ function createCustomLayer(
       renderer = new THREE.WebGLRenderer({ canvas, context: gl, antialias: true });
       renderer.autoClear = false;
     },
-    render(_gl, matrix) {
+    render(_gl, renderInput) {
       if (!camera || !scene || !renderer || cleaned) return;
-      const mapMatrix = new THREE.Matrix4().fromArray(matrix as unknown as number[]);
+      const mapMatrix = new THREE.Matrix4().fromArray(customLayerProjectionMatrix(renderInput));
       const anchorMatrix = new THREE.Matrix4().makeTranslation(...asset.anchor);
       camera.projectionMatrix.copy(mapMatrix).multiply(anchorMatrix);
       mixer?.setTime(performance.now() / 1_000);
