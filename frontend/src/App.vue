@@ -2,7 +2,7 @@
   <GisWorkbenchShell :tasks-collapsed="presentation.taskCenterCollapsed.value" :inspector-open="presentation.inspectorMode.value === 'result' && Boolean(selectedWorkbenchResultContext)" @update:tasks-collapsed="presentation.toggleTaskCenter">
     <template #topbar><WorkbenchTopbar :dem-label="selectedDem?.filename ?? 'No DEM selected'" :connected="!taskManager.connectionInterrupted.value" :search="modelSearch" @update:search="modelSearch = $event" /></template>
     <template #dock>
-      <WorkbenchDock :model-value="workspace.selectedModel.value" :active-tab="presentation.dockTab.value" :model-search="modelSearch" :layer-definitions="selectedLayerDefinitions" :layer-states="selectedLayerStates" :scene-entries="workbenchSceneEntries" :multi-radar-stations="activeMultiRadarTask?.stations ?? []" @select-model="selectWorkbenchModel" @update:active-tab="presentation.selectDockTab" @update:model-search="modelSearch = $event" @update-layer-visibility="setLayerVisibility" @update-layer-opacity="setLayerOpacity" @focus-layer="focusLayer" @update-scene-glb="setSceneGlbVisibility" @focus-scene-glb="focusSceneGlb" @focus-station="focusMultiRadarStation">
+  <WorkbenchDock :model-value="workspace.selectedModel.value" :active-tab="presentation.dockTab.value" :model-search="modelSearch" :layer-definitions="selectedLayerDefinitions" :layer-states="selectedLayerStates" :scene-entries="workbenchSceneEntries" :multi-radar-stations="activeMultiRadarTask?.stations ?? []" @select-model="selectWorkbenchModel" @update:active-tab="presentation.selectDockTab" @update:model-search="modelSearch = $event" @update-layer-visibility="setLayerVisibility" @update-layer-opacity="setLayerOpacity" @focus-layer="focusLayer" @update-scene-glb="setWorkbenchSceneVisibility" @focus-scene-glb="focusWorkbenchScene" @focus-station="focusMultiRadarStation">
         <template #data><WorkbenchDataPane :dems="demManager.dems.value" :model-value="demManager.selectedDem.value" :loading="demManager.loading.value" :uploading="demManager.uploading.value" @update:model-value="demManager.select" @upload="(file) => runCommand(demManager.upload, file)" @delete="(demId) => runCommand(demManager.remove, demId)" @refresh="runCommand(demManager.load)" /></template>
       </WorkbenchDock>
     </template>
@@ -209,7 +209,7 @@ import WorkbenchTopbar from "./components/workbench/WorkbenchTopbar.vue";
 import MapPickBar from "./components/map/MapPickBar.vue";
 import MapWorkspace from "./components/map/MapWorkspace.vue";
 import { useDemManager } from "./composables/useDemManager";
-import { useMapWorkspace, type SceneGlbKind } from "./composables/useMapWorkspace";
+import { useMapWorkspace, type SceneGlbKind, type SceneGlbOverlayState } from "./composables/useMapWorkspace";
 import { useModelWorkspace, type ActiveDraft } from "./composables/useModelWorkspace";
 import { useTaskManager } from "./composables/useTaskManager";
 import { buildWorkbenchTaskRows } from "./workbench/taskPresentation";
@@ -249,12 +249,9 @@ import {
 } from "./models/radar/heightLayerLoader";
 import { getCoverageOutputs, getCoverageTask, type CoverageTaskStatus } from "./api/radar";
 import { createMultiRadarTask, findMultiRadarOutputPath, getMultiRadarOutputs, getMultiRadarTask, listMultiRadarTasks } from "./api/multiRadar";
-import type { MultiRadarPresentationMode, MultiRadarStationInput, MultiRadarTask } from "./models/multiRadar/types";
+import type { MultiRadarPresentationMode, MultiRadarSceneAsset, MultiRadarStationInput, MultiRadarTask } from "./models/multiRadar/types";
 import { createFusionSceneTask } from "./models/multiRadar/fusionScene";
-import {
-  cooperativeStationSceneTaskIds,
-  createCooperativeIntersectionTask
-} from "./models/multiRadar/cooperativeScene";
+import { createMultiRadarSceneTask } from "./models/multiRadar/sceneAssets";
 import { requestGeoJson } from "./api/http";
 import { createTaskClient } from "./api/tasks";
 import { createMultiRadarLayerAdapter, MULTI_RADAR_LAYER_DEFINITIONS } from "./map/multiRadarLayerAdapter";
@@ -294,7 +291,7 @@ const multiRadarLayerVersion = ref(0);
 const multiRadarTasks = ref<MultiRadarTask[]>([]);
 const multiRadarDetailTasks = new Map<string, CoverageTaskStatus>();
 const multiRadarDetailStationIds = ref<string[]>([]);
-const cooperativeStationTasks = new Map<string, CoverageTaskStatus>();
+const cooperativeSceneAssets = new Map<string, MultiRadarSceneAsset[]>();
 const multiRadarAdapter = createMultiRadarLayerAdapter({
   removeDetail(stationId) {
     const detail = multiRadarDetailTasks.get(stationId);
@@ -358,6 +355,16 @@ const selectedLayerStates = computed(() => {
     : mapWorkspace.layerStates.value;
 });
 const workbenchSceneEntries = computed<WorkbenchSceneEntry[]>(() => {
+  const multiRadarTask = selectedMultiRadarResultTask.value;
+  if (multiRadarTask) {
+    return (multiRadarTask.scene_assets ?? []).map((asset) => ({
+      id: asset.asset_id,
+      taskId: asset.task_id,
+      kind: asset.kind,
+      file: { ...asset.file, label: asset.label },
+      state: mapWorkspace.sceneGlbStateFor(asset.task_id, asset.kind) ?? idleSceneState(asset.task_id, multiRadarTask.dem_id)
+    }));
+  }
   const context = selectedTaskContext.value;
   if (!context || context.task.status !== "finished") return [];
   return mapWorkspace.outputFiles.value
@@ -365,7 +372,7 @@ const workbenchSceneEntries = computed<WorkbenchSceneEntry[]>(() => {
     .map((file) => {
       const kind = file.kind as SceneGlbKind;
       const state = mapWorkspace.sceneGlbStateFor(context.task.task_id, kind);
-      return state ? { kind, file, state } : null;
+      return state ? { id: `${context.task.task_id}:${kind}`, taskId: context.task.task_id, kind, file, state } : null;
     })
     .filter((entry): entry is WorkbenchSceneEntry => entry !== null);
 });
@@ -523,6 +530,7 @@ function selectModel(modelId: ModelId) {
   profilePicking.value = false;
   if (modelId !== "radar") {
     stopMultiRadarPolling();
+    void clearCooperativeSceneAssets();
     activeMultiRadarTask.value = null;
     if (map.value) multiRadarAdapter.clear(map.value);
     multiRadarLayerVersion.value += 1;
@@ -548,6 +556,8 @@ function selectWorkbenchModel(modelId: ModelId) {
 function selectWorkbenchTask(modelId: ModelId, taskId: string) {
   const task = taskManager.getTask(modelId, taskId) as GenericTask | undefined;
   if (task?.dem_id) demManager.select(task.dem_id);
+  void clearCooperativeSceneAssets();
+  activeMultiRadarTask.value = null;
   selectedMultiRadarResultTask.value = null;
   taskManager.select(modelId, taskId);
   presentation.selectTask();
@@ -558,6 +568,9 @@ async function selectMultiRadarTask(taskId: string, intent: "layers" | "files" =
     const task = await getMultiRadarTask(taskId);
     const outputFiles = await getMultiRadarOutputs(taskId);
     const resolvedTask = { ...task, output_files: outputFiles };
+    if (activeMultiRadarTask.value?.task_id !== resolvedTask.task_id) {
+      await clearCooperativeSceneAssets();
+    }
     upsertMultiRadarTask(resolvedTask);
     activeMultiRadarTask.value = resolvedTask;
     selectedMultiRadarResultTask.value = resolvedTask;
@@ -588,7 +601,7 @@ async function showMultiRadarAggregate(task: MultiRadarTask, resolvedOutputFiles
     multiRadarLayerVersion.value += 1;
     activeMultiRadarTask.value = task;
     if (task.request?.presentation_mode === "cooperative_3d") {
-      await showMultiRadarCooperativeScene(task, outputFiles);
+      await showMultiRadarCooperativeScene(task);
     } else {
       await showMultiRadarFusion(task, outputFiles);
     }
@@ -600,17 +613,16 @@ async function showMultiRadarAggregate(task: MultiRadarTask, resolvedOutputFiles
 
 async function showMultiRadarDetail(stationId: string, detail: CoverageTaskStatus | null) {
   if (activeMultiRadarTask.value?.request?.presentation_mode === "cooperative_3d") {
-    const finished = cooperativeStationTasks.get(stationId);
+    const assets = cooperativeSceneAssets.get(stationId) ?? [];
     const instance = map.value;
-    const demId = demManager.selectedDem.value;
-    if (!finished || !instance || !demId) return;
-    const files = await getCoverageOutputs(finished.task_id);
-    await mapWorkspace.setSceneGlbVisibility(instance, demId, "radar", finished as never, true, "scene_glb", files);
-    await mapWorkspace.setSceneGlbVisibility(instance, demId, "radar", finished as never, true, "radar_platform_glb", files);
+    const task = activeMultiRadarTask.value;
+    if (!assets.length || !instance || !task) return;
+    await Promise.allSettled(assets.map((asset) => setMultiRadarSceneAssetVisibility(instance, task, asset, true)));
     if (!multiRadarDetailStationIds.value.includes(stationId)) {
       multiRadarDetailStationIds.value = [...multiRadarDetailStationIds.value, stationId];
     }
-    mapWorkspace.focusSceneGlb(instance, finished.task_id, "scene_glb");
+    const primary = assets.find((asset) => asset.kind === "scene_glb") ?? assets[0];
+    if (primary) mapWorkspace.focusSceneGlb(instance, primary.task_id, primary.kind);
     return;
   }
   if (!detail) return;
@@ -641,65 +653,47 @@ async function showMultiRadarFusion(task: MultiRadarTask, outputFiles: readonly 
   mapWorkspace.focusSceneGlb(instance, fusionTask.task_id, "scene_glb");
 }
 
-async function showMultiRadarCooperativeScene(task: MultiRadarTask, outputFiles: readonly OutputFile[]) {
+async function showMultiRadarCooperativeScene(task: MultiRadarTask) {
   const instance = map.value;
-  const demId = demManager.selectedDem.value;
-  if (!instance || !demId) return;
-  cooperativeStationTasks.clear();
-  const sceneTaskIds = cooperativeStationSceneTaskIds(task);
-  const stationBySceneTaskId = new Map(task.stations.map((station) => [station.scene_task_id, station.radar_id]));
-  const children = await Promise.allSettled(sceneTaskIds.map((taskId) => getCoverageTask(taskId)));
-  const finished = children.flatMap((result) => (
-    result.status === "fulfilled" && result.value.status === "finished" ? [result.value] : []
-  ));
-  for (const stationTask of finished) {
-    const stationId = stationBySceneTaskId.get(stationTask.task_id);
-    if (stationId) cooperativeStationTasks.set(stationId, stationTask);
+  if (!instance) return;
+  cooperativeSceneAssets.clear();
+  const assets = task.scene_assets ?? [];
+  for (const asset of assets) {
+    if (!asset.radar_id) continue;
+    cooperativeSceneAssets.set(asset.radar_id, [...(cooperativeSceneAssets.get(asset.radar_id) ?? []), asset]);
   }
-  const stationOutputs = await Promise.allSettled(finished.map(async (stationTask) => ({
-    stationTask,
-    files: await getCoverageOutputs(stationTask.task_id)
-  })));
-  const stationScenes = stationOutputs.flatMap((result) => (
-    result.status === "fulfilled" ? [result.value] : []
-  ));
-  await Promise.allSettled(stationScenes.map(({ stationTask, files }) => (
-    mapWorkspace.setSceneGlbVisibility(instance, demId, "radar", stationTask as never, true, "scene_glb", files)
-  )));
-  const intersectionFile = outputFiles.find((candidate) => candidate.kind === "cooperative_intersection_glb" && candidate.exists && candidate.download_path);
-  const intersectionTask = intersectionFile
-    ? createCooperativeIntersectionTask(task.task_id, task.dem_id, intersectionFile)
-    : null;
-  if (intersectionTask) {
-    await mapWorkspace.setSceneGlbVisibility(
-      instance,
-      demId,
-      "radar",
-      intersectionTask as never,
-      true,
-      "scene_glb",
-      [intersectionFile!],
-      true
-    );
+  for (const tier of ["world", "emphasis", "equipment"] as const) {
+    await Promise.allSettled(assets
+      .filter((asset) => asset.render_tier === tier)
+      .map((asset) => setMultiRadarSceneAssetVisibility(instance, task, asset, true)));
   }
-  await Promise.allSettled(stationScenes.map(({ stationTask, files }) => (
-    mapWorkspace.setSceneGlbVisibility(instance, demId, "radar", stationTask as never, true, "radar_platform_glb", files)
-  )));
-  multiRadarDetailStationIds.value = [...cooperativeStationTasks.keys()];
+  multiRadarDetailStationIds.value = [...cooperativeSceneAssets.keys()];
   mapWorkspace.focusSceneGlbs(instance, [
-    ...finished.map((stationTask) => ({ taskId: stationTask.task_id })),
-    ...(intersectionTask ? [{ taskId: intersectionTask.task_id }] : [])
+    ...assets.map((asset) => ({ taskId: asset.task_id, kind: asset.kind }))
   ]);
 }
 
-function hideMultiRadarDetail(stationId: string) {
-  const cooperativeTask = cooperativeStationTasks.get(stationId);
-  if (cooperativeTask && map.value) {
-    mapWorkspace.removeSceneGlb(map.value, cooperativeTask.task_id);
+async function hideMultiRadarDetail(stationId: string) {
+  const assets = cooperativeSceneAssets.get(stationId) ?? [];
+  const task = activeMultiRadarTask.value;
+  if (assets.length && task && map.value) {
+    await Promise.allSettled(assets.map((asset) => setMultiRadarSceneAssetVisibility(map.value!, task, asset, false)));
     multiRadarDetailStationIds.value = multiRadarDetailStationIds.value.filter((id) => id !== stationId);
     return;
   }
   multiRadarAdapter.removeStationDetail(stationId);
+}
+
+async function clearCooperativeSceneAssets() {
+  const instance = map.value;
+  const task = activeMultiRadarTask.value;
+  const assets = [...cooperativeSceneAssets.values()].flat();
+  cooperativeSceneAssets.clear();
+  multiRadarDetailStationIds.value = [];
+  if (!instance || !task || !assets.length) return;
+  await Promise.allSettled(assets.map((asset) => (
+    setMultiRadarSceneAssetVisibility(instance, task, asset, false)
+  )));
 }
 
 function focusMultiRadarStation(stationId: string) {
@@ -921,6 +915,68 @@ function focusLayer(kind: string) {
     return;
   }
   if (map.value) mapWorkspace.focusTaskLayer(map.value, kind);
+}
+
+function idleSceneState(taskId: string, demId: string): SceneGlbOverlayState {
+  return {
+    taskId,
+    modelId: "radar",
+    demId,
+    status: "idle",
+    visible: false,
+    progress: null,
+    error: null
+  };
+}
+
+async function setMultiRadarSceneAssetVisibility(
+  instance: MapInstance,
+  task: MultiRadarTask,
+  asset: MultiRadarSceneAsset,
+  visible: boolean
+) {
+  const selectedDemId = demManager.selectedDem.value;
+  if (!selectedDemId) return;
+  const sceneTask = createMultiRadarSceneTask(task.dem_id, asset);
+  await mapWorkspace.setSceneGlbVisibility(
+    instance,
+    selectedDemId,
+    "radar",
+    sceneTask as never,
+    visible,
+    asset.kind,
+    [asset.file],
+    asset.render_tier !== "world"
+  );
+}
+
+async function setWorkbenchSceneVisibility(entryId: string, visible: boolean) {
+  const instance = map.value;
+  if (!instance) return;
+  const multiRadarTask = selectedMultiRadarResultTask.value;
+  if (multiRadarTask) {
+    const asset = multiRadarTask.scene_assets?.find((candidate) => candidate.asset_id === entryId);
+    if (asset) await setMultiRadarSceneAssetVisibility(instance, multiRadarTask, asset, visible);
+    return;
+  }
+  const context = selectedTaskContext.value;
+  const entry = workbenchSceneEntries.value.find((candidate) => candidate.id === entryId);
+  const selectedDemId = demManager.selectedDem.value;
+  if (!context || !entry || !selectedDemId) return;
+  await mapWorkspace.setSceneGlbVisibility(
+    instance,
+    selectedDemId,
+    context.modelId,
+    context.task as never,
+    visible,
+    entry.kind
+  );
+}
+
+function focusWorkbenchScene(entryId: string) {
+  const instance = map.value;
+  const entry = workbenchSceneEntries.value.find((candidate) => candidate.id === entryId);
+  if (instance && entry) mapWorkspace.focusSceneGlb(instance, entry.taskId, entry.kind);
 }
 
 function removeDeletedTaskScene(_modelId: ModelId, taskId: string) {

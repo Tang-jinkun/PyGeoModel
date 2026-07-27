@@ -21,7 +21,9 @@ from .primitives import tube_mesh
 from .radar import SCAN_PERIOD_S, _azimuths
 
 
+BASE_DISPLAY_SCALE = 100.0
 DISPLAY_SCALE = 1000.0
+DISPLAY_MAGNIFICATION = DISPLAY_SCALE / BASE_DISPLAY_SCALE
 ANTENNA_PHASE_CENTER_HEIGHT_M = 9.6
 EQUIPMENT_MATERIAL = MaterialSpec("radar_equipment_olive", (72, 82, 68, 255))
 PEDESTAL_MATERIAL = MaterialSpec("radar_pedestal_metal", (70, 78, 80, 255))
@@ -63,9 +65,7 @@ def write_radar_platform_glb(
         payload.radar.height_m / ANTENNA_PHASE_CENTER_HEIGHT_M,
         0.01,
     )
-    phase_center_offset = payload.radar.height_m - (
-        ANTENNA_PHASE_CENTER_HEIGHT_M * vertical_scale
-    )
+    display_vertical_scale = vertical_scale * DISPLAY_MAGNIFICATION
 
     cabinet = trimesh.creation.box(extents=[4.8, 2.6, 3.2])
     cabinet.apply_translation([0, 1.3, 0])
@@ -102,9 +102,9 @@ def write_radar_platform_glb(
     feed_arm = trimesh.util.concatenate([feed_arm, feed_horn])
 
     for mesh in (cabinet, pedestal, turntable, dish, feed_arm):
-        mesh.apply_scale([DISPLAY_SCALE, vertical_scale, DISPLAY_SCALE])
+        mesh.apply_scale([DISPLAY_SCALE, display_vertical_scale, DISPLAY_SCALE])
         mesh.apply_transform(trimesh.transformations.rotation_matrix(numpy.pi / 2, [1, 0, 0]))
-        mesh.apply_translation(ground_offset + [0.0, 0.0, phase_center_offset])
+        mesh.apply_translation(ground_offset)
 
     rotating_names = [
         "radar_platform/azimuth_turntable",
@@ -113,7 +113,11 @@ def write_radar_platform_glb(
     ]
     root = SceneNode(
         name="radar_platform",
-        extras={"kind": "radar_platform", "display_scale": DISPLAY_SCALE},
+        extras={
+            "kind": "radar_platform",
+            "display_scale": DISPLAY_SCALE,
+            "display_magnification": DISPLAY_MAGNIFICATION,
+        },
         children=[
             SceneNode(
                 name="radar_platform/equipment_cabinet",
@@ -180,8 +184,9 @@ def write_radar_platform_glb(
             "dimensions_m": {
                 "width": 5.5 * DISPLAY_SCALE,
                 "depth": 5.5 * DISPLAY_SCALE,
-                "height": 12.35 * vertical_scale,
+                "height": 12.35 * display_vertical_scale,
             },
+            "display_magnification": DISPLAY_MAGNIFICATION,
             "antenna_phase_center": {
                 "height_above_ground_m": payload.radar.height_m,
                 "azimuth_deg": float(scan_azimuths[0]),

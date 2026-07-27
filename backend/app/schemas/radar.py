@@ -158,6 +158,16 @@ class MultiRadarStationSummary(BaseModel):
     scene_message: str = ""
 
 
+class MultiRadarSceneAsset(BaseModel):
+    asset_id: str
+    task_id: str
+    radar_id: str | None = None
+    kind: Literal["scene_glb", "radar_platform_glb"]
+    label: str
+    render_tier: Literal["world", "emphasis", "equipment"]
+    file: ArtifactDescriptor
+
+
 class MultiRadarTaskStatus(TaskResultFields):
     task_id: str
     dem_id: str
@@ -169,6 +179,7 @@ class MultiRadarTaskStatus(TaskResultFields):
     metrics: MultiRadarMetrics | None = None
     outputs: MultiRadarOutputs | None = None
     output_files: list[ArtifactDescriptor] = Field(default_factory=list)
+    scene_assets: list[MultiRadarSceneAsset] = Field(default_factory=list)
     stations: list[MultiRadarStationSummary] = Field(default_factory=list)
     request: MultiRadarRequest | None = None
 

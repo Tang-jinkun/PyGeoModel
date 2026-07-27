@@ -32,6 +32,16 @@ export interface MultiRadarStationSummary {
   scene_message?: string;
 }
 
+export interface MultiRadarSceneAsset {
+  asset_id: string;
+  task_id: string;
+  radar_id?: string | null;
+  kind: "scene_glb" | "radar_platform_glb";
+  label: string;
+  render_tier: "world" | "emphasis" | "equipment";
+  file: OutputFile;
+}
+
 export interface MultiRadarTask {
   task_id: string;
   dem_id: string;
@@ -52,6 +62,7 @@ export interface MultiRadarTask {
     failed_station_count: number;
   } | null;
   output_files: OutputFile[];
+  scene_assets?: MultiRadarSceneAsset[];
   stations: MultiRadarStationSummary[];
   request?: MultiRadarRequest | null;
 }

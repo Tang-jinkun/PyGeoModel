@@ -335,7 +335,8 @@ def test_target_independent_radar_glb_is_self_contained_and_open_at_nodata(
     assert platform_metadata["animation"]["period_s"] == 20
     assert platform_metadata["axes"] == {"x": "east", "y": "north", "z": "up"}
     assert platform_metadata["dimensions_m"]["width"] == 5.5 * 1000
-    assert platform_metadata["dimensions_m"]["height"] == 12.35 * 30 / 9.6
+    assert platform_metadata["dimensions_m"]["height"] == 12.35 * 30 / 9.6 * 10
+    assert platform_metadata["display_magnification"] == 10
     assert platform_metadata["antenna_phase_center"] == {
         "height_above_ground_m": 30,
         "azimuth_deg": 30,

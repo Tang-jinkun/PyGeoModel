@@ -98,6 +98,11 @@ describe("App model run workflow", () => {
         "blind_geojson",
         "coverage_count_geojson"
       ]));
+    expect(wrapper.findAll('[data-layer-id]').map((node) => node.attributes("data-layer-id")))
+      .toEqual(expect.arrayContaining([
+        "coverage-r1:scene_glb",
+        "coverage-r1:radar_platform_glb"
+      ]));
   });
 
   it("restores the selected radar task DEM before opening its results", async () => {
@@ -134,7 +139,39 @@ function finishedMultiRadarTask() {
       failed_station_count: 0
     },
     output_files: [],
+    scene_assets: [
+      {
+        asset_id: "coverage-r1:scene_glb",
+        task_id: "coverage-r1",
+        radar_id: "R1",
+        kind: "scene_glb",
+        label: "R1 - Radar Maximum Detection Domain GLB",
+        render_tier: "world",
+        file: sceneFile("scene_glb", "Radar Maximum Detection Domain GLB")
+      },
+      {
+        asset_id: "coverage-r1:radar_platform_glb",
+        task_id: "coverage-r1",
+        radar_id: "R1",
+        kind: "radar_platform_glb",
+        label: "R1 - Radar Platform GLB",
+        render_tier: "equipment",
+        file: sceneFile("radar_platform_glb", "Radar Platform GLB")
+      }
+    ],
     stations: []
+  };
+}
+
+function sceneFile(kind: "scene_glb" | "radar_platform_glb", label: string) {
+  return {
+    kind,
+    filename: `${kind}.glb`,
+    media_type: "model/gltf-binary",
+    label,
+    required: false,
+    exists: true,
+    download_path: `/api/radar/coverage/coverage-r1/outputs/${kind}`
   };
 }
 

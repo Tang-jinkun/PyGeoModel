@@ -27,11 +27,11 @@
           <input type="range" min="0" max="1" step="0.05" :value="layerState(definition.kind)?.opacity ?? 1" :aria-label="`${definition.label}透明度`" @input="emit('update-layer-opacity', definition.kind, number($event))">
           <button type="button" aria-label="定位图层" @click="emit('focus-layer', definition.kind)"><ElIcon><Location /></ElIcon></button>
         </label>
-        <label v-for="entry in sceneEntries" :key="entry.kind" class="layer-row" :data-layer-kind="entry.kind">
-          <input type="checkbox" :checked="entry.state.visible" :aria-label="`显示${entry.file.label}`" @change="emit('update-scene-glb', entry.kind, checked($event))">
+        <label v-for="entry in sceneEntries" :key="entry.id" class="layer-row" :data-layer-id="entry.id" :data-layer-kind="entry.kind">
+          <input type="checkbox" :checked="entry.state.visible" :aria-label="`显示${entry.file.label}`" @change="emit('update-scene-glb', entry.id, checked($event))">
           <i class="layer-row__glb" aria-hidden="true"></i><span>{{ entry.file.label }}</span>
           <small>{{ sceneLabel(entry.state.status) }}</small>
-          <button type="button" aria-label="定位三维模型" @click="emit('focus-scene-glb', entry.kind)"><ElIcon><Location /></ElIcon></button>
+          <button type="button" aria-label="定位三维模型" @click="emit('focus-scene-glb', entry.id)"><ElIcon><Location /></ElIcon></button>
         </label>
         <p v-if="!resultLayerCount" class="empty-state">尚未加载任务图层</p>
       </details>
@@ -64,7 +64,7 @@ type DockTab = "catalog" | "layers" | "data";
 export type RadarControlKind = "volume" | "boundary" | "clipped" | "voxel" | "height";
 export interface RadarControlLayer { kind: RadarControlKind; label: string; color: string; visible: boolean; opacity: number; available: boolean }
 export interface RadarHeightOption { heightM: number; label: string }
-export interface WorkbenchSceneEntry { kind: SceneGlbKind; file: OutputFile; state: SceneGlbOverlayState }
+export interface WorkbenchSceneEntry { id: string; taskId: string; kind: SceneGlbKind; file: OutputFile; state: SceneGlbOverlayState }
 
 const props = withDefaults(defineProps<{
   modelValue: ModelId; activeTab?: DockTab; modelSearch?: string; layerDefinitions?: readonly OutputLayerDefinition[];
@@ -74,7 +74,7 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{
   "select-model": [modelId: ModelId]; "update:activeTab": [tab: DockTab]; "update:modelSearch": [query: string];
   "update-layer-visibility": [kind: string, visible: boolean]; "update-layer-opacity": [kind: string, opacity: number]; "focus-layer": [kind: string];
-  "update-scene-glb": [kind: SceneGlbKind, visible: boolean]; "focus-scene-glb": [kind: SceneGlbKind]; "focus-station": [radarId: string];
+  "update-scene-glb": [entryId: string, visible: boolean]; "focus-scene-glb": [entryId: string]; "focus-station": [radarId: string];
 }>();
 
 const tabs: Array<{ id: DockTab; label: string }> = [{ id: "catalog", label: "模型库" }, { id: "layers", label: "图层" }, { id: "data", label: "数据" }];

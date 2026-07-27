@@ -4,7 +4,9 @@ import pytest
 from pydantic import ValidationError
 
 from app.core.config import settings
-from app.schemas.radar import MultiRadarRequest
+from app.schemas.artifacts import ArtifactDescriptor
+from app.schemas.radar import CoverageTaskStatus, MultiRadarRequest
+from app.services import multi_radar_task_store
 from app.services.multi_radar_task_store import (
     create_multi_task,
     get_multi_task,
@@ -87,4 +89,56 @@ def test_multi_task_completion_persists_station_summaries_and_outputs(tmp_path: 
     assert [(station.radar_id, station.status) for station in stored.stations] == [
         ("north", "finished"),
         ("south", "failed"),
+    ]
+
+
+def test_multi_task_exposes_station_scene_assets(tmp_path: Path, monkeypatch) -> None:
+    settings.data_dir = tmp_path
+    settings.ensure_directories()
+    task = create_multi_task(MultiRadarRequest.model_validate(
+        {"dem_id": "dem_a", "radars": [station("north"), station("south")]}
+    ))
+    scene_task = CoverageTaskStatus(
+        task_id="coverage_north",
+        dem_id="dem_a",
+        status="finished",
+        output_files=[
+            ArtifactDescriptor(
+                kind="scene_glb",
+                label="Radar Maximum Detection Domain GLB",
+                filename="radar_detection_domain.glb",
+                media_type="model/gltf-binary",
+                exists=True,
+                download_path="/api/radar/coverage/coverage_north/outputs/scene_glb",
+            ),
+            ArtifactDescriptor(
+                kind="radar_platform_glb",
+                label="Radar Platform GLB",
+                filename="radar_platform.glb",
+                media_type="model/gltf-binary",
+                exists=True,
+                download_path="/api/radar/coverage/coverage_north/outputs/radar_platform_glb",
+            ),
+        ],
+    )
+    monkeypatch.setattr(multi_radar_task_store, "get_task", lambda _task_id: scene_task, raising=False)
+    mark_multi_completed(
+        task.task_id,
+        status="finished",
+        metrics={},
+        outputs={},
+        stations=[
+            {"radar_id": "north", "status": "finished", "scene_task_id": "coverage_north", "scene_status": "finished"},
+            {"radar_id": "south", "status": "finished", "scene_task_id": "coverage_south", "scene_status": "failed"},
+        ],
+    )
+
+    stored = get_multi_task(task.task_id)
+
+    assert [
+        (asset.asset_id, asset.task_id, asset.radar_id, asset.kind, asset.render_tier, asset.file.download_path)
+        for asset in stored.scene_assets
+    ] == [
+        ("coverage_north:scene_glb", "coverage_north", "north", "scene_glb", "world", "/api/radar/coverage/coverage_north/outputs/scene_glb"),
+        ("coverage_north:radar_platform_glb", "coverage_north", "north", "radar_platform_glb", "equipment", "/api/radar/coverage/coverage_north/outputs/radar_platform_glb"),
     ]

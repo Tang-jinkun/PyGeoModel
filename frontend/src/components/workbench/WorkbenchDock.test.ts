@@ -10,7 +10,7 @@ describe("WorkbenchDock", () => {
     const wrapper = mount(WorkbenchDock, {
       props: {
         modelValue: "radar",
-        sceneEntries: [{ kind: "scene_glb", file: sceneFile(), state: readyScene() }]
+        sceneEntries: [{ id: "task-1:scene_glb", taskId: "task-1", kind: "scene_glb", file: sceneFile(), state: readyScene() }] as never
       }
     });
 
@@ -18,9 +18,9 @@ describe("WorkbenchDock", () => {
     expect(wrapper.findAll('[data-model-id]').map((node) => node.attributes("data-model-id"))).toEqual(["radar"]);
 
     await wrapper.get('[data-dock-tab="layers"]').trigger("click");
-    await wrapper.get('[data-layer-kind="scene_glb"] input[type="checkbox"]').setValue(false);
+    await wrapper.get('[data-layer-id="task-1:scene_glb"] input[type="checkbox"]').setValue(false);
 
-    expect(wrapper.emitted("update-scene-glb")?.[0]).toEqual(["scene_glb", false]);
+    expect(wrapper.emitted("update-scene-glb")?.[0]).toEqual(["task-1:scene_glb", false]);
     expect(wrapper.find(".scene-glb-row").exists()).toBe(false);
   });
 

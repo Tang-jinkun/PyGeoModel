@@ -12,6 +12,7 @@ from app.schemas.radar import (
     MultiRadarMetrics,
     MultiRadarOutputs,
     MultiRadarRequest,
+    MultiRadarSceneAsset,
     MultiRadarStationSummary,
     MultiRadarTaskStatus,
 )
@@ -21,6 +22,7 @@ from app.services.single_task_store import (
     hydrate_task,
     preserve_rerun_metadata,
 )
+from app.services.task_store import get_task
 
 
 _TASK_LOCK = RLock()
@@ -74,7 +76,9 @@ def get_multi_task(task_id: str) -> MultiRadarTaskStatus:
             record = _read_record(path)
             task = MultiRadarTaskStatus.model_validate(record["task"])
             task.request = MultiRadarRequest.model_validate(record["payload"])
-            return hydrate_task(task, "multi_radar")
+            task = hydrate_task(task, "multi_radar")
+            task.scene_assets = _scene_assets(task)
+            return task
         except (KeyError, TypeError, ValueError) as exc:
             raise AppError("MULTI_TASK_RECORD_CORRUPT", f"Task '{task_id}' is invalid.", status_code=500) from exc
 
@@ -145,6 +149,46 @@ def _save(task: MultiRadarTaskStatus) -> None:
     data = {"task": task.model_dump(exclude={"request"}), "payload": payload.model_dump()}
     preserve_rerun_metadata(data, path, _read_record)
     _write_record(path, data)
+
+
+def _scene_assets(task: MultiRadarTaskStatus) -> list[MultiRadarSceneAsset]:
+    assets: list[MultiRadarSceneAsset] = []
+    for station in task.stations:
+        if station.scene_status != "finished" or not station.scene_task_id:
+            continue
+        try:
+            scene_task = get_task(station.scene_task_id)
+        except AppError:
+            continue
+        station_label = station.name or station.radar_id
+        for kind, render_tier in (
+            ("scene_glb", "world"),
+            ("radar_platform_glb", "equipment"),
+        ):
+            file = next((item for item in scene_task.output_files if item.kind == kind and item.exists), None)
+            if file is None:
+                continue
+            assets.append(MultiRadarSceneAsset(
+                asset_id=f"{scene_task.task_id}:{kind}",
+                task_id=scene_task.task_id,
+                radar_id=station.radar_id,
+                kind=kind,
+                label=f"{station_label} - {file.label}",
+                render_tier=render_tier,
+                file=file,
+            ))
+    intersection = next((item for item in task.output_files if item.kind == "cooperative_intersection_glb" and item.exists), None)
+    if intersection is not None:
+        scene_task_id = f"{task.task_id}--intersection"
+        assets.append(MultiRadarSceneAsset(
+            asset_id=f"{scene_task_id}:scene_glb",
+            task_id=scene_task_id,
+            kind="scene_glb",
+            label="Cooperative Intersection GLB",
+            render_tier="emphasis",
+            file=intersection.model_copy(update={"kind": "scene_glb"}),
+        ))
+    return assets
 
 
 def _read_record(path: Path) -> dict:
