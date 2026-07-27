@@ -1,14 +1,10 @@
 FROM node:22-alpine
 
 ARG NPM_REGISTRY=https://mirrors.cloud.tencent.com/npm/
-ARG VITE_API_BASE=/PyGeoModel
-ARG VITE_BASE_PATH=/PyGeoModel/
 ARG VITE_PROXY_TARGET=http://backend:8000
 ARG VITE_MAP_ENGINE=maplibre
 ARG VITE_MAPBOX_ACCESS_TOKEN
 
-ENV VITE_API_BASE=${VITE_API_BASE}
-ENV VITE_BASE_PATH=${VITE_BASE_PATH}
 ENV VITE_PROXY_TARGET=${VITE_PROXY_TARGET}
 ENV VITE_MAP_ENGINE=${VITE_MAP_ENGINE}
 ENV VITE_MAPBOX_ACCESS_TOKEN=${VITE_MAPBOX_ACCESS_TOKEN}
@@ -29,4 +25,4 @@ RUN case "${VITE_MAP_ENGINE}" in \
 
 EXPOSE 5173
 
-CMD ["npm", "run", "preview", "--", "--host", "0.0.0.0", "--port", "5173"]
+CMD ["sh", "-c", "node /app/docker/write-runtime-config.mjs && exec node /app/docker/server.mjs"]
