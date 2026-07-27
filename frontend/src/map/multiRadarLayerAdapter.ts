@@ -1,4 +1,6 @@
+import { fitGeoJsonBounds } from "./mapLayers";
 import type { GeoJSONSource, Map } from "./mapEngineTypes";
+import type { OutputLayerDefinition } from "../models/shared";
 
 export interface MultiRadarAggregateLayers {
   visible: GeoJSON.GeoJSON;
@@ -13,11 +15,30 @@ export interface MultiRadarLayerAdapterOptions {
   removeDetail?(stationId: string): void;
 }
 
+export interface MultiRadarLayerState {
+  kind: string;
+  status: "ready";
+  visible: boolean;
+  opacity: number;
+  data: GeoJSON.GeoJSON;
+  error: null;
+}
+
+const AGGREGATE_LAYER_CONFIG = [
+  { kind: "visible_union_geojson", label: "Visible union", color: "#16a34a", geometry: "fill", defaultOpacity: 0.22, primary: true, mapId: "multi-radar-visible", opacityProperty: "fill-opacity", dataKey: "visible" },
+  { kind: "overlap_geojson", label: "Overlap", color: "#7c3aed", geometry: "fill", defaultOpacity: 0.3, mapId: "multi-radar-overlap", opacityProperty: "fill-opacity", dataKey: "overlap" },
+  { kind: "blind_geojson", label: "Blind area", color: "#dc2626", geometry: "fill", defaultOpacity: 0.22, mapId: "multi-radar-blind", opacityProperty: "fill-opacity", dataKey: "blind" },
+  { kind: "coverage_count_geojson", label: "Coverage count", color: "#f59e0b", geometry: "line", defaultOpacity: 0.75, mapId: "multi-radar-count", opacityProperty: "line-opacity", dataKey: "coverageCount" }
+] as const;
+
+export const MULTI_RADAR_LAYER_DEFINITIONS: readonly OutputLayerDefinition[] = AGGREGATE_LAYER_CONFIG.map(({ mapId, opacityProperty, dataKey, ...definition }) => definition);
+
 const LAYER_IDS = ["multi-radar-visible", "multi-radar-overlap", "multi-radar-blind", "multi-radar-count", "multi-radar-station-clusters", "multi-radar-stations"] as const;
 
 export function createMultiRadarLayerAdapter(options: MultiRadarLayerAdapterOptions = {}) {
   const maxDetailedSelections = options.maxDetailedSelections ?? 5;
   const selected: string[] = [];
+  let aggregateStates: MultiRadarLayerState[] = [];
 
   function selectStationDetail(stationId: string) {
     const existing = selected.indexOf(stationId);
@@ -42,6 +63,31 @@ export function createMultiRadarLayerAdapter(options: MultiRadarLayerAdapterOpti
       upsertGeoJsonLayer(map, "multi-radar-blind", layers.blind, "fill", { "fill-color": "#dc2626", "fill-opacity": 0.22 });
       upsertGeoJsonLayer(map, "multi-radar-count", layers.coverageCount, "line", { "line-color": "#f59e0b", "line-width": 1.2, "line-opacity": 0.75 });
       upsertStationLayers(map, layers.stations);
+      aggregateStates = AGGREGATE_LAYER_CONFIG.map((config) => {
+        const previous = aggregateStates.find((state) => state.kind === config.kind);
+        const state: MultiRadarLayerState = {
+          kind: config.kind,
+          status: "ready",
+          visible: previous?.visible ?? true,
+          opacity: previous?.opacity ?? config.defaultOpacity,
+          data: layers[config.dataKey],
+          error: null
+        };
+        applyLayerPresentation(map, config, state);
+        return state;
+      });
+    },
+    definitions: () => MULTI_RADAR_LAYER_DEFINITIONS,
+    layerStates: () => aggregateStates.map((state) => ({ ...state })),
+    setLayerVisibility(map: Map, kind: string, visible: boolean) {
+      updateAggregateState(map, kind, { visible });
+    },
+    setLayerOpacity(map: Map, kind: string, opacity: number) {
+      updateAggregateState(map, kind, { opacity: Math.min(1, Math.max(0, opacity)) });
+    },
+    focusLayer(map: Map, kind: string) {
+      const state = aggregateStates.find((candidate) => candidate.kind === kind);
+      return state ? fitGeoJsonBounds(map, state.data) : false;
     },
     selectStationDetail,
     removeStationDetail,
@@ -49,8 +95,28 @@ export function createMultiRadarLayerAdapter(options: MultiRadarLayerAdapterOpti
     clear(map: Map) {
       for (const id of LAYER_IDS) removeLayerAndSource(map, id);
       selected.splice(0).forEach((stationId) => options.removeDetail?.(stationId));
+      aggregateStates = [];
     }
   };
+
+  function updateAggregateState(map: Map, kind: string, patch: Partial<Pick<MultiRadarLayerState, "visible" | "opacity">>) {
+    const config = AGGREGATE_LAYER_CONFIG.find((candidate) => candidate.kind === kind);
+    const current = aggregateStates.find((candidate) => candidate.kind === kind);
+    if (!config || !current) return;
+    const next = { ...current, ...patch };
+    aggregateStates = aggregateStates.map((state) => state.kind === kind ? next : state);
+    applyLayerPresentation(map, config, next);
+  }
+}
+
+function applyLayerPresentation(
+  map: Map,
+  config: (typeof AGGREGATE_LAYER_CONFIG)[number],
+  state: MultiRadarLayerState
+) {
+  if (!map.getLayer(config.mapId)) return;
+  map.setLayoutProperty(config.mapId, "visibility", state.visible ? "visible" : "none");
+  map.setPaintProperty(config.mapId, config.opacityProperty, state.opacity);
 }
 
 function upsertGeoJsonLayer(
