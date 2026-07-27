@@ -48,4 +48,13 @@ describe("requestJson", () => {
   it("rejects raw output paths", () => {
     expect(() => resolveAssetUrl("/outputs/a.geojson")).toThrow();
   });
+
+  it("requires an API path below the /api/ prefix", () => {
+    expect(() => resolveApiUrl("/api", { apiBaseUrl: "" })).toThrow();
+  });
+
+  it("keeps an explicitly empty runtime base over the build fallback", () => {
+    expect(resolveApiUrl("/api/health", { apiBaseUrl: "" }, "/build"))
+      .toBe("/api/health");
+  });
 });

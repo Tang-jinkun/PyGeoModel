@@ -45,16 +45,17 @@ export async function requestGeoJson<T>(path: string, init: RequestInit = {}): P
 
 export function resolveApiUrl(
   path: string,
-  runtimeConfig: RuntimeConfig = getRuntimeConfig(),
+  runtimeConfig: RuntimeConfig | undefined = undefined,
   buildFallback = import.meta.env.VITE_API_BASE ?? ""
 ): string {
-  if (path !== "/api" && !path.startsWith("/api/")) {
+  if (!path.startsWith("/api/")) {
     throw new Error("API paths must begin with /api/");
   }
-  const base = normalizeApiBase(runtimeConfig.apiBaseUrl || buildFallback);
+  const base = normalizeApiBase((runtimeConfig ?? getRuntimeConfig(buildFallback)).apiBaseUrl);
   return `${base}${path}`;
 }
 
+/** @deprecated Use resolveApiUrl with a canonical backend download_path. */
 export function resolveAssetUrl(path?: string | null): string | null {
   if (!path) {
     return null;
