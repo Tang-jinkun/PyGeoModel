@@ -1,11 +1,15 @@
+import importlib.util
 from pathlib import Path
 
 import httpx
 import yaml
 
-from scripts.verify_deployment import verify_deployment
-
 ROOT = Path(__file__).resolve().parents[2]
+_SPEC = importlib.util.spec_from_file_location("verify_deployment", ROOT / "scripts/verify_deployment.py")
+assert _SPEC is not None and _SPEC.loader is not None
+_MODULE = importlib.util.module_from_spec(_SPEC)
+_SPEC.loader.exec_module(_MODULE)
+verify_deployment = _MODULE.verify_deployment
 
 
 def test_compose_uses_runtime_api_and_configurable_backend_environment() -> None:
