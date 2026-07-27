@@ -20,7 +20,8 @@ services:
       dockerfile: frontend/Dockerfile
       args:
         NPM_REGISTRY: https://mirrors.cloud.tencent.com/npm/
-        VITE_MAPBOX_ACCESS_TOKEN: ${VITE_MAPBOX_ACCESS_TOKEN}
+        VITE_MAP_ENGINE: ${VITE_MAP_ENGINE:-maplibre}
+        VITE_MAPBOX_ACCESS_TOKEN: ${VITE_MAPBOX_ACCESS_TOKEN:-}
     environment:
       VITE_API_BASE: /PyGeoModel
       VITE_BASE_PATH: /PyGeoModel/
