@@ -22,7 +22,7 @@ def test_compose_uses_runtime_api_and_configurable_backend_environment() -> None
     assert "VITE_API_BASE" not in compose_text
     assert "VITE_BASE_PATH" not in compose_text
     assert "PYGEOMODEL_API_BASE_URL" in frontend["environment"]
-    assert "${PYGEOMODEL_API_BASE_URL-http://127.0.0.1:8000}" in compose_text
+    assert "${PYGEOMODEL_API_BASE_URL-}" in compose_text
     assert "PYGEOMODEL_CORS_ORIGINS" in backend["environment"]
     assert "PYGEOMODEL_TIANDITU_TOKEN" in backend["environment"]
     assert "PYGEOMODEL_BACKEND_BIND" in backend["ports"][0]

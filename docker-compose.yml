@@ -26,7 +26,7 @@ services:
         VITE_MAP_ENGINE: ${VITE_MAP_ENGINE:-maplibre}
         VITE_MAPBOX_ACCESS_TOKEN: ${VITE_MAPBOX_ACCESS_TOKEN:-}
     environment:
-      PYGEOMODEL_API_BASE_URL: '${PYGEOMODEL_API_BASE_URL-http://127.0.0.1:8000}'
+      PYGEOMODEL_API_BASE_URL: '${PYGEOMODEL_API_BASE_URL-}'
     ports:
       - "${PYGEOMODEL_FRONTEND_BIND:-127.0.0.1}:5173:5173"
     depends_on:

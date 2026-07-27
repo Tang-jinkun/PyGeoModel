@@ -1,6 +1,6 @@
 import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
-import { createServer } from "node:http";
+import { createServer, request as requestHttp } from "node:http";
 import { extname, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -10,7 +10,7 @@ const types = new Map([
   [".png", "image/png"], [".svg", "image/svg+xml"], [".woff2", "font/woff2"]
 ]);
 
-export function createStaticServer(rootDirectory) {
+export function createStaticServer(rootDirectory, apiProxyTarget = "") {
   const root = resolve(rootDirectory);
   return createServer(async (request, response) => {
     let pathname;
@@ -18,6 +18,10 @@ export function createStaticServer(rootDirectory) {
       pathname = decodeURIComponent(new URL(request.url ?? "/", "http://localhost").pathname);
     } catch {
       response.writeHead(400).end("Bad Request");
+      return;
+    }
+    if (pathname === "/api" || pathname.startsWith("/api/")) {
+      proxyApiRequest(request, response, apiProxyTarget);
       return;
     }
     let candidate = resolve(root, `.${pathname}`);
@@ -38,9 +42,37 @@ export function createStaticServer(rootDirectory) {
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   const root = process.env.PYGEOMODEL_FRONTEND_DIST ?? "/app/dist";
   const port = Number(process.env.PORT ?? 5173);
-  createStaticServer(root).listen(port, "0.0.0.0");
+  createStaticServer(root, process.env.VITE_PROXY_TARGET ?? "").listen(port, "0.0.0.0");
 }
 
 async function isFile(path) {
   try { return (await stat(path)).isFile(); } catch { return false; }
+}
+
+function proxyApiRequest(incoming, response, target) {
+  if (!target) {
+    response.writeHead(502).end("API proxy is not configured");
+    return;
+  }
+  let targetUrl;
+  try {
+    targetUrl = new URL(incoming.url ?? "/api", target);
+    if (targetUrl.protocol !== "http:") throw new Error("Unsupported API proxy protocol");
+  } catch {
+    response.writeHead(502).end("API proxy is not configured");
+    return;
+  }
+  const outgoing = requestHttp(targetUrl, {
+    method: incoming.method,
+    headers: { ...incoming.headers, host: targetUrl.host }
+  }, (proxied) => {
+    response.writeHead(proxied.statusCode ?? 502, proxied.headers);
+    proxied.pipe(response);
+  });
+  outgoing.on("error", () => {
+    if (!response.headersSent) response.writeHead(502).end("Backend unavailable");
+    else response.destroy();
+  });
+  incoming.on("aborted", () => outgoing.destroy());
+  incoming.pipe(outgoing);
 }
