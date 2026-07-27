@@ -1,4 +1,42 @@
 <template>
+  <GisWorkbenchShell :tasks-collapsed="presentation.taskCenterCollapsed.value" :inspector-open="presentation.inspectorMode.value === 'result' && Boolean(selectedTaskContext)" @update:tasks-collapsed="presentation.toggleTaskCenter">
+    <template #topbar><WorkbenchTopbar :dem-label="selectedDem?.filename ?? 'No DEM selected'" :connected="!taskManager.connectionInterrupted.value" :search="modelSearch" @update:search="modelSearch = $event" /></template>
+    <template #dock>
+      <WorkbenchDock :model-value="workspace.selectedModel.value" :active-tab="presentation.dockTab.value" :model-search="modelSearch" :layer-definitions="selectedTaskContext?.task.status === 'finished' ? getModelDefinition(selectedTaskContext.modelId).outputLayers : []" :layer-states="mapWorkspace.layerStates.value" :scene-entries="workbenchSceneEntries" :multi-radar-stations="activeMultiRadarTask?.stations ?? []" @select-model="selectWorkbenchModel" @update:active-tab="presentation.selectDockTab" @update:model-search="modelSearch = $event" @update-layer-visibility="setLayerVisibility" @update-layer-opacity="setLayerOpacity" @focus-layer="focusLayer" @update-scene-glb="setSceneGlbVisibility" @focus-scene-glb="focusSceneGlb" @focus-station="focusMultiRadarStation">
+        <template #data><WorkbenchDataPane :dems="demManager.dems.value" :model-value="demManager.selectedDem.value" :loading="demManager.loading.value" :uploading="demManager.uploading.value" @update:model-value="demManager.select" @upload="(file) => runCommand(demManager.upload, file)" @delete="(demId) => runCommand(demManager.remove, demId)" @refresh="runCommand(demManager.load)" /></template>
+      </WorkbenchDock>
+    </template>
+    <template #map>
+      <div class="workspace-map-stack"><MapWorkspace :key="workspace.selectedModel.value" :kind="activeDefinition.spatialInput" :draft="mapWorkspace.draft.value" :editing="mapEditing" :edit-target="mapEditTarget" :dem="selectedDem" @map-ready="setMap" @spatial-edit="applyMapEdit" @out-of-bounds="showError(new Error('Pick a location inside the selected DEM.'))" /><MapPickBar v-if="mapEditing" :target="mapEditTarget === 'auto' ? 'point' : mapEditTarget" @cancel="finishMapPicking" @undo="applyMapEdit({ type: 'undo' })" @finish="finishMapPicking" /></div>
+    </template>
+    <template #inspector>
+      <WorkbenchInspector
+        :mode="presentation.inspectorMode.value"
+        :context="selectedTaskContext"
+        :metrics="mapWorkspace.taskMetrics.value"
+        :output-files="mapWorkspace.outputFiles.value"
+        @show-parameters="presentation.showParameters"
+      />
+    </template>
+    <template #tasks><WorkbenchTaskCenter :rows="workbenchTaskRows" :multi-radar-tasks="multiRadarTasks" :active-tab="presentation.taskTab.value" @update:active-tab="presentation.selectTaskTab" @select-task="selectWorkbenchTask" @select-multi-radar-task="selectMultiRadarTask" /></template>
+    <template #status>
+      <div class="workbench-status">
+        <span class="workbench-status__item workbench-status__map-info">坐标 <span class="workbench-status__mono">—</span></span>
+        <span class="workbench-status__item workbench-status__map-info">高程 <span class="workbench-status__mono">—</span></span>
+        <span class="workbench-status__item workbench-status__map-info">比例尺 <span class="workbench-status__mono">—</span></span>
+        <span class="workbench-status__item">坐标系 <span class="workbench-status__mono">{{ selectedDem?.crs ?? "EPSG:4326" }}</span></span>
+        <span class="workbench-status__grow"></span>
+        <span class="workbench-status__item">当前 DEM：{{ selectedDem?.filename ?? "未选择" }}</span>
+        <span class="workbench-status__live" :data-connected="!taskManager.connectionInterrupted.value">
+          {{ taskManager.connectionInterrupted.value ? "任务轮询中断" : "任务轮询正常" }}
+        </span>
+      </div>
+    </template>
+  </GisWorkbenchShell>
+  <ModelRunDialog v-if="configuredModelId" :open="runDialogOpen" :model-id="configuredModelId" :request="workspace.currentDraft.value.request" :inputs="workspace.inputSelectionsFor(configuredModelId)" :slots="activeDefinition.inputSlots" :assets="demManager.dems.value" :submitting="submitting" @update:open="runDialogOpen = $event" @update:request="updateDraft" @update:inputs="updateRunInputs" @activate-map-tool="activateMapTool" @submit="submitModelRun" />
+
+  <!-- legacy shell retained below during migration -->
+  <!--
   <WorkspaceShell
     :model-value="workspace.selectedModel.value"
     :dem-label="selectedDem?.filename ?? 'No DEM selected'"
@@ -32,6 +70,16 @@
           @update:model-value="updateDraft"
           @submit="submitTask"
           @activate-map-tool="activateMapTool"
+        />
+        <MultiRadarPanel
+          v-if="workspace.selectedModel.value === 'radar'"
+          :dem-id="demManager.selectedDem.value ?? ''"
+          :detailed-station-ids="multiRadarDetailStationIds"
+          @show-aggregate="showMultiRadarAggregate"
+          @show-detail="showMultiRadarDetail"
+          @hide-detail="hideMultiRadarDetail"
+          @focus-station="focusMultiRadarStation"
+          @error="showError"
         />
       </div>
     </template>
@@ -115,9 +163,14 @@
             :metrics="mapWorkspace.taskMetrics.value"
             :output-files="mapWorkspace.outputFiles.value"
             :layer-states="mapWorkspace.layerStates.value"
+            :scene-glb-state="mapWorkspace.sceneGlbStateFor(selectedTaskContext.task.task_id)"
+            :radar-platform-glb-state="mapWorkspace.sceneGlbStateFor(selectedTaskContext.task.task_id, 'radar_platform_glb')"
             @layer-visibility="setLayerVisibility"
             @layer-opacity="setLayerOpacity"
             @layer-focus="focusLayer"
+            @scene-glb-visibility="setSceneGlbVisibility"
+            @scene-glb-focus="focusSceneGlb"
+            @rerun="rerunTask(selectedTaskContext.modelId, selectedTaskContext.task)"
           />
         </div>
       </div>
@@ -135,33 +188,33 @@
     @close="historyOpen = false"
     @restore="restoreRequest"
     @focus="focusTask"
+    @deleted="removeDeletedTaskScene"
     @error="showError"
   />
+  -->
 </template>
 
 <script setup lang="ts">
-import type maplibregl from "maplibre-gl";
-import { Aim } from "@element-plus/icons-vue";
-import { ElButton, ElMessage, ElTooltip } from "element-plus";
+import type { GeoJSONSource, Map as MapInstance, MapMouseEvent } from "./map/mapEngineTypes";
+import { ElMessage } from "element-plus";
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, shallowRef, toRaw, watch } from "vue";
 
-import DemSelector from "./components/dem/DemSelector.vue";
-import FusionPanel from "./components/FusionPanel.vue";
-import ModelParameterPanel from "./components/forms/ModelParameterPanel.vue";
-import WorkspaceShell from "./components/layout/WorkspaceShell.vue";
+import GisWorkbenchShell from "./components/workbench/GisWorkbenchShell.vue";
+import WorkbenchDataPane from "./components/workbench/WorkbenchDataPane.vue";
+import WorkbenchDock, { type RadarControlKind, type RadarControlLayer, type RadarHeightOption, type WorkbenchSceneEntry } from "./components/workbench/WorkbenchDock.vue";
+import WorkbenchInspector from "./components/workbench/WorkbenchInspector.vue";
+import ModelRunDialog, { type ModelRunSubmission } from "./components/workbench/ModelRunDialog.vue";
+import WorkbenchTaskCenter from "./components/workbench/WorkbenchTaskCenter.vue";
+import WorkbenchTopbar from "./components/workbench/WorkbenchTopbar.vue";
+import MapPickBar from "./components/map/MapPickBar.vue";
 import MapWorkspace from "./components/map/MapWorkspace.vue";
-import ProfilePanel from "./components/ProfilePanel.vue";
-import TaskHistoryDrawer from "./components/tasks/TaskHistoryDrawer.vue";
-import RadarLayerControls, {
-  type RadarControlKind,
-  type RadarControlLayer,
-  type RadarHeightOption
-} from "./components/tasks/RadarLayerControls.vue";
-import TaskResultPanel from "./components/tasks/TaskResultPanel.vue";
 import { useDemManager } from "./composables/useDemManager";
-import { useMapWorkspace } from "./composables/useMapWorkspace";
+import { useMapWorkspace, type SceneGlbKind } from "./composables/useMapWorkspace";
 import { useModelWorkspace, type ActiveDraft } from "./composables/useModelWorkspace";
 import { useTaskManager } from "./composables/useTaskManager";
+import { buildWorkbenchTaskRows } from "./workbench/taskPresentation";
+import { useWorkbenchPresentation } from "./workbench/useWorkbenchPresentation";
+import { shouldShowRadarPreview } from "./workbench/radarPreviewPolicy";
 import type { SpatialDraftAction } from "./map/spatialInput";
 import { clipProfileFromBounds } from "./map/beamClipProfile";
 import {
@@ -185,48 +238,72 @@ import {
   type RadarLayerPlan,
   type RadarTask
 } from "./models/radar/layerAdapter";
-import type { BaseModelRequest, OutputLayerDefinition, TaskSummary } from "./models/shared";
+import type { BaseModelRequest, OutputFile, OutputLayerDefinition, TaskSummary } from "./models/shared";
 import { applySpatialDraftToRequest, spatialDraftFromRequest } from "./models/spatialAdapter";
 import { useRadarAnalysis } from "./models/radar/useRadarAnalysis";
-import { createHeightLayerLoader } from "./models/radar/heightLayerLoader";
+import {
+  createHeightLayerLoader,
+  resolveHeightLayerDescriptors,
+  type HeightLayerManifest
+} from "./models/radar/heightLayerLoader";
+import { getCoverageOutputs, getCoverageTask, type CoverageTaskStatus } from "./api/radar";
+import { createMultiRadarTask, findMultiRadarOutputPath, getMultiRadarOutputs, getMultiRadarTask, listMultiRadarTasks } from "./api/multiRadar";
+import type { MultiRadarPresentationMode, MultiRadarStationInput, MultiRadarTask } from "./models/multiRadar/types";
+import { createFusionSceneTask } from "./models/multiRadar/fusionScene";
+import {
+  cooperativeStationSceneTaskIds,
+  createCooperativeIntersectionTask
+} from "./models/multiRadar/cooperativeScene";
+import { requestGeoJson } from "./api/http";
+import { createTaskClient } from "./api/tasks";
+import { createMultiRadarLayerAdapter } from "./map/multiRadarLayerAdapter";
 
 type MapEditTarget = "auto" | "point" | "route" | "start" | "end" | "threat";
 type GenericTask = TaskSummary<BaseModelRequest, unknown, unknown, unknown>;
 interface SelectedTaskContext { modelId: ModelId; task: GenericTask }
 interface HeightLayerData extends RadarHeightOption { visibleUrl: string; blockedUrl: string | null }
-interface HeightManifest {
-  height_layers?: Array<{
-    height_m?: number;
-    visible_filename?: string;
-    blocked_filename?: string;
-    visible_area_m2?: number;
-    blocked_area_m2?: number;
-  }>;
-}
 
 const workspace = useModelWorkspace();
-const demManager = useDemManager(workspace);
+const demManager = useDemManager();
 const taskManager = useTaskManager({ pollIntervalMs: 1000 });
+const presentation = useWorkbenchPresentation(taskManager.selectedTaskKey);
+const modelSearch = ref("");
 const radarAnalysis = useRadarAnalysis();
 const mapWorkspace = useMapWorkspace(
   getModelDefinition(workspace.selectedModel.value).spatialInput,
   spatialDraftFromRequest(workspace.selectedModel.value, toRaw(workspace.currentDraft.value.request))
 );
-const map = shallowRef<maplibregl.Map | null>(null);
+const map = shallowRef<MapInstance | null>(null);
 const historyOpen = ref(false);
 const submitting = ref(false);
 const mapEditing = ref(false);
 const profilePicking = ref(false);
 const mapEditTarget = ref<MapEditTarget>("auto");
+const runDialogOpen = ref(false);
+const configuredModelId = ref<ModelId | null>(null);
 const renderedTaskLayers = new Map<string, string>();
 const renderedHeightLayers = new Map<string, string>();
 const radarLayerErrors = ref<string[]>([]);
 const heightOptions = ref<RadarHeightOption[]>([]);
 const selectedHeightM = ref<number | null>(null);
 const activeHeightData = shallowRef<HeightLayerData[]>([]);
-const heightLayerLoader = createHeightLayerLoader(fetchJson);
+const activeMultiRadarTask = shallowRef<MultiRadarTask | null>(null);
+const multiRadarTasks = ref<MultiRadarTask[]>([]);
+const multiRadarDetailTasks = new Map<string, CoverageTaskStatus>();
+const multiRadarDetailStationIds = ref<string[]>([]);
+const cooperativeStationTasks = new Map<string, CoverageTaskStatus>();
+const multiRadarAdapter = createMultiRadarLayerAdapter({
+  removeDetail(stationId) {
+    const detail = multiRadarDetailTasks.get(stationId);
+    if (detail && map.value) mapWorkspace.removeSceneGlb(map.value, detail.task_id);
+    multiRadarDetailTasks.delete(stationId);
+    multiRadarDetailStationIds.value = multiRadarDetailStationIds.value.filter((id) => id !== stationId);
+  }
+});
+const heightLayerLoader = createHeightLayerLoader(requestGeoJson);
 let heightRenderToken = 0;
 let lastRadarTaskId: string | null = null;
+let multiRadarPollTimer: number | null = null;
 const radarControlLayers = reactive<RadarControlLayer[]>([
   { kind: "volume", label: "Radar volume", color: "#22c55e", visible: true, opacity: 0.62, available: true },
   { kind: "boundary", label: "Request boundary", color: "#94a3b8", visible: false, opacity: 0.45, available: true },
@@ -242,6 +319,7 @@ const selectedDem = computed(() => demManager.dems.value.find(
 const historyTasks = computed(() => taskManager.tasksByModel as unknown as Partial<
   Record<ModelId, readonly GenericTask[]>
 >);
+const workbenchTaskRows = computed(() => buildWorkbenchTaskRows(historyTasks.value as never));
 const radarTasks = computed(() => taskManager.tasksByModel.radar as unknown as RadarTask[]);
 const selectedTaskContext = computed<SelectedTaskContext | null>(() => {
   const key = taskManager.selectedTaskKey.value;
@@ -252,6 +330,18 @@ const selectedTaskContext = computed<SelectedTaskContext | null>(() => {
   if (!MODEL_IDS.includes(modelId)) return null;
   const task = taskManager.getTask(modelId, taskId) as GenericTask | undefined;
   return task ? { modelId, task } : null;
+});
+const workbenchSceneEntries = computed<WorkbenchSceneEntry[]>(() => {
+  const context = selectedTaskContext.value;
+  if (!context || context.task.status !== "finished") return [];
+  return mapWorkspace.outputFiles.value
+    .filter((file) => file.kind === "scene_glb" || file.kind === "radar_platform_glb")
+    .map((file) => {
+      const kind = file.kind as SceneGlbKind;
+      const state = mapWorkspace.sceneGlbStateFor(context.task.task_id, kind);
+      return state ? { kind, file, state } : null;
+    })
+    .filter((entry): entry is WorkbenchSceneEntry => entry !== null);
 });
 
 const radarLayers = createRadarLayerAdapter({
@@ -331,6 +421,7 @@ onMounted(async () => {
   taskManager.setVisibleModel(workspace.selectedModel.value);
   const results = await Promise.allSettled([
     demManager.load(),
+    loadMultiRadarTasks(),
     ...MODEL_IDS.map((modelId) => taskManager.refreshModel(modelId))
   ]);
   if (results.every(({ status }) => status === "rejected")) {
@@ -339,16 +430,25 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(() => {
+  stopMultiRadarPolling();
   radarAnalysis.dispose();
   radarLayers.dispose();
   if (map.value) {
+    mapWorkspace.removeAllSceneGlbs(map.value);
     removeProfileLayer(map.value);
     removeFusionLayers(map.value);
     removeRadarMarker(map.value);
+    if (import.meta.env.DEV) {
+      const devWindow = window as Window & { __PYGEOMODEL_MAP__?: MapInstance };
+      if (devWindow.__PYGEOMODEL_MAP__ === map.value) {
+        delete devWindow.__PYGEOMODEL_MAP__;
+      }
+    }
   }
   clearTaskLayers();
   taskManager.dispose();
   mapWorkspace.clearTaskOutputs();
+  if (map.value) multiRadarAdapter.clear(map.value);
 });
 
 watch(selectedTaskContext, async (context) => {
@@ -380,6 +480,9 @@ watch(selectedTaskContext, async (context) => {
 }, { immediate: true });
 
 watch(() => mapWorkspace.layerStates.value, renderTaskLayers, { deep: true });
+watch(() => demManager.selectedDem.value, (nextDemId) => {
+  if (map.value) mapWorkspace.removeIncompatibleSceneGlbs(map.value, nextDemId ?? "");
+});
 watch(() => workspace.drafts.radar, () => {
   if (workspace.selectedModel.value !== "radar") return;
   radarLayers.clear();
@@ -393,6 +496,9 @@ function selectModel(modelId: ModelId) {
   mapEditing.value = false;
   profilePicking.value = false;
   if (modelId !== "radar") {
+    stopMultiRadarPolling();
+    activeMultiRadarTask.value = null;
+    if (map.value) multiRadarAdapter.clear(map.value);
     radarAnalysis.clearProfile();
     radarAnalysis.clearFusion();
     if (map.value) {
@@ -405,12 +511,244 @@ function selectModel(modelId: ModelId) {
   if (modelId === "radar") void nextTick(syncCurrentRadarView);
 }
 
+function selectWorkbenchModel(modelId: ModelId) {
+  presentation.selectModel();
+  selectModel(modelId);
+  configuredModelId.value = modelId;
+  runDialogOpen.value = true;
+}
+
+function selectWorkbenchTask(modelId: ModelId, taskId: string) {
+  taskManager.select(modelId, taskId);
+  presentation.selectTask();
+}
+
+async function selectMultiRadarTask(taskId: string) {
+  try {
+    const task = await getMultiRadarTask(taskId);
+    upsertMultiRadarTask(task);
+    activeMultiRadarTask.value = task;
+    demManager.select(task.dem_id);
+    if ((task.status === "finished" || task.status === "partial") && task.result_state === "ready") {
+      await nextTick(() => showMultiRadarAggregate(task));
+    }
+  } catch (error) {
+    showError(error);
+  }
+}
+
+async function showMultiRadarAggregate(task: MultiRadarTask) {
+  const instance = map.value;
+  if (!instance) return;
+  try {
+    const outputFiles = await getMultiRadarOutputs(task.task_id);
+    const urls = [
+      "visible_union_geojson", "overlap_geojson", "blind_geojson",
+      "coverage_count_geojson", "stations_geojson"
+    ].map((kind) => findMultiRadarOutputPath(outputFiles, kind));
+    if (urls.some((url) => !url)) return;
+    const [visible, overlap, blind, coverageCount, stations] = await Promise.all(
+      urls.map((url) => requestGeoJson<GeoJSON.GeoJSON>(url!))
+    );
+    multiRadarAdapter.showAggregate(instance, { visible, overlap, blind, coverageCount, stations });
+    activeMultiRadarTask.value = task;
+    if (task.request?.presentation_mode === "cooperative_3d") {
+      await showMultiRadarCooperativeScene(task, outputFiles);
+    } else {
+      await showMultiRadarFusion(task, outputFiles);
+    }
+  } catch (error) {
+    showError(error);
+  }
+}
+
+async function showMultiRadarDetail(stationId: string, detail: CoverageTaskStatus | null) {
+  if (activeMultiRadarTask.value?.request?.presentation_mode === "cooperative_3d") {
+    const finished = cooperativeStationTasks.get(stationId);
+    const instance = map.value;
+    const demId = demManager.selectedDem.value;
+    if (!finished || !instance || !demId) return;
+    const files = await getCoverageOutputs(finished.task_id);
+    await mapWorkspace.setSceneGlbVisibility(instance, demId, "radar", finished as never, true, "scene_glb", files);
+    await mapWorkspace.setSceneGlbVisibility(instance, demId, "radar", finished as never, true, "radar_platform_glb", files);
+    if (!multiRadarDetailStationIds.value.includes(stationId)) {
+      multiRadarDetailStationIds.value = [...multiRadarDetailStationIds.value, stationId];
+    }
+    mapWorkspace.focusSceneGlb(instance, finished.task_id, "scene_glb");
+    return;
+  }
+  if (!detail) return;
+  multiRadarAdapter.selectStationDetail(stationId);
+  multiRadarDetailStationIds.value = multiRadarAdapter.selectedStationIds();
+  try {
+    const finished = await waitForMultiRadarDetail(detail.task_id);
+    const instance = map.value;
+    const demId = demManager.selectedDem.value;
+    if (!instance || !demId || finished.status !== "finished") return;
+    multiRadarDetailTasks.set(stationId, finished);
+    const files = await getCoverageOutputs(finished.task_id);
+    await mapWorkspace.setSceneGlbVisibility(instance, demId, "radar", finished as never, true, "scene_glb", files);
+    await mapWorkspace.setSceneGlbVisibility(instance, demId, "radar", finished as never, true, "radar_platform_glb", files);
+    mapWorkspace.focusSceneGlb(instance, finished.task_id, "scene_glb");
+  } catch (error) {
+    showError(error);
+  }
+}
+
+async function showMultiRadarFusion(task: MultiRadarTask, outputFiles: readonly OutputFile[]) {
+  const instance = map.value;
+  const demId = demManager.selectedDem.value;
+  const file = outputFiles.find((candidate) => candidate.kind === "fusion_scene_glb" && candidate.exists && candidate.download_path);
+  if (!instance || !demId || !file) return;
+  const fusionTask = createFusionSceneTask(task.task_id, task.dem_id, file);
+  await mapWorkspace.setSceneGlbVisibility(instance, demId, "radar", fusionTask as never, true, "scene_glb", [file]);
+  mapWorkspace.focusSceneGlb(instance, fusionTask.task_id, "scene_glb");
+}
+
+async function showMultiRadarCooperativeScene(task: MultiRadarTask, outputFiles: readonly OutputFile[]) {
+  const instance = map.value;
+  const demId = demManager.selectedDem.value;
+  if (!instance || !demId) return;
+  cooperativeStationTasks.clear();
+  const sceneTaskIds = cooperativeStationSceneTaskIds(task);
+  const stationBySceneTaskId = new Map(task.stations.map((station) => [station.scene_task_id, station.radar_id]));
+  const children = await Promise.allSettled(sceneTaskIds.map((taskId) => getCoverageTask(taskId)));
+  const finished = children.flatMap((result) => (
+    result.status === "fulfilled" && result.value.status === "finished" ? [result.value] : []
+  ));
+  for (const stationTask of finished) {
+    const stationId = stationBySceneTaskId.get(stationTask.task_id);
+    if (stationId) cooperativeStationTasks.set(stationId, stationTask);
+  }
+  const stationLoads = finished.map(async (stationTask) => {
+    const files = await getCoverageOutputs(stationTask.task_id);
+    await Promise.all([
+      mapWorkspace.setSceneGlbVisibility(instance, demId, "radar", stationTask as never, true, "scene_glb", files),
+      mapWorkspace.setSceneGlbVisibility(instance, demId, "radar", stationTask as never, true, "radar_platform_glb", files)
+    ]);
+  });
+  await Promise.allSettled(stationLoads);
+  const intersectionFile = outputFiles.find((candidate) => candidate.kind === "cooperative_intersection_glb" && candidate.exists && candidate.download_path);
+  const intersectionTask = intersectionFile
+    ? createCooperativeIntersectionTask(task.task_id, task.dem_id, intersectionFile)
+    : null;
+  if (intersectionTask) {
+    await mapWorkspace.setSceneGlbVisibility(instance, demId, "radar", intersectionTask as never, true, "scene_glb", [intersectionFile!]);
+  }
+  multiRadarDetailStationIds.value = [...cooperativeStationTasks.keys()];
+  mapWorkspace.focusSceneGlbs(instance, [
+    ...finished.map((stationTask) => ({ taskId: stationTask.task_id })),
+    ...(intersectionTask ? [{ taskId: intersectionTask.task_id }] : [])
+  ]);
+}
+
+function hideMultiRadarDetail(stationId: string) {
+  const cooperativeTask = cooperativeStationTasks.get(stationId);
+  if (cooperativeTask && map.value) {
+    mapWorkspace.removeSceneGlb(map.value, cooperativeTask.task_id);
+    multiRadarDetailStationIds.value = multiRadarDetailStationIds.value.filter((id) => id !== stationId);
+    return;
+  }
+  multiRadarAdapter.removeStationDetail(stationId);
+}
+
+function focusMultiRadarStation(stationId: string) {
+  const station = activeMultiRadarTask.value?.request?.radars.find((item) => item.radar_id === stationId);
+  if (map.value && station) map.value.flyTo({ center: [station.radar.lon, station.radar.lat], zoom: 12, duration: 700 });
+}
+
+async function waitForMultiRadarDetail(taskId: string): Promise<CoverageTaskStatus> {
+  for (let attempt = 0; attempt < 180; attempt += 1) {
+    const task = await getCoverageTask(taskId);
+    if (["finished", "failed"].includes(task.status)) return task;
+    await new Promise((resolve) => window.setTimeout(resolve, 1000));
+  }
+  throw new Error("Radar detail generation timed out.");
+}
+
 function updateDraft(request: BaseModelRequest) {
   workspace.currentDraft.value = {
     modelId: workspace.selectedModel.value,
     request
   } as ActiveDraft;
   syncSpatialDraft();
+}
+
+function updateRunInputs(inputs: Record<string, string[]>) {
+  const modelId = configuredModelId.value;
+  if (!modelId) return;
+  workspace.updateInputSelections(modelId, inputs);
+  const terrainId = inputs.terrain?.[0] ?? null;
+  if (terrainId) demManager.select(terrainId);
+}
+
+function submitModelRun(submission: ModelRunSubmission) {
+  const { inputs } = submission;
+  updateRunInputs(inputs);
+  runDialogOpen.value = false;
+  if (submission.multiRadar) {
+    const demId = inputs.terrain?.[0] ?? "";
+    void submitMultiRadarRun(demId, submission.multiRadar.stations, submission.multiRadar.presentationMode);
+    return;
+  }
+  updateDraft(submission.request);
+  void submitTask(submission.request);
+}
+
+async function submitMultiRadarRun(
+  demId: string,
+  stations: MultiRadarStationInput[],
+  presentationMode: MultiRadarPresentationMode
+) {
+  submitting.value = true;
+  try {
+    const task = await createMultiRadarTask({ dem_id: demId, radars: stations, presentation_mode: presentationMode });
+    activeMultiRadarTask.value = task;
+    upsertMultiRadarTask(task);
+    startMultiRadarPolling(task.task_id);
+  } catch (error) {
+    showError(error);
+  } finally {
+    submitting.value = false;
+  }
+}
+
+function startMultiRadarPolling(taskId: string) {
+  stopMultiRadarPolling();
+  multiRadarPollTimer = window.setInterval(() => {
+    void refreshMultiRadarTask(taskId);
+  }, 1000);
+}
+
+function stopMultiRadarPolling() {
+  if (multiRadarPollTimer !== null) window.clearInterval(multiRadarPollTimer);
+  multiRadarPollTimer = null;
+}
+
+async function refreshMultiRadarTask(taskId: string) {
+  try {
+    const task = await getMultiRadarTask(taskId);
+    activeMultiRadarTask.value = task;
+    upsertMultiRadarTask(task);
+    if (!["finished", "partial", "failed"].includes(task.status)) return;
+    stopMultiRadarPolling();
+    if (task.status === "finished" || task.status === "partial") await showMultiRadarAggregate(task);
+  } catch (error) {
+    stopMultiRadarPolling();
+    showError(error);
+  }
+}
+
+async function loadMultiRadarTasks() {
+  const tasks = await listMultiRadarTasks();
+  multiRadarTasks.value = tasks;
+}
+
+function upsertMultiRadarTask(task: MultiRadarTask) {
+  const index = multiRadarTasks.value.findIndex(({ task_id }) => task_id === task.task_id);
+  if (index === -1) multiRadarTasks.value = [task, ...multiRadarTasks.value];
+  else multiRadarTasks.value.splice(index, 1, task);
+  multiRadarTasks.value.sort((left, right) => Date.parse(right.updated_at ?? right.created_at ?? "") - Date.parse(left.updated_at ?? left.created_at ?? ""));
 }
 
 async function submitTask(request: BaseModelRequest) {
@@ -421,6 +759,16 @@ async function submitTask(request: BaseModelRequest) {
     showError(error);
   } finally {
     submitting.value = false;
+  }
+}
+
+async function rerunTask(modelId: ModelId, task: GenericTask) {
+  try {
+    const client = createTaskClient(getModelDefinition(modelId).taskBasePath);
+    const rerun = await client.rerun(task.task_id);
+    taskManager.track(modelId, rerun as never);
+  } catch (error) {
+    showError(error);
   }
 }
 
@@ -441,6 +789,12 @@ function activateMapTool(operation: MapEditTarget = "auto") {
   profilePicking.value = false;
   mapEditTarget.value = operation;
   mapEditing.value = true;
+  runDialogOpen.value = false;
+}
+
+function finishMapPicking() {
+  mapEditing.value = false;
+  if (configuredModelId.value) runDialogOpen.value = true;
 }
 
 function toggleProfilePicking() {
@@ -458,6 +812,7 @@ function applyMapEdit(action: SpatialDraftAction) {
   );
   workspace.currentDraft.value = { modelId: current.modelId, request } as ActiveDraft;
   mapWorkspace.replaceDraft(spatialDraftFromRequest(current.modelId, request));
+  if (action.type !== "undo" && action.type !== "clear" && mapEditTarget.value !== "route") finishMapPicking();
 }
 
 function syncSpatialDraft() {
@@ -470,8 +825,15 @@ function syncSpatialDraft() {
   });
 }
 
-function setMap(instance: maplibregl.Map) {
+function setMap(instance: MapInstance) {
+  if (map.value && map.value !== instance) {
+    mapWorkspace.resetSceneGlbStates();
+  }
   map.value = instance;
+  if (import.meta.env.DEV) {
+    (window as Window & { __PYGEOMODEL_MAP__?: MapInstance })
+      .__PYGEOMODEL_MAP__ = instance;
+  }
   instance.on("load", handleMapLoad);
   instance.on("click", handleRadarMapClick);
   if (mapReady(instance)) handleMapLoad();
@@ -495,6 +857,38 @@ function setLayerOpacity(kind: string, opacity: number) {
 
 function focusLayer(kind: string) {
   if (map.value) mapWorkspace.focusTaskLayer(map.value, kind);
+}
+
+function removeDeletedTaskScene(_modelId: ModelId, taskId: string) {
+  if (map.value) mapWorkspace.removeSceneGlb(map.value, taskId);
+}
+
+async function setSceneGlbVisibility(
+  kindOrVisible: SceneGlbKind | boolean,
+  nextVisible?: boolean
+) {
+  const instance = map.value;
+  const context = selectedTaskContext.value;
+  const selectedDemId = demManager.selectedDem.value;
+  if (!instance || !context || !selectedDemId) return;
+  const kind = typeof kindOrVisible === "boolean" ? "scene_glb" : kindOrVisible;
+  const visible = typeof kindOrVisible === "boolean" ? kindOrVisible : Boolean(nextVisible);
+  await mapWorkspace.setSceneGlbVisibility(
+    instance,
+    selectedDemId,
+    context.modelId,
+    context.task as never,
+    visible,
+    kind
+  );
+}
+
+function focusSceneGlb(kind: SceneGlbKind = "scene_glb") {
+  const instance = map.value;
+  const context = selectedTaskContext.value;
+  if (instance && context) {
+    mapWorkspace.focusSceneGlb(instance, context.task.task_id, kind);
+  }
 }
 
 function renderTaskLayers() {
@@ -538,23 +932,16 @@ async function syncRadarLayers(context: SelectedTaskContext) {
     return;
   }
   const radarTask = context.task as RadarTask;
-  const dem = demManager.dems.value.find(({ dem_id }) => dem_id === context.task.dem_id) ?? selectedDem.value;
-  await radarLayers.showTask(radarTask, dem?.bounds ?? []);
+  radarLayers.clear();
+  radarLayerErrors.value = [];
+  if (map.value) {
+    removeRadarMarker(map.value);
+    removeRadarVolume(map.value);
+  }
   const current = selectedTaskContext.value;
   if (workspace.selectedModel.value !== "radar"
     || current?.modelId !== "radar"
     || current.task.task_id !== radarTask.task_id) return;
-  radarLayerErrors.value = Object.values(radarLayers.errors)
-    .filter((error): error is Error => error instanceof Error)
-    .map(({ message }) => message);
-  if (map.value && radarTask.request) {
-    addRadarMarker(
-      map.value,
-      radarTask.request.radar.lon,
-      radarTask.request.radar.lat,
-      radarTask.request.radar.height_m
-    );
-  }
 }
 
 function syncCurrentRadarView() {
@@ -567,6 +954,11 @@ function syncCurrentRadarView() {
 function syncRadarPreview() {
   const instance = map.value;
   if (!instance || !mapReady(instance) || workspace.selectedModel.value !== "radar") return;
+  if (!shouldShowRadarPreview(selectedTaskContext.value?.modelId === "radar" ? selectedTaskContext.value.task.status : null)) {
+    removeRadarMarker(instance);
+    removeRadarVolume(instance);
+    return;
+  }
   const request = workspace.drafts.radar;
   const volumeControl = radarControl("volume");
   const boundaryControl = radarControl("boundary");
@@ -587,7 +979,7 @@ function syncRadarPreview() {
   });
 }
 
-async function handleRadarMapClick(event: maplibregl.MapMouseEvent) {
+async function handleRadarMapClick(event: MapMouseEvent) {
   if (!profilePicking.value) return;
   const context = selectedTaskContext.value;
   if (!context || context.modelId !== "radar" || context.task.status !== "finished") return;
@@ -672,16 +1064,17 @@ function renderRadarAnalysisLayers() {
 
 async function loadHeightLayers(plan: RadarLayerPlan): Promise<HeightLayerData[]> {
   const manifestUrl = plan.outputUrls.height_layers_manifest_json;
-  const manifest = await fetchJson<HeightManifest>(manifestUrl);
-  return (manifest.height_layers ?? []).flatMap((layer) => {
-    if (layer.height_m == null || !layer.visible_filename) return [];
-    const visibleArea = formatArea(layer.visible_area_m2);
-    const blockedArea = formatArea(layer.blocked_area_m2);
+  const manifest = await requestGeoJson<HeightLayerManifest>(manifestUrl);
+  return resolveHeightLayerDescriptors(manifest, plan.outputUrls).flatMap((layer) => {
+    const metadata = manifest.height_layers?.find((candidate) => candidate.height_m === layer.heightM);
+    if (!metadata) return [];
+    const visibleArea = formatArea(metadata.visible_area_m2);
+    const blockedArea = formatArea(metadata.blocked_area_m2);
     return [{
-      heightM: layer.height_m,
-      label: `${formatHeight(layer.height_m)} | visible ${visibleArea} | blocked ${blockedArea}`,
-      visibleUrl: resolveRelativeUrl(manifestUrl, layer.visible_filename),
-      blockedUrl: layer.blocked_filename ? resolveRelativeUrl(manifestUrl, layer.blocked_filename) : null
+      heightM: layer.heightM,
+      label: `${formatHeight(layer.heightM)} | visible ${visibleArea} | blocked ${blockedArea}`,
+      visibleUrl: layer.visibleUrl,
+      blockedUrl: layer.blockedUrl
     }];
   }).sort((left, right) => left.heightM - right.heightM);
 }
@@ -757,7 +1150,7 @@ function resetRadarOutputControls() {
 }
 
 function renderGeoJsonLayer(
-  instance: maplibregl.Map,
+  instance: MapInstance,
   id: string,
   data: GeoJSON.GeoJSON,
   definition: OutputLayerDefinition,
@@ -766,7 +1159,7 @@ function renderGeoJsonLayer(
   registry = renderedTaskLayers
 ) {
   const sourceId = `${id}-source`;
-  const source = instance.getSource(sourceId) as maplibregl.GeoJSONSource | undefined;
+  const source = instance.getSource(sourceId) as GeoJSONSource | undefined;
   if (source) source.setData(data);
   else instance.addSource(sourceId, { type: "geojson", data });
 
@@ -788,7 +1181,7 @@ function renderGeoJsonLayer(
 }
 
 function removeGeoJsonLayer(
-  instance: maplibregl.Map,
+  instance: MapInstance,
   id: string,
   registry = renderedTaskLayers
 ) {
@@ -819,26 +1212,16 @@ function formatHeight(heightM: number) {
 }
 
 function formatArea(areaM2?: number) {
-  if (!areaM2) return "0 km²";
-  return `${(areaM2 / 1_000_000).toFixed(areaM2 >= 10_000_000 ? 1 : 2)} km²`;
+  if (!areaM2) return "0 km虏";
+  return `${(areaM2 / 1_000_000).toFixed(areaM2 >= 10_000_000 ? 1 : 2)} km虏`;
 }
 
 function sanitizeId(value: string) {
   return value.replace(/[^a-zA-Z0-9_-]/g, "-");
 }
 
-function mapReady(instance: maplibregl.Map) {
+function mapReady(instance: MapInstance) {
   return typeof instance.isStyleLoaded !== "function" || instance.isStyleLoaded();
-}
-
-async function fetchJson<T>(url: string): Promise<T> {
-  const response = await fetch(url);
-  if (!response.ok) throw new Error(`Layer request failed (${response.status})`);
-  return response.json() as Promise<T>;
-}
-
-function resolveRelativeUrl(base: string, filename: string) {
-  return new URL(filename, new URL(base, window.location.origin)).toString();
 }
 
 function cloneGeoJson(value: object): GeoJSON.GeoJSON {

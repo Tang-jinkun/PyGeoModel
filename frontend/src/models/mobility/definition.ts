@@ -1,4 +1,5 @@
 import type { ModelDefinition, ValidationIssue } from "../shared";
+import { terrainInputSlot } from "../inputSlots";
 import type { MobilityMetrics, MobilityRequest } from "./types";
 
 export const mobilityDefinition = {
@@ -6,6 +7,7 @@ export const mobilityDefinition = {
   label: "Mobility Accessibility",
   taskBasePath: "/api/mobility/accessibility",
   spatialInput: "start-end",
+  inputSlots: [terrainInputSlot],
   createDefaultRequest: (): MobilityRequest => ({
     dem_id: "",
     start: { lon: 79.80513693057287, lat: 31.4827708959419 }, end: { lon: 79.81513693057287, lat: 31.4927708959419 },

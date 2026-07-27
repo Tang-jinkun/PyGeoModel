@@ -1,7 +1,6 @@
 import json
 import os
 import re
-import shutil
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from json import JSONDecodeError
@@ -20,6 +19,9 @@ from app.schemas.watchpost import (
     WatchpostDetectionTaskStatus,
     WatchpostModelMetadata,
     WatchpostOutputFile,
+)
+from app.services.single_task_store import (
+    create_idempotent_rerun, delete_task_resources, hydrate_task, preserve_rerun_metadata,
 )
 
 WATCHPOST_TASK_ID_PATTERN = re.compile(r"^watchpost_task_[A-Za-z0-9_-]+$")
@@ -49,6 +51,18 @@ def create_watchpost_task(payload: WatchpostDetectionRequest) -> WatchpostDetect
     return task
 
 
+def create_watchpost_rerun(original_task_id: str, payload: WatchpostDetectionRequest, idempotency_key: str) -> tuple[WatchpostDetectionTaskStatus, bool]:
+    with _task_lock(original_task_id):
+        if not _task_path(original_task_id).exists():
+            raise AppError("TASK_NOT_FOUND", f"Watchpost task '{original_task_id}' was not found.", status_code=404)
+        return create_idempotent_rerun(
+            original_task_id=original_task_id, payload=payload, idempotency_key=idempotency_key,
+            task_id_prefix="watchpost_task_", record_paths=list(settings.tasks_dir.glob("watchpost_task_*.json")),
+            task_type=WatchpostDetectionTaskStatus, task_path=_task_path, read_record=_read_task_data,
+            write_record=_write_task_data, get_task=get_watchpost_task,
+        )
+
+
 def save_watchpost_task(task: WatchpostDetectionTaskStatus, payload: WatchpostDetectionRequest | None = None) -> None:
     with _task_lock(task.task_id):
         _save_task_unlocked(task, payload)
@@ -64,7 +78,7 @@ def get_watchpost_task(task_id: str) -> WatchpostDetectionTaskStatus:
         task.request = parse_watchpost_request(payload) or task.request
         if task.dem_id is None and task.request:
             task.dem_id = task.request.dem_id
-        return task
+        return hydrate_task(task, "watchpost")
 
 
 def list_watchpost_tasks() -> list[WatchpostDetectionTaskSummary]:
@@ -77,7 +91,7 @@ def list_watchpost_tasks() -> list[WatchpostDetectionTaskSummary]:
             continue
         if task.dem_id is None and isinstance(payload, dict):
             task.dem_id = payload.get("dem_id")
-        tasks.append(task)
+        tasks.append(hydrate_task(task, "watchpost"))
     return sorted(tasks, key=lambda item: item.created_at or item.task_id, reverse=True)
 
 
@@ -122,23 +136,17 @@ def mark_watchpost_failed(task_id: str, message: str) -> None:
 
 def delete_watchpost_task(task_id: str) -> WatchpostDetectionTaskDeleteResult:
     with _task_lock(task_id):
-        task = get_watchpost_task(task_id)
-        if task.status in {"pending", "running"}:
-            raise AppError("TASK_ACTIVE", "Pending or running watchpost tasks cannot be deleted.", status_code=409)
         task_path = _task_path(task_id)
-        output_dir = _task_output_dir(task_id)
-        deleted_task_record = False
-        deleted_output_dir = False
         if task_path.exists():
-            task_path.unlink()
-            deleted_task_record = True
-        if output_dir.exists():
-            shutil.rmtree(output_dir)
-            deleted_output_dir = True
+            task = get_watchpost_task(task_id)
+            if task.status in {"pending", "running"}:
+                raise AppError("TASK_ACTIVE", "Pending or running watchpost tasks cannot be deleted.", status_code=409)
+        deleted_task_record, deleted_output_dir, errors = delete_task_resources(task_id, task_path)
         return WatchpostDetectionTaskDeleteResult(
             task_id=task_id,
             deleted_task_record=deleted_task_record,
             deleted_output_dir=deleted_output_dir,
+            errors=errors,
         )
 
 
@@ -185,7 +193,9 @@ def _save_task_unlocked(task: WatchpostDetectionTaskStatus, payload: WatchpostDe
         data["payload"] = payload.model_dump()
     elif task.request is not None:
         data["payload"] = task.request.model_dump()
-    _write_task_data(_task_path(task.task_id), data)
+    path = _task_path(task.task_id)
+    preserve_rerun_metadata(data, path, _read_task_data)
+    _write_task_data(path, data)
 
 
 def _task_path(task_id: str) -> Path:

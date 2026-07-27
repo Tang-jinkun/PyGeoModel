@@ -1,4 +1,5 @@
 import type { ModelDefinition, ValidationIssue } from "../shared";
+import { terrainInputSlot } from "../inputSlots";
 import type { ArtilleryMetrics, ArtilleryRequest } from "./types";
 
 export const artilleryDefinition = {
@@ -6,6 +7,7 @@ export const artilleryDefinition = {
   label: "Artillery Coverage",
   taskBasePath: "/api/artillery/coverage",
   spatialInput: "point",
+  inputSlots: [terrainInputSlot],
   createDefaultRequest: (): ArtilleryRequest => ({
     dem_id: "",
     battery: { lon: 79.80513693057287, lat: 31.4827708959419, height_m: 0, altitude_mode: "agl" }, target: { target_height_m: 0 },

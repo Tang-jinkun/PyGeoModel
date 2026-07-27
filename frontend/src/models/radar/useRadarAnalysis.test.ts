@@ -53,6 +53,7 @@ function createTask(
     task_id: "radar-1",
     dem_id: "dem-1",
     status: "finished",
+    result_state: "ready",
     progress: 100,
     message: "",
     request,

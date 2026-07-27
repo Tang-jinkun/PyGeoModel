@@ -1,0 +1,208 @@
+<template>
+  <main class="gis-workbench" :data-tasks-collapsed="collapsed" :data-inspector-open="inspectorOpen">
+    <header class="gis-workbench__topbar panel" data-workbench-region="topbar">
+      <slot name="topbar" />
+    </header>
+    <aside class="gis-workbench__dock panel" data-workbench-region="dock">
+      <slot name="dock" />
+    </aside>
+    <section class="gis-workbench__map" data-workbench-region="map">
+      <slot name="map" />
+    </section>
+    <aside class="gis-workbench__inspector panel" data-workbench-region="inspector">
+      <slot name="inspector" />
+    </aside>
+    <section class="gis-workbench__tasks panel" data-workbench-region="tasks">
+      <div class="gis-workbench__task-command">
+        <button
+          type="button"
+          class="gis-workbench__collapse"
+          :aria-label="collapsed ? 'Expand task center' : 'Collapse task center'"
+          @click="toggleTasks"
+        >
+          <ElIcon aria-hidden="true"><ArrowDown /></ElIcon>
+        </button>
+      </div>
+      <slot name="tasks" :collapsed="collapsed" />
+    </section>
+    <footer class="gis-workbench__status panel" data-workbench-region="status">
+      <slot name="status" />
+    </footer>
+  </main>
+</template>
+
+<script setup lang="ts">
+import { ArrowDown } from "@element-plus/icons-vue";
+import { ElIcon } from "element-plus";
+import { computed, getCurrentInstance, ref } from "vue";
+
+const props = defineProps<{
+  tasksCollapsed?: boolean;
+  inspectorOpen?: boolean;
+}>();
+
+const emit = defineEmits<{
+  "update:tasksCollapsed": [collapsed: boolean];
+}>();
+
+const localCollapsed = ref(false);
+const vnodeProps = getCurrentInstance()?.vnode.props ?? {};
+const isControlled = "tasksCollapsed" in vnodeProps || "tasks-collapsed" in vnodeProps;
+const collapsed = computed(() => isControlled ? props.tasksCollapsed : localCollapsed.value);
+const inspectorOpen = computed(() => props.inspectorOpen ?? true);
+
+function toggleTasks() {
+  const next = !collapsed.value;
+  if (!isControlled) localCollapsed.value = next;
+  emit("update:tasksCollapsed", next);
+}
+</script>
+
+<style scoped>
+:global(:root) {
+  --wb-bg: #ffffff;
+  --wb-surface: #f5f5f7;
+  --wb-surface-warm: #fbfbfd;
+  --wb-fg: #1d1d1f;
+  --wb-fg-2: #424245;
+  --wb-muted: #6e6e73;
+  --wb-meta: #86868b;
+  --wb-border: #d2d2d7;
+  --wb-border-soft: #e8e8ed;
+  --wb-accent: #0071e3;
+  --wb-radius-sm: 8px;
+  --wb-radius-md: 12px;
+  --wb-elev-ring: 0 0 0 1px var(--wb-border);
+}
+
+.gis-workbench {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  gap: 8px;
+  padding: 8px;
+  overflow: hidden;
+  background: var(--wb-surface);
+  grid-template-areas:
+    "top top top"
+    "dock map inspector"
+    "tasks tasks tasks"
+    "status status status";
+  grid-template-columns: 292px minmax(360px, 1fr) minmax(260px, 320px);
+  grid-template-rows: 52px minmax(0, 1fr) auto 26px;
+}
+
+.gis-workbench[data-tasks-collapsed="true"] {
+  grid-template-rows: 52px minmax(0, 1fr) 38px 26px;
+}
+
+.gis-workbench[data-inspector-open="false"] {
+  grid-template-columns: 292px minmax(360px, 1fr) 0;
+}
+
+.panel {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--wb-bg);
+  border-radius: var(--wb-radius-md);
+  box-shadow: var(--wb-elev-ring);
+}
+
+.gis-workbench__topbar { grid-area: top; }
+.gis-workbench__dock { grid-area: dock; }
+.gis-workbench__map { grid-area: map; min-width: 0; min-height: 0; overflow: hidden; border-radius: var(--wb-radius-md); box-shadow: var(--wb-elev-ring); }
+.gis-workbench__inspector { grid-area: inspector; }
+.gis-workbench[data-inspector-open="false"] .gis-workbench__inspector { display: none; }
+.gis-workbench__tasks { position: relative; grid-area: tasks; }
+.gis-workbench__status { grid-area: status; }
+
+.gis-workbench__status :deep(.workbench-status) {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  align-items: center;
+  gap: 20px;
+  padding: 0 12px;
+  overflow: hidden;
+  color: var(--wb-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.gis-workbench__status :deep(.workbench-status__item) { min-width: 0; }
+.gis-workbench__status :deep(.workbench-status__mono) {
+  color: var(--wb-fg-2);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+.gis-workbench__status :deep(.workbench-status__grow) { flex: 1; }
+.gis-workbench__status :deep(.workbench-status__live) {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #18a957;
+}
+.gis-workbench__status :deep(.workbench-status__live::before) {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  content: "";
+}
+.gis-workbench__status :deep(.workbench-status__live[data-connected="false"]) { color: #d73545; }
+
+.gis-workbench__task-command {
+  position: absolute;
+  z-index: 3;
+  top: 3px;
+  right: 8px;
+}
+
+.gis-workbench__collapse {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  place-items: center;
+  color: var(--wb-muted);
+  background: transparent;
+  border: 0;
+  border-radius: var(--wb-radius-sm);
+  cursor: pointer;
+}
+
+.gis-workbench__collapse:hover { color: var(--wb-fg); background: var(--wb-surface); }
+.gis-workbench[data-tasks-collapsed="true"] .gis-workbench__collapse :deep(.el-icon) { transform: rotate(180deg); }
+
+@media (max-width: 1279px) {
+  .gis-workbench { grid-template-columns: 252px minmax(320px, 1fr) minmax(240px, 280px); }
+  .gis-workbench[data-inspector-open="false"] { grid-template-columns: 252px minmax(320px, 1fr) 0; }
+}
+
+@media (max-width: 820px) {
+  .gis-workbench {
+    grid-template-areas:
+      "top"
+      "map"
+      "tasks"
+      "status";
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: 52px minmax(0, 1fr) auto 26px;
+  }
+
+  .gis-workbench__dock { display: none; }
+  .gis-workbench__inspector {
+    position: absolute;
+    z-index: 4;
+    top: 68px;
+    right: 8px;
+    bottom: 248px;
+    width: min(320px, calc(100% - 16px));
+  }
+  .gis-workbench[data-tasks-collapsed="true"] .gis-workbench__inspector { bottom: 80px; }
+  .gis-workbench__status :deep(.workbench-status) { gap: 12px; }
+  .gis-workbench__status :deep(.workbench-status__map-info) { display: none; }
+}
+</style>

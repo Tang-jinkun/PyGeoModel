@@ -1,4 +1,5 @@
 import { requestJson } from "./http";
+import type { OutputFile, ResultState } from "../models/shared";
 import type {
   BeamClipProfile as RadarBeamClipProfile,
   RadarAdvancedInput,
@@ -33,25 +34,16 @@ const DEFAULT_COVERAGE_REQUEST: CoverageRequest = {
     voxel_grid_size: 128,
     voxel_vertical_levels: 16,
     voxel_max_height_m: 3000,
-    min_elevation_deg: 0,
-    max_elevation_deg: 32,
-    vertical_beam_width_deg: 32,
+    min_elevation_deg: -8,
+    max_elevation_deg: 90,
+    vertical_beam_width_deg: 98,
     visual_dome_mode: true,
     height_layers_m: []
   },
   reserved_radar_params: {}
 };
 
-export interface CoverageOutputFile {
-  kind: CoverageOutputKind;
-  label: string;
-  url: string;
-  download_url: string;
-  filename: string;
-  media_type: string;
-  size_bytes?: number | null;
-  exists: boolean;
-}
+export type CoverageOutputFile = OutputFile;
 
 export type CoverageOutputKind =
   | "viewshed_tif"
@@ -65,12 +57,17 @@ export type CoverageOutputKind =
   | "voxel_points_bin"
   | "clipped_volume_manifest_json"
   | "clipped_volume_cells_bin"
-  | "height_layers_manifest_json";
+  | "height_layers_manifest_json"
+  | "scene_glb"
+  | "radar_platform_glb";
 
 export interface CoverageTaskSummary {
   task_id: string;
   dem_id?: string | null;
   status: "pending" | "running" | "finished" | "failed";
+  result_state: ResultState;
+  result_reason_code?: string | null;
+  rerun_of?: string | null;
   progress: number;
   message: string;
   created_at?: string | null;
@@ -89,6 +86,8 @@ export interface CoverageTaskSummary {
     clipped_volume_manifest_json?: string | null;
     clipped_volume_cells_bin?: string | null;
     height_layers_manifest_json?: string | null;
+    scene_glb?: string | null;
+    radar_platform_glb?: string | null;
   } | null;
   output_files: CoverageOutputFile[];
   model?: RadarModelMetadata | null;
@@ -210,6 +209,11 @@ export async function getCoverageTask(taskId: string): Promise<CoverageTaskStatu
   return normalizeCoverageTaskStatus(await requestJson(`/api/radar/coverage/${taskId}`));
 }
 
+export async function getCoverageOutputs(taskId: string): Promise<OutputFile[]> {
+  const payload = await requestJson<unknown>(`/api/radar/coverage/${taskId}/outputs`);
+  return Array.isArray(payload) ? payload.map(normalizeOutputFile).filter(isOutputFile) : [];
+}
+
 export async function getCoverageProfile(taskId: string, lon: number, lat: number): Promise<CoverageProfileResult> {
   const params = new URLSearchParams({
     lon: String(lon),
@@ -317,19 +321,21 @@ export function normalizeCoverageTaskStatus(payload: unknown): CoverageTaskStatu
 function normalizeCoverageTaskSummary(payload: unknown): CoverageTaskSummary {
   const task = isRecord(payload) ? payload : {};
   const status = normalizeTaskStatus(task.status);
-  const outputs = normalizeOutputs(task.outputs);
   const explicitOutputFiles = Array.isArray(task.output_files) ? task.output_files.map(normalizeOutputFile).filter(isOutputFile) : [];
   return {
     task_id: stringOr(task.task_id, ""),
     dem_id: nullableString(task.dem_id),
     status,
+    result_state: normalizeResultState(task.result_state),
+    result_reason_code: nullableString(task.result_reason_code),
+    rerun_of: nullableString(task.rerun_of),
     progress: clampProgress(task.progress, status),
     message: stringOr(task.message, ""),
     created_at: nullableString(task.created_at),
     updated_at: nullableString(task.updated_at),
     metrics: normalizeMetrics(task.metrics),
-    outputs,
-    output_files: explicitOutputFiles.length ? explicitOutputFiles : deriveOutputFilesFromOutputs(outputs),
+    outputs: normalizeOutputs(task.outputs),
+    output_files: explicitOutputFiles,
     model: normalizeModel(task.model),
     diagnostics: normalizeDiagnostics(task.diagnostics),
     warnings: normalizeWarnings(task.warnings)
@@ -385,121 +391,30 @@ function normalizeOutputs(payload: unknown): CoverageTaskSummary["outputs"] {
     voxel_points_bin: nullableString(payload.voxel_points_bin),
     clipped_volume_manifest_json: nullableString(payload.clipped_volume_manifest_json),
     clipped_volume_cells_bin: nullableString(payload.clipped_volume_cells_bin),
-    height_layers_manifest_json: nullableString(payload.height_layers_manifest_json)
+    height_layers_manifest_json: nullableString(payload.height_layers_manifest_json),
+    scene_glb: nullableString(payload.scene_glb),
+    radar_platform_glb: nullableString(payload.radar_platform_glb)
   };
 }
 
 function normalizeOutputFile(payload: unknown): Partial<CoverageOutputFile> {
   const file = isRecord(payload) ? payload : {};
   return {
-    kind: normalizeOutputKind(file.kind),
+    kind: stringOr(file.kind, ""),
     label: stringOr(file.label, stringOr(file.kind, "输出文件")),
-    url: stringOr(file.url, ""),
-    download_url: stringOr(file.download_url, ""),
     filename: stringOr(file.filename, ""),
     media_type: stringOr(file.media_type, "application/octet-stream"),
+    required: booleanOr(file.required, true),
     size_bytes: typeof file.size_bytes === "number" ? file.size_bytes : null,
-    exists: Boolean(file.exists)
+    exists: Boolean(file.exists),
+    download_path: nullableString(file.download_path),
+    url: nullableString(file.url),
+    download_url: nullableString(file.download_url)
   };
 }
 
-function deriveOutputFilesFromOutputs(outputs: CoverageTaskSummary["outputs"]): CoverageOutputFile[] {
-  if (!outputs) {
-    return [];
-  }
-  const specs: Array<{ kind: CoverageOutputKind; label: string; media_type: string; filename: string }> = [
-    {
-      kind: "viewshed_tif",
-      label: "视域栅格",
-      media_type: "image/tiff",
-      filename: "viewshed.tif"
-    },
-    {
-      kind: "visible_geojson",
-      label: "可探测区",
-      media_type: "application/geo+json",
-      filename: "visible.geojson"
-    },
-    {
-      kind: "blocked_geojson",
-      label: "遮挡区",
-      media_type: "application/geo+json",
-      filename: "blocked.geojson"
-    },
-    {
-      kind: "range_geojson",
-      label: "理论范围",
-      media_type: "application/geo+json",
-      filename: "range.geojson"
-    },
-    {
-      kind: "model_metadata_json",
-      label: "模型元数据",
-      media_type: "application/json",
-      filename: "model_metadata.json"
-    },
-    {
-      kind: "output_manifest_json",
-      label: "输出清单",
-      media_type: "application/json",
-      filename: "output_manifest.json"
-    },
-    {
-      kind: "min_visible_height_tif",
-      label: "最低可见高度",
-      media_type: "image/tiff",
-      filename: "min_visible_height.tif"
-    },
-    {
-      kind: "voxel_manifest_json",
-      label: "体素清单",
-      media_type: "application/json",
-      filename: "voxel_manifest.json"
-    },
-    {
-      kind: "voxel_points_bin",
-      label: "体素点云",
-      media_type: "application/octet-stream",
-      filename: "voxel_points.bin"
-    },
-    {
-      kind: "clipped_volume_manifest_json",
-      label: "裁切波束清单",
-      media_type: "application/json",
-      filename: "clipped_volume_manifest.json"
-    },
-    {
-      kind: "clipped_volume_cells_bin",
-      label: "裁切波束体",
-      media_type: "application/octet-stream",
-      filename: "clipped_volume_cells.bin"
-    },
-    {
-      kind: "height_layers_manifest_json",
-      label: "高度层清单",
-      media_type: "application/json",
-      filename: "height_layers_manifest.json"
-    }
-  ];
-  return specs.flatMap((spec) => {
-    const url = outputs[spec.kind];
-    if (!url) {
-      return [];
-    }
-    return [
-      {
-        ...spec,
-        url,
-        download_url: url,
-        size_bytes: null,
-        exists: true
-      }
-    ];
-  });
-}
-
 function isOutputFile(file: Partial<CoverageOutputFile>): file is CoverageOutputFile {
-  return Boolean(file.kind && file.label && file.url && file.download_url && file.filename);
+  return Boolean(file.kind && file.label && file.filename && file.media_type && typeof file.exists === "boolean");
 }
 
 function normalizeModel(payload: unknown): CoverageTaskSummary["model"] {
@@ -522,10 +437,10 @@ function normalizeModel(payload: unknown): CoverageTaskSummary["model"] {
     voxel_vertical_levels: numberOr(payload.voxel_vertical_levels, 16),
     voxel_max_height_m: numberOr(payload.voxel_max_height_m, 3000),
     min_elevation_deg: numberOr(payload.min_elevation_deg, 0),
-    max_elevation_deg: numberOr(payload.max_elevation_deg, 32),
+    max_elevation_deg: numberOr(payload.max_elevation_deg, 90),
     vertical_beam_width_deg: numberOr(
       payload.vertical_beam_width_deg,
-      numberOr(payload.max_elevation_deg, 32) - numberOr(payload.min_elevation_deg, 0)
+      numberOr(payload.max_elevation_deg, 90) - numberOr(payload.min_elevation_deg, 0)
     ),
     visual_dome_mode: booleanOr(payload.visual_dome_mode, true),
     height_layers_m: numberArray(payload.height_layers_m),
@@ -533,6 +448,9 @@ function normalizeModel(payload: unknown): CoverageTaskSummary["model"] {
     radar_equation_max_range_m: typeof payload.radar_equation_max_range_m === "number" ? payload.radar_equation_max_range_m : null,
     effective_max_range_m: numberOr(payload.effective_max_range_m, numberOr(payload.max_range_m, 0)),
     beam_clip_profile: normalizeBeamClipProfile(payload.beam_clip_profile),
+    range_basis: payload.range_basis === "radar_equation" ? "radar_equation" : "nominal",
+    reference_rcs_m2: numberOr(payload.reference_rcs_m2, 1),
+    scene3d: isRecord(payload.scene3d) ? payload.scene3d : null,
     gdal_viewshed_command: Array.isArray(payload.gdal_viewshed_command)
       ? payload.gdal_viewshed_command.filter((item): item is string => typeof item === "string")
       : []
@@ -579,22 +497,8 @@ function normalizeTaskStatus(value: unknown): CoverageTaskSummary["status"] {
   return value === "running" || value === "finished" || value === "failed" ? value : "pending";
 }
 
-function normalizeOutputKind(value: unknown): CoverageOutputKind | undefined {
-  const kinds: CoverageOutputKind[] = [
-    "viewshed_tif",
-    "visible_geojson",
-    "blocked_geojson",
-    "range_geojson",
-    "model_metadata_json",
-    "output_manifest_json",
-    "min_visible_height_tif",
-    "voxel_manifest_json",
-    "voxel_points_bin",
-    "clipped_volume_manifest_json",
-    "clipped_volume_cells_bin",
-    "height_layers_manifest_json"
-  ];
-  return kinds.find((kind) => kind === value);
+function normalizeResultState(value: unknown): ResultState {
+  return value === "ready" || value === "unavailable" ? value : "pending";
 }
 
 function clampProgress(value: unknown, status: CoverageTaskSummary["status"] = "pending") {

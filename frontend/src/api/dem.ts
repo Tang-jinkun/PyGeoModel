@@ -1,4 +1,4 @@
-import { requestJson, resolveAssetUrl } from "./http";
+import { requestJson, resolveMapAssetUrl } from "./http";
 
 export interface DemMetadata {
   dem_id: string;
@@ -38,9 +38,9 @@ export function deleteDem(demId: string): Promise<DemDeleteResult> {
 }
 
 export function demTileUrlTemplate(demId: string): string {
-  return resolveAssetUrl(`/api/dem/${demId}/tiles/{z}/{x}/{y}.png`) ?? "";
+  return resolveMapAssetUrl(`/api/dem/${demId}/tiles/{z}/{x}/{y}.png`);
 }
 
 export function demTerrainUrlTemplate(demId: string): string {
-  return resolveAssetUrl(`/api/dem/${demId}/terrain/{z}/{x}/{y}.png`) ?? "";
+  return resolveMapAssetUrl(`/api/dem/${demId}/terrain/{z}/{x}/{y}.png`);
 }

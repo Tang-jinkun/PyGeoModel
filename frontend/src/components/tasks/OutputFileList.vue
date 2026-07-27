@@ -1,9 +1,9 @@
 <template>
-  <p v-if="!files.length" class="output-file-list__empty">暂无输出文件</p>
+  <p v-if="!availableFiles.length" class="output-file-list__empty">暂无输出文件</p>
   <ul v-else class="output-file-list">
-    <li v-for="file in files" :key="`${file.kind}:${file.filename}`">
+    <li v-for="file in availableFiles" :key="`${file.kind}:${file.filename}`">
       <span>{{ file.label || file.filename }}</span>
-      <a :href="file.download_url || file.url" download>
+      <a :href="resolveApiUrl(file.download_path!)" download>
         <ElIcon><Download /></ElIcon>
         <span class="sr-only">下载{{ file.label || file.filename }}</span>
       </a>
@@ -14,12 +14,16 @@
 <script setup lang="ts">
 import { Download } from "@element-plus/icons-vue";
 import { ElIcon } from "element-plus";
+import { computed } from "vue";
 
+import { resolveApiUrl } from "../../api/http";
 import type { OutputFile } from "../../models/shared";
 
-defineProps<{
+const props = defineProps<{
   files: readonly OutputFile[];
 }>();
+
+const availableFiles = computed(() => props.files.filter((file) => file.exists && file.download_path));
 </script>
 
 <style scoped>

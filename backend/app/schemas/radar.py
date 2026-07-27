@@ -3,6 +3,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+from app.schemas.artifacts import ArtifactDescriptor, TaskResultFields
+
 
 CoverageOutputKind = Literal[
     "viewshed_tif",
@@ -17,7 +19,10 @@ CoverageOutputKind = Literal[
     "clipped_volume_manifest_json",
     "clipped_volume_cells_bin",
     "height_layers_manifest_json",
+    "scene_glb",
+    "radar_platform_glb",
 ]
+MultiRadarPresentationMode = Literal["aggregate", "cooperative_3d"]
 
 
 class RadarInput(BaseModel):
@@ -27,7 +32,14 @@ class RadarInput(BaseModel):
 
 
 class TargetInput(BaseModel):
-    height_m: float = Field(ge=0)
+    height_m: float = Field(default=0, ge=0)
+
+
+class TargetEvaluationRequest(BaseModel):
+    x: float = Field(ge=-180, le=180, description="WGS84 longitude")
+    y: float = Field(ge=-90, le=90, description="WGS84 latitude")
+    z: float = Field(allow_inf_nan=False, description="Altitude AMSL in metres")
+    target_type: str | None = Field(default=None, max_length=64)
 
 
 class CoverageInput(BaseModel):
@@ -44,8 +56,8 @@ class AdvancedInput(BaseModel):
     voxel_grid_size: int = Field(default=128, ge=32, le=512)
     voxel_vertical_levels: int = Field(default=16, ge=4, le=64)
     voxel_max_height_m: float = Field(default=3000, ge=500, le=10000)
-    min_elevation_deg: float = Field(default=0, ge=-10, le=89)
-    max_elevation_deg: float = Field(default=32, ge=0, le=90)
+    min_elevation_deg: float = Field(default=-8, ge=-10, le=89)
+    max_elevation_deg: float = Field(default=90, ge=0, le=90)
     vertical_beam_width_deg: float = Field(default=32, ge=0, le=100)
     visual_dome_mode: bool = True
     height_layers_m: list[float] = Field(default_factory=list)
@@ -83,10 +95,89 @@ class ReservedRadarParams(BaseModel):
 class CoverageRequest(BaseModel):
     dem_id: str
     radar: RadarInput
-    target: TargetInput
+    target: TargetInput = Field(default_factory=TargetInput)
     coverage: CoverageInput
     advanced: AdvancedInput = Field(default_factory=AdvancedInput)
     reserved_radar_params: ReservedRadarParams = Field(default_factory=ReservedRadarParams)
+
+
+class MultiRadarStation(BaseModel):
+    radar_id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
+    name: str | None = Field(default=None, max_length=128)
+    radar: RadarInput
+    target: TargetInput = Field(default_factory=TargetInput)
+    coverage: CoverageInput
+    advanced: AdvancedInput = Field(default_factory=AdvancedInput)
+    reserved_radar_params: ReservedRadarParams = Field(default_factory=ReservedRadarParams)
+
+
+class MultiRadarRequest(BaseModel):
+    dem_id: str
+    radars: list[MultiRadarStation] = Field(min_length=2, max_length=256)
+    presentation_mode: MultiRadarPresentationMode = "aggregate"
+
+    @model_validator(mode="after")
+    def validate_radar_ids(self) -> "MultiRadarRequest":
+        if len({radar.radar_id for radar in self.radars}) != len(self.radars):
+            raise ValueError("radar_id values must be unique")
+        if self.presentation_mode == "cooperative_3d" and not 2 <= len(self.radars) <= 5:
+            raise ValueError("Cooperative 3D presentation requires two to five radar stations.")
+        return self
+
+
+class MultiRadarMetrics(BaseModel):
+    visible_union_area_m2: float = 0
+    overlap_area_m2: float = 0
+    blind_area_m2: float = 0
+    theoretical_union_area_m2: float = 0
+    successful_station_count: int = Field(default=0, ge=0)
+    failed_station_count: int = Field(default=0, ge=0)
+
+
+class MultiRadarOutputs(BaseModel):
+    visible_union_geojson: str | None = None
+    overlap_geojson: str | None = None
+    blind_geojson: str | None = None
+    coverage_count_geojson: str | None = None
+    stations_geojson: str | None = None
+    station_summaries_json: str | None = None
+    fusion_scene_glb: str | None = None
+    cooperative_intersection_glb: str | None = None
+
+
+class MultiRadarStationSummary(BaseModel):
+    radar_id: str
+    name: str | None = None
+    status: Literal["pending", "running", "finished", "failed"]
+    message: str = ""
+    metrics: "CoverageMetrics | None" = None
+    diagnostics: "CoverageDiagnostics | None" = None
+    outputs: dict[str, str] = Field(default_factory=dict)
+    scene_task_id: str | None = None
+    scene_status: Literal["pending", "running", "finished", "failed"] | None = None
+    scene_message: str = ""
+
+
+class MultiRadarTaskStatus(TaskResultFields):
+    task_id: str
+    dem_id: str
+    status: Literal["pending", "running", "finished", "partial", "failed"]
+    progress: int = Field(default=0, ge=0, le=100)
+    message: str = ""
+    created_at: str | None = None
+    updated_at: str | None = None
+    metrics: MultiRadarMetrics | None = None
+    outputs: MultiRadarOutputs | None = None
+    output_files: list[ArtifactDescriptor] = Field(default_factory=list)
+    stations: list[MultiRadarStationSummary] = Field(default_factory=list)
+    request: MultiRadarRequest | None = None
+
+
+class MultiRadarTaskDeleteResult(BaseModel):
+    task_id: str
+    deleted_task_record: bool
+    deleted_output_dir: bool
+    errors: list[str] = Field(default_factory=list)
 
 
 class CoverageMetrics(BaseModel):
@@ -134,17 +225,12 @@ class CoverageOutputs(BaseModel):
     clipped_volume_manifest_json: str | None = None
     clipped_volume_cells_bin: str | None = None
     height_layers_manifest_json: str | None = None
+    scene_glb: str | None = None
+    radar_platform_glb: str | None = None
 
 
-class CoverageOutputFile(BaseModel):
-    kind: CoverageOutputKind
-    label: str
-    url: str
-    download_url: str
-    filename: str
-    media_type: str
-    size_bytes: int | None = None
-    exists: bool = False
+class CoverageOutputFile(ArtifactDescriptor):
+    pass
 
 
 class BeamClipProfile(BaseModel):
@@ -169,17 +255,20 @@ class CoverageModelMetadata(BaseModel):
     voxel_vertical_levels: int = 16
     voxel_max_height_m: float = 3000
     min_elevation_deg: float = 0
-    max_elevation_deg: float = 32
-    vertical_beam_width_deg: float = 32
+    max_elevation_deg: float = 90
+    vertical_beam_width_deg: float = 90
     visual_dome_mode: bool = True
     height_layers_m: list[float] = Field(default_factory=list)
     radar_equation_active: bool = False
     radar_equation_max_range_m: float | None = None
     effective_max_range_m: float = 0
     beam_clip_profile: BeamClipProfile | None = None
+    range_basis: Literal["radar_equation", "nominal"] = "nominal"
+    reference_rcs_m2: float = 1
+    scene3d: dict[str, Any] | None = None
 
 
-class CoverageTaskSummary(BaseModel):
+class CoverageTaskSummary(TaskResultFields):
     task_id: str
     dem_id: str | None = None
     status: Literal["pending", "running", "finished", "failed"]
@@ -189,7 +278,7 @@ class CoverageTaskSummary(BaseModel):
     updated_at: str | None = None
     metrics: CoverageMetrics | None = None
     outputs: CoverageOutputs | None = None
-    output_files: list[CoverageOutputFile] = Field(default_factory=list)
+    output_files: list[ArtifactDescriptor] = Field(default_factory=list)
     model: CoverageModelMetadata | None = None
     diagnostics: CoverageDiagnostics | None = None
     warnings: list[str] = Field(default_factory=list)
@@ -203,6 +292,7 @@ class CoverageTaskDeleteResult(BaseModel):
     task_id: str
     deleted_task_record: bool = False
     deleted_output_dir: bool = False
+    errors: list[str] = Field(default_factory=list)
 
 
 class CoverageProfileSample(BaseModel):
@@ -264,6 +354,47 @@ class CoverageProfileBatchResult(BaseModel):
     failed_count: int
     results: list[CoverageProfileResult] = Field(default_factory=list)
     errors: list[CoverageProfileError] = Field(default_factory=list)
+
+
+TargetEvaluationReason = Literal[
+    "detectable",
+    "outside_range",
+    "outside_sector",
+    "below_min_elevation",
+    "above_max_elevation",
+    "outside_dem",
+    "dem_nodata",
+    "below_terrain",
+    "terrain_blocked",
+]
+
+
+class TargetEvaluationResult(BaseModel):
+    task_id: str
+    detectable: bool
+    reason: TargetEvaluationReason
+    target_type: str | None = None
+    target_crs: Literal["EPSG:4326"] = "EPSG:4326"
+    projected_crs: str
+    input_x: float
+    input_y: float
+    input_z: float
+    projected_x: float
+    projected_y: float
+    distance_m: float
+    slant_range_m: float
+    azimuth_deg: float
+    elevation_deg: float
+    radar_altitude_m: float
+    terrain_elevation_m: float | None = None
+    target_height_agl_m: float | None = None
+    minimum_detectable_altitude_m: float | None = None
+    maximum_detectable_altitude_m: float
+    within_range: bool
+    within_beam: bool
+    within_elevation: bool
+    within_dem: bool
+    terrain_blocked: bool
 
 
 class FusionRequest(BaseModel):

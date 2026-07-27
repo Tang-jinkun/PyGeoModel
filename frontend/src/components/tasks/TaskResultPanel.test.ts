@@ -1,7 +1,11 @@
 import { flushPromises, mount } from "@vue/test-utils";
 import { describe, expect, it, vi } from "vitest";
 
-import { useMapWorkspace, type TaskOutputLayerState } from "../../composables/useMapWorkspace";
+import {
+  useMapWorkspace,
+  type SceneGlbOverlayState,
+  type TaskOutputLayerState
+} from "../../composables/useMapWorkspace";
 import { MODEL_REGISTRY } from "../../models/registry";
 import type { OutputFile, TaskSummary } from "../../models/shared";
 import type { UavMetrics, UavRequest } from "../../models/uav/types";
@@ -14,6 +18,7 @@ import TaskStatusView from "./TaskStatusView.vue";
 const finishedUavTask: TaskSummary<UavRequest, UavMetrics> = {
   task_id: "uav-finished-1",
   status: "finished",
+  result_state: "ready",
   progress: 100,
   message: "分析完成",
   request: MODEL_REGISTRY.uav.createDefaultRequest(),
@@ -109,20 +114,53 @@ describe("TaskResultPanel", () => {
     expect(wrapper.text()).toContain("12.5%");
   });
 
-  it("prefers download_url and falls back to url", () => {
+  it("renders downloads only from live descriptor paths", () => {
     const wrapper = mount(OutputFileList, {
       props: {
         files: [
-          outputFile("visible_geojson", "/view-visible", "/download-visible"),
-          outputFile("blocked_geojson", "/view-blocked", "")
+          outputFile("visible_geojson", "/api/uav/recon/uav-finished-1/outputs/visible_geojson"),
+          { ...outputFile("blocked_geojson", "/api/uav/recon/uav-finished-1/outputs/blocked_geojson"), download_path: null }
         ]
       }
     });
 
     const links = wrapper.findAll("a");
-    expect(links[0].attributes("href")).toBe("/download-visible");
-    expect(links[1].attributes("href")).toBe("/view-blocked");
+    expect(links).toHaveLength(1);
+    expect(links[0].attributes("href")).toBe("/api/uav/recon/uav-finished-1/outputs/visible_geojson");
     expect(wrapper.text()).toContain("下载visible_geojson");
+  });
+
+  it("renders downloads only for available output files", () => {
+    const wrapper = mount(OutputFileList, {
+      props: {
+        files: [
+          outputFile("available", "/available"),
+          { ...outputFile("missing", "/missing"), exists: false }
+        ]
+      }
+    });
+
+    expect(wrapper.text()).toContain("available");
+    expect(wrapper.text()).not.toContain("missing");
+    expect(wrapper.findAll("a")).toHaveLength(1);
+  });
+
+  it("shows an unavailable reason and emits an explicit rerun command without API work on mount", async () => {
+    const wrapper = mount(TaskResultPanel, {
+      props: {
+        modelId: "uav",
+        task: {
+          ...finishedUavTask,
+          result_state: "unavailable",
+          result_reason_code: "missing_required_output"
+        }
+      }
+    });
+
+    expect(wrapper.text()).toContain("missing_required_output");
+    expect(wrapper.emitted("rerun")).toBeUndefined();
+    await wrapper.get('[data-action="rerun"]').trigger("click");
+    expect(wrapper.emitted("rerun")).toEqual([[]]);
   });
 
   it("fetches result metadata in parallel and isolates each registered GeoJSON layer", async () => {
@@ -199,7 +237,77 @@ describe("TaskResultPanel", () => {
     expect(workspace.loadedTask.value?.task_id).toBe("new");
     expect(workspace.taskMetrics.value).toEqual({ visible_area_m2: 22 });
     expect(fetchGeoJson).not.toHaveBeenCalledWith("/old-visible");
-    expect(workspace.outputFiles.value[0].url).toBe("/new-visible");
+    expect(workspace.outputFiles.value[0].download_path).toBe("/api/uav/recon/uav-finished-1/outputs/visible_geojson");
+  });
+
+  it("shows independent radar scene and platform GLBs in Layers", async () => {
+    const sceneGlbFile = outputFile("scene_glb", "/download-scene");
+    sceneGlbFile.media_type = "model/gltf-binary";
+    sceneGlbFile.filename = "result.glb";
+    const platformGlbFile = outputFile(
+      "radar_platform_glb",
+      "/download-platform"
+    );
+    platformGlbFile.label = "Radar Platform GLB";
+    platformGlbFile.media_type = "model/gltf-binary";
+    platformGlbFile.filename = "radar_platform.glb";
+    const state: SceneGlbOverlayState = {
+      taskId: finishedUavTask.task_id,
+      modelId: "uav",
+      demId: "dem-a",
+      status: "idle",
+      visible: false,
+      progress: null,
+      error: null
+    };
+    const platformState: SceneGlbOverlayState = {
+      ...state,
+      status: "visible",
+      visible: true
+    };
+    const wrapper = mount(TaskResultPanel, {
+      props: {
+        modelId: "uav",
+        task: { ...finishedUavTask, output_files: [sceneGlbFile, platformGlbFile] },
+        outputFiles: [sceneGlbFile, platformGlbFile],
+        sceneGlbState: state,
+        radarPlatformGlbState: platformState
+      }
+    });
+
+    expect(wrapper.find('[data-scene-glb-row]').exists()).toBe(false);
+    await wrapper.get('[data-tab="layers"]').trigger("click");
+    expect(wrapper.findAll('[data-scene-glb-row]')).toHaveLength(2);
+    const toggles = wrapper.findAll('[data-scene-glb-toggle] input[role="switch"]');
+    await toggles[0].trigger("click");
+    await toggles[1].trigger("click");
+    expect(wrapper.emitted("scene-glb-visibility")?.[0]).toEqual(["scene_glb", true]);
+    expect(wrapper.emitted("scene-glb-visibility")?.[1]).toEqual(["radar_platform_glb", false]);
+    await wrapper.get('[data-tab="files"]').trigger("click");
+    expect(wrapper.find('[data-scene-glb-row]').exists()).toBe(false);
+    expect(wrapper.get('a[href="/api/uav/recon/uav-finished-1/outputs/scene_glb"]')).toBeTruthy();
+    expect(wrapper.get('a[href="/api/uav/recon/uav-finished-1/outputs/radar_platform_glb"]')).toBeTruthy();
+  });
+
+  it("does not show a scene control without an existing scene_glb file", async () => {
+    const wrapper = mount(TaskResultPanel, {
+      props: {
+        modelId: "uav",
+        task: finishedUavTask,
+        sceneGlbState: {
+          taskId: finishedUavTask.task_id,
+          modelId: "uav",
+          demId: "dem-a",
+          status: "idle",
+          visible: false,
+          progress: null,
+          error: null
+        }
+      }
+    });
+
+    await wrapper.get('[data-tab="layers"]').trigger("click");
+    expect(wrapper.find('[data-scene-glb-row]').exists()).toBe(false);
   });
 
   it("awaits async history restore and confirms destructive deletion explicitly", async () => {
@@ -233,15 +341,17 @@ describe("TaskResultPanel", () => {
   });
 });
 
-function outputFile(kind: string, url: string, downloadUrl = ""): OutputFile {
+function outputFile(kind: string, download_path: string): OutputFile {
   return {
     kind,
     label: kind,
-    url,
-    download_url: downloadUrl,
     filename: `${kind}.geojson`,
     media_type: "application/geo+json",
-    exists: true
+    required: false,
+    exists: true,
+    download_path: download_path.startsWith("/api/")
+      ? download_path
+      : `/api/uav/recon/uav-finished-1/outputs/${kind}`
   };
 }
 

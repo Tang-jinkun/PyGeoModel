@@ -2,6 +2,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+from app.schemas.artifacts import ArtifactDescriptor, TaskResultFields
+
 
 ArtilleryOutputKind = Literal[
     "theoretical_geojson",
@@ -93,15 +95,8 @@ class ArtilleryCoverageOutputs(BaseModel):
     output_manifest_json: str | None = None
 
 
-class ArtilleryOutputFile(BaseModel):
-    kind: ArtilleryOutputKind
-    label: str
-    url: str
-    download_url: str
-    filename: str
-    media_type: str
-    size_bytes: int | None = None
-    exists: bool = False
+class ArtilleryOutputFile(ArtifactDescriptor):
+    pass
 
 
 class ArtilleryModelMetadata(BaseModel):
@@ -126,7 +121,7 @@ class ArtilleryModelMetadata(BaseModel):
     simplify_tolerance_m: float
 
 
-class ArtilleryCoverageTaskSummary(BaseModel):
+class ArtilleryCoverageTaskSummary(TaskResultFields):
     task_id: str
     dem_id: str | None = None
     status: Literal["pending", "running", "finished", "failed"]
@@ -136,7 +131,7 @@ class ArtilleryCoverageTaskSummary(BaseModel):
     updated_at: str | None = None
     metrics: ArtilleryCoverageMetrics | None = None
     outputs: ArtilleryCoverageOutputs | None = None
-    output_files: list[ArtilleryOutputFile] = Field(default_factory=list)
+    output_files: list[ArtifactDescriptor] = Field(default_factory=list)
     model: ArtilleryModelMetadata | None = None
     warnings: list[str] = Field(default_factory=list)
 
@@ -149,3 +144,4 @@ class ArtilleryCoverageTaskDeleteResult(BaseModel):
     task_id: str
     deleted_task_record: bool = False
     deleted_output_dir: bool = False
+    errors: list[str] = Field(default_factory=list)

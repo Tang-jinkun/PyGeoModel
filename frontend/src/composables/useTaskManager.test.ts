@@ -7,6 +7,7 @@ function task(taskId: string, status: TaskStatus, progress = 0): TaskSummary {
   return {
     task_id: taskId,
     status,
+    result_state: status === "finished" ? "ready" : "pending",
     progress,
     message: "",
     output_files: [],

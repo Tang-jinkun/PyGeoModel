@@ -1,4 +1,5 @@
 import type { ModelDefinition, ValidationIssue } from "../shared";
+import { terrainInputSlot } from "../inputSlots";
 import type { AirCorridorMetrics, AirCorridorRequest, AirDefenseThreatInput } from "./types";
 
 function validateThreat(threat: AirDefenseThreatInput, index: number): ValidationIssue[] {
@@ -15,6 +16,7 @@ export const airCorridorDefinition = {
   label: "Air Corridor Planning",
   taskBasePath: "/api/air-corridor/planning",
   spatialInput: "start-end-threats",
+  inputSlots: [terrainInputSlot],
   createDefaultRequest: (): AirCorridorRequest => ({
     dem_id: "",
     start: { lon: 79.80513693057287, lat: 31.4827708959419, altitude_m: 1200, altitude_mode: "agl" }, end: { lon: 79.81513693057287, lat: 31.4927708959419, altitude_m: 1200, altitude_mode: "agl" },

@@ -1,9 +1,9 @@
 from pathlib import Path
-from typing import get_args
-
 from app.core.config import settings
 from app.core.errors import AppError
 from app.schemas.radar import CoverageOutputFile, CoverageOutputKind
+from app.services.artifact_contracts import get_output_contract
+from app.services.artifact_store import get_artifact_store
 
 
 OUTPUT_FILENAMES: dict[CoverageOutputKind, str] = {
@@ -19,6 +19,8 @@ OUTPUT_FILENAMES: dict[CoverageOutputKind, str] = {
     "clipped_volume_manifest_json": "clipped_volume_manifest.json",
     "clipped_volume_cells_bin": "clipped_volume_cells.bin",
     "height_layers_manifest_json": "height_layers_manifest.json",
+    "scene_glb": "radar_detection_domain.glb",
+    "radar_platform_glb": "radar_platform.glb",
 }
 
 OUTPUT_MEDIA_TYPES: dict[CoverageOutputKind, str] = {
@@ -34,6 +36,8 @@ OUTPUT_MEDIA_TYPES: dict[CoverageOutputKind, str] = {
     "clipped_volume_manifest_json": "application/json",
     "clipped_volume_cells_bin": "application/octet-stream",
     "height_layers_manifest_json": "application/json",
+    "scene_glb": "model/gltf-binary",
+    "radar_platform_glb": "model/gltf-binary",
 }
 
 OUTPUT_LABELS: dict[CoverageOutputKind, str] = {
@@ -49,16 +53,21 @@ OUTPUT_LABELS: dict[CoverageOutputKind, str] = {
     "clipped_volume_manifest_json": "Clipped Volume Manifest JSON",
     "clipped_volume_cells_bin": "Clipped Volume Cells Binary",
     "height_layers_manifest_json": "Height Layers Manifest JSON",
+    "scene_glb": "Radar Maximum Detection Domain GLB",
+    "radar_platform_glb": "Radar Platform GLB",
 }
 
 
 def describe_output_file(task_id: str, kind: CoverageOutputKind, path: Path) -> CoverageOutputFile:
     exists = path.exists()
+    spec = get_output_contract("radar").spec(kind)
+    download_path = get_output_contract("radar").download_path_template.format(task_id=task_id, kind=kind)
     return CoverageOutputFile(
         kind=kind,
-        label=OUTPUT_LABELS[kind],
-        url=f"/outputs/{task_id}/{path.name}",
-        download_url=f"/api/radar/coverage/{task_id}/outputs/{kind}",
+        label=spec.label,
+        url=None,
+        download_path=download_path if exists else None,
+        download_url=download_path if exists else None,
         filename=path.name,
         media_type=OUTPUT_MEDIA_TYPES[kind],
         size_bytes=path.stat().st_size if exists else None,
@@ -71,22 +80,20 @@ def describe_output_files(task_id: str, files: dict[CoverageOutputKind, Path]) -
 
 
 def list_task_output_files(task_id: str) -> list[CoverageOutputFile]:
-    return describe_output_files(
-        task_id,
-        {kind: resolve_task_output_path(task_id, kind) for kind in get_args(CoverageOutputKind)},
-    )
+    return [CoverageOutputFile.model_validate(item.model_dump()) for item in get_artifact_store().list_descriptors(
+        task_id, get_output_contract("radar")
+    )]
 
 
 def resolve_task_output_path(task_id: str, kind: CoverageOutputKind) -> Path:
-    if kind not in OUTPUT_FILENAMES:
-        raise AppError("OUTPUT_KIND_NOT_FOUND", f"Output kind '{kind}' is not supported.", status_code=404)
+    spec = get_output_contract("radar").spec(kind)
 
     from app.services.task_store import validate_task_id
 
     validate_task_id(task_id)
     outputs_dir = settings.outputs_dir.resolve()
     task_dir = (settings.outputs_dir / task_id).resolve()
-    path = (task_dir / OUTPUT_FILENAMES[kind]).resolve()
+    path = (task_dir / spec.filename).resolve()
     if task_dir != outputs_dir and outputs_dir not in task_dir.parents:
         raise AppError("INVALID_OUTPUT_PATH", "Resolved task directory escapes output directory.", status_code=400)
     if path != task_dir and task_dir not in path.parents:

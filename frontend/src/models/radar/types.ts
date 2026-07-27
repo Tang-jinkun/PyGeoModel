@@ -48,6 +48,9 @@ export interface RadarModelMetadata {
   radar_equation_max_range_m?: number | null;
   effective_max_range_m: number;
   beam_clip_profile: BeamClipProfile | null;
+  range_basis?: "radar_equation" | "nominal";
+  reference_rcs_m2?: number;
+  scene3d?: Record<string, any> | null;
 }
 export interface RadarDiagnostics {
   radar_equation_active: boolean;

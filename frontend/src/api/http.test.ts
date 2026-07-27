@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ApiError, requestJson, resolveAssetUrl } from "./http";
+import { ApiError, requestJson, resolveApiUrl, resolveAssetUrl } from "./http";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -32,7 +32,29 @@ describe("requestJson", () => {
     }));
   });
 
-  it("resolves relative output URLs", () => {
-    expect(resolveAssetUrl("/outputs/a.geojson")).toBe("/outputs/a.geojson");
+  it.each([
+    ["", "/api/health", "/api/health"],
+    ["/PyGeoModel/", "/api/health", "/PyGeoModel/api/health"],
+    ["http://124.221.208.30:8000/", "/api/health", "http://124.221.208.30:8000/api/health"]
+  ])("resolves API base %s", (base, path, expected) => {
+    expect(resolveApiUrl(path, { apiBaseUrl: base })).toBe(expected);
+  });
+
+  it("preserves map template placeholders", () => {
+    expect(resolveApiUrl("/api/tiles/{z}/{x}/{y}", { apiBaseUrl: "/PyGeoModel" }))
+      .toBe("/PyGeoModel/api/tiles/{z}/{x}/{y}");
+  });
+
+  it("rejects raw output paths", () => {
+    expect(() => resolveAssetUrl("/outputs/a.geojson")).toThrow();
+  });
+
+  it("requires an API path below the /api/ prefix", () => {
+    expect(() => resolveApiUrl("/api", { apiBaseUrl: "" })).toThrow();
+  });
+
+  it("keeps an explicitly empty runtime base over the build fallback", () => {
+    expect(resolveApiUrl("/api/health", { apiBaseUrl: "" }, "/build"))
+      .toBe("/api/health");
   });
 });

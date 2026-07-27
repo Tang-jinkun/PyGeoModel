@@ -3,6 +3,38 @@ export interface LoadedHeightLayer {
   blocked: GeoJSON.GeoJSON | null;
 }
 
+export interface HeightLayerManifest {
+  height_layers?: Array<{
+    height_m?: number;
+    visible_kind?: string;
+    blocked_kind?: string;
+    visible_area_m2?: number;
+    blocked_area_m2?: number;
+  }>;
+}
+
+export interface HeightLayerDescriptor {
+  heightM: number;
+  visibleUrl: string;
+  blockedUrl: string | null;
+}
+
+export function resolveHeightLayerDescriptors(
+  manifest: HeightLayerManifest,
+  outputUrls: Readonly<Record<string, string>>
+): HeightLayerDescriptor[] {
+  return (manifest.height_layers ?? []).flatMap((layer) => {
+    if (layer.height_m == null || !layer.visible_kind) return [];
+    const visibleUrl = outputUrls[layer.visible_kind];
+    if (!visibleUrl) return [];
+    return [{
+      heightM: layer.height_m,
+      visibleUrl,
+      blockedUrl: layer.blocked_kind ? outputUrls[layer.blocked_kind] ?? null : null
+    }];
+  });
+}
+
 export function createHeightLayerLoader(
   fetchGeoJson: (url: string) => Promise<GeoJSON.GeoJSON>
 ) {

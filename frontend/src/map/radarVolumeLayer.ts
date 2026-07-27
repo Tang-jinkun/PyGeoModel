@@ -1,15 +1,17 @@
-import maplibregl from "maplibre-gl";
 import * as THREE from "three";
 
 import type { RadarRequest as CoverageRequest } from "../models/radar/types";
 import { createRadiusResolver, type BeamClipProfile } from "./beamClipProfile";
+import { customLayerProjectionMatrix } from "./customLayerProjection";
+import mapEngine from "./mapEngine";
+import type { CustomLayerInterface, Map, MercatorCoordinate } from "./mapEngineTypes";
 
 const RADAR_VOLUME_LAYER_ID = "radar-volume-layer";
 const RADAR_VOLUME_LEGACY_LAYER_PREFIX = `${RADAR_VOLUME_LAYER_ID}-`;
 const RADAR_VOLUME_MAX_SEGMENTS = 72;
 let activeRadarVolumeLayer: RadarVolumeCustomLayer | null = null;
 
-type RadarVolumeCustomLayer = maplibregl.CustomLayerInterface & {
+type RadarVolumeCustomLayer = CustomLayerInterface & {
   update: (request: CoverageRequest, options?: RadarVolumeRenderOptions) => void;
 };
 
@@ -25,7 +27,7 @@ interface RadarVolumeState {
   request: CoverageRequest;
   options: RadarVolumeRenderOptions;
   anchorAltitudeM: number | null;
-  map: maplibregl.Map | null;
+  map: Map | null;
   camera: THREE.Camera | null;
   scene: THREE.Scene | null;
   renderer: THREE.WebGLRenderer | null;
@@ -34,7 +36,7 @@ interface RadarVolumeState {
 }
 
 export function addOrUpdateRadarVolume(
-  map: maplibregl.Map,
+  map: Map,
   request: CoverageRequest,
   options?: Partial<RadarVolumeRenderOptions>
 ) {
@@ -48,9 +50,9 @@ export function addOrUpdateRadarVolume(
   map.addLayer(activeRadarVolumeLayer);
 }
 
-export function removeRadarVolume(map: maplibregl.Map) {
+export function removeRadarVolume(map: Map) {
   removeLayerIfPresent(map, RADAR_VOLUME_LAYER_ID);
-  for (const layer of map.getStyle().layers ?? []) {
+  for (const layer of map.getStyle()?.layers ?? []) {
     if (layer.id.startsWith(RADAR_VOLUME_LEGACY_LAYER_PREFIX)) {
       removeLayerIfPresent(map, layer.id);
     }
@@ -58,7 +60,7 @@ export function removeRadarVolume(map: maplibregl.Map) {
   activeRadarVolumeLayer = null;
 }
 
-function removeLayerIfPresent(map: maplibregl.Map, layerId: string) {
+function removeLayerIfPresent(map: Map, layerId: string) {
   if (map.getLayer(layerId)) {
     map.removeLayer(layerId);
   }
@@ -96,11 +98,11 @@ function createRadarVolumeLayer(
       state.renderer.autoClear = false;
       rebuildMesh(state);
     },
-    render(_gl, matrix) {
+    render(_gl, renderInput) {
       if (!state.map || !state.camera || !state.scene || !state.renderer) {
         return;
       }
-      state.camera.projectionMatrix = new THREE.Matrix4().fromArray(matrix as number[]);
+      state.camera.projectionMatrix = new THREE.Matrix4().fromArray(customLayerProjectionMatrix(renderInput));
       const nextAnchorAltitudeM = getRadarAnchorAltitudeM(state.request, state.map);
       if (state.anchorAltitudeM == null || Math.abs(nextAnchorAltitudeM - state.anchorAltitudeM) > 1) {
         rebuildMesh(state);
@@ -252,7 +254,7 @@ function getCurrentScanAzimuth(shape: VolumeShape, scanMode: CoverageRequest["co
 }
 
 interface VolumeShape {
-  origin: maplibregl.MercatorCoordinate;
+  origin: MercatorCoordinate;
   meter: number;
   maxRadius: number;
   radiusScale: number;
@@ -270,7 +272,7 @@ function getVolumeShape(
   anchorAltitudeM: number,
   clipProfile: BeamClipProfile | null
 ): VolumeShape {
-  const origin = maplibregl.MercatorCoordinate.fromLngLat(
+  const origin = mapEngine.MercatorCoordinate.fromLngLat(
     { lng: request.radar.lon, lat: request.radar.lat },
     anchorAltitudeM
   );
@@ -639,7 +641,7 @@ function getEndAzimuth(request: CoverageRequest) {
   return THREE.MathUtils.degToRad(request.coverage.azimuth_deg + request.coverage.beam_width_deg / 2);
 }
 
-function getRadarAnchorAltitudeM(request: CoverageRequest, map: maplibregl.Map | null) {
+function getRadarAnchorAltitudeM(request: CoverageRequest, map: Map | null) {
   const queryTerrainElevation = map?.queryTerrainElevation?.bind(map);
   const terrainElevation = queryTerrainElevation
     ? queryTerrainElevation({ lng: request.radar.lon, lat: request.radar.lat })

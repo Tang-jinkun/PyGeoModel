@@ -16,6 +16,7 @@ function makeTask(overrides: Partial<RadarTask> = {}): RadarTask {
     task_id: "radar-1",
     dem_id: "dem-1",
     status: "finished",
+    result_state: "ready",
     progress: 100,
     message: "finished",
     request,
@@ -76,11 +77,11 @@ function outputFile(kind: string) {
   return {
     kind,
     label: kind,
-    url: `/view-${kind}`,
-    download_url: `/download-${kind}`,
     filename: kind,
     media_type: "application/octet-stream",
-    exists: true
+    required: true,
+    exists: true,
+    download_path: `/api/radar/coverage/radar-1/outputs/${kind}`
   };
 }
 
@@ -134,35 +135,35 @@ describe("resolveRadarLayerPlan", () => {
     expect(plan?.coverageContractVersion).toBe(1);
   });
 
-  it("prefers existing download URLs and ignores missing output files", () => {
+  it("uses only ready live download paths and ignores legacy URLs", () => {
     const task = makeTask({
       output_files: [
         {
           kind: "voxel_points_bin",
           label: "Voxel points",
-          url: "/view-voxel",
-          download_url: "/download-voxel",
           filename: "voxel.bin",
           media_type: "application/octet-stream",
-          exists: true
+          required: true,
+          exists: true,
+          download_path: "/api/radar/coverage/radar-1/outputs/voxel_points_bin"
         },
         {
           kind: "height_layers_manifest_json",
           label: "Height layers",
-          url: "/view-height",
-          download_url: "",
           filename: "height.json",
           media_type: "application/json",
-          exists: true
+          required: true,
+          exists: true,
+          download_path: "/api/radar/coverage/radar-1/outputs/height_layers_manifest_json"
         },
         {
           kind: "clipped_volume_cells_bin",
           label: "Missing cells",
-          url: "/missing-cells",
-          download_url: "/download-missing",
           filename: "missing.bin",
           media_type: "application/octet-stream",
-          exists: false
+          required: true,
+          exists: false,
+          download_path: "/api/radar/coverage/radar-1/outputs/clipped_volume_cells_bin"
         }
       ]
     });
@@ -170,14 +171,20 @@ describe("resolveRadarLayerPlan", () => {
     const plan = resolveRadarLayerPlan(task, []);
 
     expect(plan?.outputUrls).toEqual({
-      voxel_points_bin: "/download-voxel",
-      height_layers_manifest_json: "/view-height"
+      voxel_points_bin: "/api/radar/coverage/radar-1/outputs/voxel_points_bin",
+      height_layers_manifest_json: "/api/radar/coverage/radar-1/outputs/height_layers_manifest_json"
     });
   });
 
   it("does not create a plan for unfinished tasks or tasks without a request", () => {
     expect(resolveRadarLayerPlan(makeTask({ status: "running" }), [])).toBeNull();
     expect(resolveRadarLayerPlan(makeTask({ request: null }), [])).toBeNull();
+  });
+
+  it("does not expose artifact URLs until result_state is ready", () => {
+    const plan = resolveRadarLayerPlan(makeLayerTask(), []);
+    expect(plan?.outputUrls.voxel_manifest_json).toContain("/api/radar/coverage/");
+    expect(resolveRadarLayerPlan({ ...makeLayerTask(), result_state: "unavailable" }, [])).toBeNull();
   });
 });
 

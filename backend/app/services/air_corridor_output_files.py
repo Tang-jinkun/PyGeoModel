@@ -1,9 +1,9 @@
 from pathlib import Path
-from typing import get_args
-
 from app.core.config import settings
 from app.core.errors import AppError
 from app.schemas.air_corridor import AirCorridorOutputFile, AirCorridorOutputKind
+from app.services.artifact_contracts import get_output_contract
+from app.services.artifact_store import get_artifact_store
 
 
 AIR_CORRIDOR_OUTPUT_FILENAMES: dict[AirCorridorOutputKind, str] = {
@@ -12,6 +12,7 @@ AIR_CORRIDOR_OUTPUT_FILENAMES: dict[AirCorridorOutputKind, str] = {
     "threat_zones_geojson": "threat_zones.geojson",
     "risk_samples_geojson": "risk_samples.geojson",
     "cost_summary_json": "cost_summary.json",
+    "scene_glb": "air_corridor_result.glb",
     "model_metadata_json": "model_metadata.json",
     "output_manifest_json": "output_manifest.json",
 }
@@ -22,6 +23,7 @@ AIR_CORRIDOR_OUTPUT_MEDIA_TYPES: dict[AirCorridorOutputKind, str] = {
     "threat_zones_geojson": "application/geo+json",
     "risk_samples_geojson": "application/geo+json",
     "cost_summary_json": "application/json",
+    "scene_glb": "model/gltf-binary",
     "model_metadata_json": "application/json",
     "output_manifest_json": "application/json",
 }
@@ -32,6 +34,7 @@ AIR_CORRIDOR_OUTPUT_LABELS: dict[AirCorridorOutputKind, str] = {
     "threat_zones_geojson": "Air Defense Threat Zones GeoJSON",
     "risk_samples_geojson": "Air Corridor Risk Samples GeoJSON",
     "cost_summary_json": "Air Corridor Cost Summary JSON",
+    "scene_glb": "Air Corridor 3D Result GLB",
     "model_metadata_json": "Air Corridor Model Metadata JSON",
     "output_manifest_json": "Air Corridor Output Manifest JSON",
 }
@@ -39,11 +42,13 @@ AIR_CORRIDOR_OUTPUT_LABELS: dict[AirCorridorOutputKind, str] = {
 
 def describe_air_corridor_output_file(task_id: str, kind: AirCorridorOutputKind, path: Path) -> AirCorridorOutputFile:
     exists = path.exists()
+    contract = get_output_contract("air_corridor")
+    spec = contract.spec(kind)
+    download_path = contract.download_path_template.format(task_id=task_id, kind=kind)
     return AirCorridorOutputFile(
         kind=kind,
-        label=AIR_CORRIDOR_OUTPUT_LABELS[kind],
-        url=f"/outputs/{task_id}/{path.name}",
-        download_url=f"/api/air-corridor/planning/{task_id}/outputs/{kind}",
+        label=spec.label, url=None, download_path=download_path if exists else None,
+        download_url=download_path if exists else None,
         filename=path.name,
         media_type=AIR_CORRIDOR_OUTPUT_MEDIA_TYPES[kind],
         size_bytes=path.stat().st_size if exists else None,
@@ -56,22 +61,18 @@ def describe_air_corridor_output_files(task_id: str, files: dict[AirCorridorOutp
 
 
 def list_air_corridor_task_output_files(task_id: str) -> list[AirCorridorOutputFile]:
-    return describe_air_corridor_output_files(
-        task_id,
-        {kind: resolve_air_corridor_task_output_path(task_id, kind) for kind in get_args(AirCorridorOutputKind)},
-    )
+    return [AirCorridorOutputFile.model_validate(item.model_dump()) for item in get_artifact_store().list_descriptors(task_id, get_output_contract("air_corridor"))]
 
 
 def resolve_air_corridor_task_output_path(task_id: str, kind: AirCorridorOutputKind) -> Path:
-    if kind not in AIR_CORRIDOR_OUTPUT_FILENAMES:
-        raise AppError("OUTPUT_KIND_NOT_FOUND", f"Output kind '{kind}' is not supported.", status_code=404)
+    spec = get_output_contract("air_corridor").spec(kind)
 
     from app.services.air_corridor_task_store import validate_air_corridor_task_id
 
     validate_air_corridor_task_id(task_id)
     outputs_dir = settings.outputs_dir.resolve()
     task_dir = (settings.outputs_dir / task_id).resolve()
-    path = (task_dir / AIR_CORRIDOR_OUTPUT_FILENAMES[kind]).resolve()
+    path = (task_dir / spec.filename).resolve()
     if task_dir != outputs_dir and outputs_dir not in task_dir.parents:
         raise AppError("INVALID_OUTPUT_PATH", "Resolved task directory escapes output directory.", status_code=400)
     if path != task_dir and task_dir not in path.parents:

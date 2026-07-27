@@ -9,18 +9,16 @@ from rasterio.transform import from_origin
 from shapely.geometry import Point
 
 from app.core.config import settings
-from app.core.errors import AppError
 from app.schemas.radar import CoverageMetrics, CoverageModelMetadata, CoverageOutputFile, CoverageRequest
 from app.services.coverage_model import PreparedCoverageDem
 from app.services.output_files import OUTPUT_FILENAMES, describe_output_files
+from app.workers import coverage_task
 from app.workers.coverage_task import (
     _beam_clip_profile_for_range,
     _build_coverage_metrics,
-    _commit_staged_outputs,
     _coverage_masks,
     _dem_coverage_ratio,
-    _ensure_finished_outputs_exist,
-    _ensure_staged_outputs_exist,
+    build_coverage_artifacts,
     _generate_height_layers,
     _write_feature_collection,
     _write_json_atomic,
@@ -28,6 +26,82 @@ from app.workers.coverage_task import (
     _write_text_atomic,
     _write_vector_outputs,
 )
+
+
+def test_build_coverage_artifacts_cleans_staging_without_partial_publication(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings.data_dir = tmp_path
+    settings.ensure_directories()
+    payload = CoverageRequest.model_validate(
+        {
+            "dem_id": "dem_worker",
+            "radar": {"lon": 79.0, "lat": 31.5, "height_m": 30},
+            "coverage": {"max_range_m": 1_000},
+        }
+    )
+    prepared = PreparedCoverageDem(
+        source_dem=tmp_path / "source.tif",
+        projected_dem=tmp_path / "projected.tif",
+        target_epsg=32644,
+        radar_x=0,
+        radar_y=0,
+        projected_bounds=BoundingBox(-1_000, -1_000, 1_000, 1_000),
+        resolution_m=(100, 100),
+        dem_coverage_ratio=1,
+    )
+    ground_viewshed_path: Path | None = None
+    writer_min_height_path: Path | None = None
+    writer_saw_staged_raster = False
+
+    def fake_viewshed(dem, output, radar_x, radar_y, request, *, mode):
+        nonlocal ground_viewshed_path
+        output.touch()
+        if mode == "GROUND":
+            ground_viewshed_path = output
+        return ["gdal_viewshed", mode]
+
+    def spy_radar_writer(path, **kwargs):
+        nonlocal writer_min_height_path, writer_saw_staged_raster
+        writer_min_height_path = kwargs.get("min_visible_height")
+        writer_saw_staged_raster = (
+            writer_min_height_path is not None and writer_min_height_path.exists()
+        )
+        return {"scan_animation": {"azimuth_deg": []}}
+
+    monkeypatch.setattr(
+        coverage_task,
+        "find_dem_file",
+        lambda dem_id: tmp_path / "source.tif",
+    )
+    monkeypatch.setattr(coverage_task, "prepare_coverage_dem", lambda *args: prepared)
+    monkeypatch.setattr(coverage_task, "_run_gdal_viewshed", fake_viewshed)
+    monkeypatch.setattr(coverage_task, "_generate_height_layers", lambda *args: None)
+    monkeypatch.setattr(coverage_task, "_generate_voxels", lambda *args: None)
+    monkeypatch.setattr(coverage_task, "_generate_clipped_volume", lambda *args: None)
+    monkeypatch.setattr(coverage_task, "write_radar_coverage_glb", spy_radar_writer)
+    monkeypatch.setattr(
+        coverage_task,
+        "write_radar_platform_glb",
+        lambda *args, **kwargs: {},
+    )
+    monkeypatch.setattr(
+        coverage_task,
+        "_write_vector_outputs",
+        lambda *args: (_ for _ in ()).throw(RuntimeError("forced before publish")),
+    )
+
+    with pytest.raises(RuntimeError, match="forced before publish"):
+        build_coverage_artifacts("task_worker_glb", payload, lambda *_: None)
+
+    assert writer_min_height_path == ground_viewshed_path
+    assert writer_min_height_path is not None
+    assert writer_min_height_path.name == "min_visible_height.tif"
+    assert ".staging-" in writer_min_height_path.parent.name
+    assert writer_saw_staged_raster
+    assert not (tmp_path / "outputs" / "task_worker_glb").exists()
+    assert not list((tmp_path / "outputs").glob(".task_worker_glb.staging-*"))
 
 
 def test_coverage_masks_partition_unknown_from_blocked() -> None:
@@ -165,7 +239,6 @@ def test_write_vector_outputs_assigns_current_coverage_contract(tmp_path: Path) 
     settings.ensure_directories()
     staging_dir = tmp_path / ".staging"
     staging_dir.mkdir()
-    output_dir = settings.outputs_dir / "task_new"
     for filename in OUTPUT_FILENAMES.values():
         (staging_dir / filename).write_bytes(b"placeholder")
 
@@ -210,7 +283,6 @@ def test_write_vector_outputs_assigns_current_coverage_contract(tmp_path: Path) 
     _, _, _, model, _, _ = _write_vector_outputs(
         "task_new",
         staging_dir,
-        output_dir,
         prepared,
         request,
         staging_dir / "viewshed.tif",
@@ -218,7 +290,7 @@ def test_write_vector_outputs_assigns_current_coverage_contract(tmp_path: Path) 
         ["gdal_viewshed"],
     )
 
-    metadata = json.loads((output_dir / "model_metadata.json").read_text(encoding="utf-8"))
+    metadata = json.loads((staging_dir / "model_metadata.json").read_text(encoding="utf-8"))
     assert model.coverage_contract_version == 2
     assert metadata["model"]["coverage_contract_version"] == 2
 
@@ -364,95 +436,6 @@ def test_output_manifest_can_describe_all_public_outputs(tmp_path: Path) -> None
     assert [item["kind"] for item in payload["files"]] == list(OUTPUT_FILENAMES)
 
 
-def test_ensure_finished_outputs_exist_rejects_missing_file() -> None:
-    files = [
-        CoverageOutputFile(
-            kind="blocked_geojson",
-            label="Blocked Area GeoJSON",
-            url="/outputs/task_a/blocked.geojson",
-            download_url="/api/radar/coverage/task_a/outputs/blocked_geojson",
-            filename="blocked.geojson",
-            media_type="application/geo+json",
-            exists=False,
-        )
-    ]
-
-    with pytest.raises(AppError) as exc_info:
-        _ensure_finished_outputs_exist(files)
-
-    assert exc_info.value.code == "OUTPUT_INCOMPLETE"
-    assert "blocked_geojson" in exc_info.value.message
-
-
-def test_ensure_finished_outputs_exist_rejects_empty_file() -> None:
-    files = [
-        CoverageOutputFile(
-            kind="visible_geojson",
-            label="Visible Area GeoJSON",
-            url="/outputs/task_a/visible.geojson",
-            download_url="/api/radar/coverage/task_a/outputs/visible_geojson",
-            filename="visible.geojson",
-            media_type="application/geo+json",
-            size_bytes=0,
-            exists=True,
-        )
-    ]
-
-    with pytest.raises(AppError) as exc_info:
-        _ensure_finished_outputs_exist(files)
-
-    assert exc_info.value.code == "OUTPUT_INCOMPLETE"
-
-
-def test_ensure_staged_outputs_exist_requires_all_public_outputs(tmp_path: Path) -> None:
-    staging_dir = tmp_path / ".staging"
-    staging_dir.mkdir()
-    (staging_dir / "viewshed.tif").write_bytes(b"abc")
-
-    with pytest.raises(AppError) as exc_info:
-        _ensure_staged_outputs_exist(staging_dir)
-
-    assert exc_info.value.code == "OUTPUT_INCOMPLETE"
-    assert "visible_geojson" in exc_info.value.message
-
-
-def test_commit_staged_outputs_replaces_public_outputs(tmp_path: Path) -> None:
-    staging_dir = tmp_path / ".staging"
-    output_dir = tmp_path / "task_a"
-    staging_dir.mkdir()
-    for filename in OUTPUT_FILENAMES.values():
-        (staging_dir / filename).write_text(filename, encoding="utf-8")
-    (staging_dir / "visible_h_0.geojson").write_text("height-layer", encoding="utf-8")
-
-    _ensure_staged_outputs_exist(staging_dir)
-    _commit_staged_outputs(staging_dir, output_dir)
-
-    assert (output_dir / "viewshed.tif").read_text(encoding="utf-8") == "viewshed.tif"
-    assert not (staging_dir / "viewshed.tif").exists()
-    assert all((output_dir / filename).exists() for filename in [
-        "viewshed.tif",
-        "visible.geojson",
-        "blocked.geojson",
-        "radar_range.geojson",
-        "model_metadata.json",
-        "output_manifest.json",
-    ])
-    assert (output_dir / "visible_h_0.geojson").read_text(encoding="utf-8") == "height-layer"
-
-
-def test_commit_staged_outputs_moves_blocked_height_layers(tmp_path: Path) -> None:
-    staging_dir = tmp_path / ".staging"
-    output_dir = tmp_path / "task_a"
-    staging_dir.mkdir()
-    for filename in OUTPUT_FILENAMES.values():
-        (staging_dir / filename).write_text(filename, encoding="utf-8")
-    (staging_dir / "blocked_h_0.geojson").write_text("blocked-height-layer", encoding="utf-8")
-
-    _commit_staged_outputs(staging_dir, output_dir)
-
-    assert (output_dir / "blocked_h_0.geojson").read_text(encoding="utf-8") == "blocked-height-layer"
-
-
 def test_generate_height_layers_writes_visible_and_blocked_manifests(tmp_path: Path) -> None:
     min_visible_height = tmp_path / "min_visible_height.tif"
     data = numpy.array(
@@ -512,9 +495,9 @@ def test_generate_height_layers_writes_visible_and_blocked_manifests(tmp_path: P
 
     manifest = json.loads((tmp_path / "height_layers_manifest.json").read_text(encoding="utf-8"))
     layer = manifest["height_layers"][0]
-    assert layer["visible_filename"] == "visible_h_0.geojson"
-    assert layer["blocked_filename"] == "blocked_h_0.geojson"
+    assert layer["visible_kind"] == "height_visible_0"
+    assert layer["blocked_kind"] == "height_blocked_0"
     assert layer["visible_area_m2"] > 0
     assert layer["blocked_area_m2"] > 0
-    assert (tmp_path / layer["visible_filename"]).exists()
-    assert (tmp_path / layer["blocked_filename"]).exists()
+    assert (tmp_path / "visible_h_0.geojson").exists()
+    assert (tmp_path / "blocked_h_0.geojson").exists()

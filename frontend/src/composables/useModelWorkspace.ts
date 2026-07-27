@@ -1,5 +1,6 @@
 import { computed, reactive, ref, toRaw } from "vue";
 
+import { applyInputSelections, createInputSelections, type ModelInputSelections } from "../models/inputSlots";
 import { getModelDefinition, MODEL_IDS, type ModelId, type ModelRequestMap } from "../models/registry";
 
 export type ModelDrafts = { [K in ModelId]: ModelRequestMap[K] };
@@ -25,6 +26,10 @@ function createDrafts(): ModelDrafts {
 
 export function useModelWorkspace(initialModel: ModelId = "radar") {
   const drafts = reactive(createDrafts());
+  const inputSelections = reactive(Object.fromEntries(MODEL_IDS.map((modelId) => [
+    modelId,
+    createInputSelections(getModelDefinition(modelId).inputSlots)
+  ])) as Record<ModelId, ModelInputSelections>);
   const selectedModel = ref<ModelId>(initialModel);
   const currentDraft = computed<ActiveDraft>({
     get: () => activeDraftFor(selectedModel.value, drafts),
@@ -42,6 +47,19 @@ export function useModelWorkspace(initialModel: ModelId = "radar") {
     for (const modelId of MODEL_IDS) drafts[modelId].dem_id = demId ?? "";
   }
 
+  function inputSelectionsFor(modelId: ModelId): ModelInputSelections {
+    return structuredClone(toRaw(inputSelections[modelId]));
+  }
+
+  function updateInputSelections<K extends ModelId>(modelId: K, next: ModelInputSelections) {
+    inputSelections[modelId] = structuredClone(next);
+    replaceDraft(
+      drafts,
+      modelId,
+      applyInputSelections(cloneRequest(drafts[modelId]), inputSelections[modelId]) as ModelRequestMap[K]
+    );
+  }
+
   function restoreRequest<K extends ModelId>(modelId: K, request: ModelRequestMap[K]) {
     replaceDraft(drafts, modelId, request);
   }
@@ -52,6 +70,8 @@ export function useModelWorkspace(initialModel: ModelId = "radar") {
     currentDraft,
     selectModel,
     setDemForAll,
+    inputSelectionsFor,
+    updateInputSelections,
     restoreRequest
   };
 }

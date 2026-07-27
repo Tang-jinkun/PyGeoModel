@@ -5,6 +5,7 @@ export interface TaskDeleteResult {
   task_id: string;
   deleted_task_record: boolean;
   deleted_output_dir: boolean;
+  errors: string[];
 }
 
 export function createTaskClient<Request extends BaseModelRequest = BaseModelRequest, Metrics = Record<string, unknown>>(basePath: string) {
@@ -14,6 +15,10 @@ export function createTaskClient<Request extends BaseModelRequest = BaseModelReq
     get: (taskId: string) => requestJson<TaskSummary<Request, Metrics>>(`${basePath}/${taskId}`),
     metrics: (taskId: string) => requestJson<Metrics>(`${basePath}/${taskId}/metrics`),
     outputs: (taskId: string) => requestJson<OutputFile[]>(`${basePath}/${taskId}/outputs`),
+    rerun: (taskId: string, idempotencyKey = crypto.randomUUID()) => requestJson<TaskSummary<Request, Metrics>>(
+      `${basePath}/${taskId}/rerun`,
+      { method: "POST", headers: { "Idempotency-Key": idempotencyKey } }
+    ),
     delete: (taskId: string) => requestJson<TaskDeleteResult>(`${basePath}/${taskId}`, { method: "DELETE" })
   };
 }

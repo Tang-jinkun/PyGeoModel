@@ -1,6 +1,8 @@
 from functools import lru_cache
 from pathlib import Path
+from urllib.parse import urlsplit
 
+from pydantic import SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -11,6 +13,26 @@ class Settings(BaseSettings):
     data_dir: Path | None = None
     cors_origins: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173"]
     max_upload_mb: int = 500
+    tianditu_token: SecretStr | None = None
+    tianditu_referer: str | None = None
+
+    @field_validator("tianditu_referer")
+    @classmethod
+    def validate_tianditu_referer(cls, value: str | None) -> str | None:
+        if value is None or not value.strip():
+            return None
+        parsed = urlsplit(value.strip())
+        if (
+            parsed.scheme not in {"http", "https"}
+            or parsed.hostname is None
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.query
+            or parsed.fragment
+            or parsed.path not in {"", "/"}
+        ):
+            raise ValueError("TianDiTu referer must be an HTTP(S) origin")
+        return f"{parsed.scheme}://{parsed.netloc}"
 
     @property
     def resolved_data_dir(self) -> Path:

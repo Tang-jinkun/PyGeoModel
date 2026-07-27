@@ -1,4 +1,5 @@
 import type { ModelDefinition, ValidationIssue } from "../shared";
+import { terrainInputSlot } from "../inputSlots";
 import type { ReconVehicleMetrics, ReconVehicleRequest } from "./types";
 
 export const reconVehicleDefinition = {
@@ -6,6 +7,7 @@ export const reconVehicleDefinition = {
   label: "Recon Vehicle Coverage",
   taskBasePath: "/api/recon-vehicle/coverage",
   spatialInput: "point-or-route",
+  inputSlots: [terrainInputSlot],
   createDefaultRequest: (): ReconVehicleRequest => ({
     dem_id: "",
     vehicle: { lon: 79.80513693057287, lat: 31.4827708959419, heading_deg: 0, mast_height_m: 3 },

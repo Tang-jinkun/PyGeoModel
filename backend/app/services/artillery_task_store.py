@@ -1,7 +1,6 @@
 import json
 import os
 import re
-import shutil
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from json import JSONDecodeError
@@ -20,6 +19,9 @@ from app.schemas.artillery import (
     ArtilleryCoverageTaskSummary,
     ArtilleryModelMetadata,
     ArtilleryOutputFile,
+)
+from app.services.single_task_store import (
+    create_idempotent_rerun, delete_task_resources, hydrate_task, preserve_rerun_metadata,
 )
 
 ARTILLERY_TASK_ID_PATTERN = re.compile(r"^artillery_task_[A-Za-z0-9_-]+$")
@@ -49,6 +51,18 @@ def create_artillery_task(payload: ArtilleryCoverageRequest) -> ArtilleryCoverag
     return task
 
 
+def create_artillery_rerun(original_task_id: str, payload: ArtilleryCoverageRequest, idempotency_key: str) -> tuple[ArtilleryCoverageTaskStatus, bool]:
+    with _task_lock(original_task_id):
+        if not _task_path(original_task_id).exists():
+            raise AppError("TASK_NOT_FOUND", f"Artillery task '{original_task_id}' was not found.", status_code=404)
+        return create_idempotent_rerun(
+            original_task_id=original_task_id, payload=payload, idempotency_key=idempotency_key,
+            task_id_prefix="artillery_task_", record_paths=list(settings.tasks_dir.glob("artillery_task_*.json")),
+            task_type=ArtilleryCoverageTaskStatus, task_path=_task_path, read_record=_read_task_data,
+            write_record=_write_task_data, get_task=get_artillery_task,
+        )
+
+
 def save_artillery_task(task: ArtilleryCoverageTaskStatus, payload: ArtilleryCoverageRequest | None = None) -> None:
     with _task_lock(task.task_id):
         _save_task_unlocked(task, payload)
@@ -64,7 +78,7 @@ def get_artillery_task(task_id: str) -> ArtilleryCoverageTaskStatus:
         task.request = parse_artillery_request(payload) or task.request
         if task.dem_id is None and task.request:
             task.dem_id = task.request.dem_id
-        return task
+        return hydrate_task(task, "artillery")
 
 
 def list_artillery_tasks() -> list[ArtilleryCoverageTaskSummary]:
@@ -77,7 +91,7 @@ def list_artillery_tasks() -> list[ArtilleryCoverageTaskSummary]:
             continue
         if task.dem_id is None and isinstance(payload, dict):
             task.dem_id = payload.get("dem_id")
-        tasks.append(task)
+        tasks.append(hydrate_task(task, "artillery"))
     return sorted(tasks, key=lambda item: item.created_at or item.task_id, reverse=True)
 
 
@@ -122,23 +136,17 @@ def mark_artillery_failed(task_id: str, message: str) -> None:
 
 def delete_artillery_task(task_id: str) -> ArtilleryCoverageTaskDeleteResult:
     with _task_lock(task_id):
-        task = get_artillery_task(task_id)
-        if task.status in {"pending", "running"}:
-            raise AppError("TASK_ACTIVE", "Pending or running artillery tasks cannot be deleted.", status_code=409)
         task_path = _task_path(task_id)
-        output_dir = _task_output_dir(task_id)
-        deleted_task_record = False
-        deleted_output_dir = False
         if task_path.exists():
-            task_path.unlink()
-            deleted_task_record = True
-        if output_dir.exists():
-            shutil.rmtree(output_dir)
-            deleted_output_dir = True
+            task = get_artillery_task(task_id)
+            if task.status in {"pending", "running"}:
+                raise AppError("TASK_ACTIVE", "Pending or running artillery tasks cannot be deleted.", status_code=409)
+        deleted_task_record, deleted_output_dir, errors = delete_task_resources(task_id, task_path)
         return ArtilleryCoverageTaskDeleteResult(
             task_id=task_id,
             deleted_task_record=deleted_task_record,
             deleted_output_dir=deleted_output_dir,
+            errors=errors,
         )
 
 
@@ -185,7 +193,9 @@ def _save_task_unlocked(task: ArtilleryCoverageTaskStatus, payload: ArtilleryCov
         data["payload"] = payload.model_dump()
     elif task.request is not None:
         data["payload"] = task.request.model_dump()
-    _write_task_data(_task_path(task.task_id), data)
+    path = _task_path(task.task_id)
+    preserve_rerun_metadata(data, path, _read_task_data)
+    _write_task_data(path, data)
 
 
 def _task_path(task_id: str) -> Path:

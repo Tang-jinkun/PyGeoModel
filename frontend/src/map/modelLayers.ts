@@ -1,7 +1,6 @@
-import type maplibregl from "maplibre-gl";
-
 import type { ModelId, OutputLayerDefinition } from "../models/shared";
 import { fitGeoJsonBounds } from "./mapLayers";
+import type { GeoJSONSource, LayerSpecification, Map as MapInstance } from "./mapEngineTypes";
 
 type GeoJsonData = string | GeoJSON.GeoJSON;
 
@@ -15,7 +14,7 @@ interface RegisteredLayer extends ModelLayerIds {
   data: GeoJsonData;
 }
 
-const layerRegistry = new WeakMap<maplibregl.Map, Map<string, RegisteredLayer>>();
+const layerRegistry = new WeakMap<MapInstance, Map<string, RegisteredLayer>>();
 
 export function getModelLayerIds(
   modelId: ModelId,
@@ -31,14 +30,14 @@ export function getModelLayerIds(
 }
 
 export function upsertModelGeoJsonLayer(
-  map: maplibregl.Map,
+  map: MapInstance,
   modelId: ModelId,
   taskId: string,
   definition: OutputLayerDefinition,
   data: GeoJsonData
 ): ModelLayerIds {
   const ids = getModelLayerIds(modelId, taskId, definition.kind);
-  const source = map.getSource(ids.sourceId) as maplibregl.GeoJSONSource | undefined;
+  const source = map.getSource(ids.sourceId) as GeoJSONSource | undefined;
 
   if (source) {
     source.setData(data);
@@ -55,7 +54,7 @@ export function upsertModelGeoJsonLayer(
 }
 
 export function setModelLayerVisibility(
-  map: maplibregl.Map,
+  map: MapInstance,
   modelId: ModelId,
   taskId: string,
   kind: string,
@@ -68,7 +67,7 @@ export function setModelLayerVisibility(
 }
 
 export function setModelLayerOpacity(
-  map: maplibregl.Map,
+  map: MapInstance,
   modelId: ModelId,
   taskId: string,
   definition: OutputLayerDefinition,
@@ -84,7 +83,7 @@ export function setModelLayerOpacity(
 }
 
 export function focusModelLayer(
-  map: maplibregl.Map,
+  map: MapInstance,
   modelId: ModelId,
   taskId: string,
   kind: string
@@ -107,7 +106,7 @@ export function focusModelLayer(
   });
 }
 
-export function removeTaskLayers(map: maplibregl.Map, modelId: ModelId, taskId: string) {
+export function removeTaskLayers(map: MapInstance, modelId: ModelId, taskId: string) {
   const taskPrefix = `${modelId}-${taskId}-`;
   const registry = layerRegistry.get(map);
   const entries = [...(registry?.values() ?? [])].filter(({ prefix }) => prefix.startsWith(taskPrefix));
@@ -129,7 +128,7 @@ export function removeTaskLayers(map: maplibregl.Map, modelId: ModelId, taskId: 
   }
 }
 
-function registryFor(map: maplibregl.Map): Map<string, RegisteredLayer> {
+function registryFor(map: MapInstance): Map<string, RegisteredLayer> {
   const existing = layerRegistry.get(map);
   if (existing) return existing;
   const created = new Map<string, RegisteredLayer>();
@@ -140,7 +139,7 @@ function registryFor(map: maplibregl.Map): Map<string, RegisteredLayer> {
 function createLayerSpecification(
   ids: ModelLayerIds,
   definition: OutputLayerDefinition
-): maplibregl.LayerSpecification {
+): LayerSpecification {
   if (definition.geometry === "line") {
     return {
       id: ids.layerId,

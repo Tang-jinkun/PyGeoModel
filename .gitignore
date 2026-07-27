@@ -22,6 +22,7 @@ data/dem/*
 data/tasks/*
 data/outputs/*
 data/uploads/*
+data/demo-scenarios/*
 !data/dem/.gitkeep
 !data/tasks/.gitkeep
 !data/outputs/.gitkeep

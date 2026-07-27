@@ -1,15 +1,29 @@
 import { mount } from "@vue/test-utils";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import type { StyleSpecification } from "../../map/mapEngineTypes";
 import { createSpatialDraft } from "../../map/spatialInput";
 import MapWorkspace from "./MapWorkspace.vue";
+
+const demA = {
+  dem_id: "dem-a",
+  filename: "a.tif",
+  crs: "EPSG:4326",
+  bounds: [-180, -90, 180, 90],
+  resolution: [30, 30],
+  width: 100,
+  height: 100,
+  nodata: null,
+  task_count: 0,
+  active_task_count: 0
+};
 
 const mapHarness = vi.hoisted(() => {
   const instances: FakeMap[] = [];
   return { instances, constructor: vi.fn() };
 });
 
-vi.mock("maplibre-gl", () => ({
+vi.mock("../../map/mapEngine", () => ({
   default: {
     Map: class {
       constructor(options: unknown) {
@@ -33,6 +47,67 @@ beforeEach(() => {
 });
 
 describe("MapWorkspace", () => {
+  it("passes a caller-provided local style object through unchanged", () => {
+    const explicitStyle: StyleSpecification = {
+      version: 8,
+      sources: {
+        workspace: {
+          type: "geojson",
+          data: {
+            type: "FeatureCollection",
+            features: []
+          }
+        }
+      },
+      layers: [{
+        id: "workspace-fill",
+        type: "fill",
+        source: "workspace",
+        paint: {
+          "fill-color": "#2563eb",
+          "fill-opacity": 0.15
+        }
+      }]
+    };
+    const wrapper = mount(MapWorkspace, {
+      props: {
+        kind: "point",
+        draft: createSpatialDraft("point"),
+        mapStyle: explicitStyle
+      }
+    });
+    const map = mapHarness.instances[0];
+    const style = (map.options as { style: unknown }).style;
+
+    expect(style).toBe(explicitStyle);
+    expect(style).not.toStrictEqual({
+      version: 8,
+      sources: {},
+      layers: []
+    });
+
+    wrapper.unmount();
+  });
+
+  it("uses the TianDiTu base style by default", () => {
+    const wrapper = mount(MapWorkspace, {
+      props: {
+        kind: "point",
+        draft: createSpatialDraft("point")
+      }
+    });
+    const map = mapHarness.instances[0];
+    const style = (map.options as { style: unknown }).style;
+
+    expect(style).toMatchObject({
+      version: 8,
+      sources: { tianditu_vector: { type: "raster" }, tianditu_annotation: { type: "raster" } },
+      layers: [{ id: "tianditu_vector" }, { id: "tianditu_annotation" }]
+    });
+
+    wrapper.unmount();
+  });
+
   it("creates one map, emits normalized route edits, resizes after transitions, and removes on unmount", async () => {
     const host = document.createElement("div");
     host.className = "workspace-shell";
@@ -42,7 +117,8 @@ describe("MapWorkspace", () => {
       props: {
         kind: "point-or-route",
         draft: createSpatialDraft("point-or-route"),
-        editing: true
+        editing: true,
+        dem: demA
       }
     });
     const map = mapHarness.instances[0];
@@ -68,7 +144,8 @@ describe("MapWorkspace", () => {
       props: {
         kind: "start-end",
         draft: createSpatialDraft("start-end"),
-        editing: true
+        editing: true,
+        dem: demA
       }
     });
     const map = mapHarness.instances[0];
@@ -92,6 +169,7 @@ describe("MapWorkspace", () => {
         kind: "start-end-threats",
         draft: createSpatialDraft("start-end-threats"),
         editing: true,
+        dem: demA,
         editTarget: "threat"
       }
     });
@@ -105,30 +183,75 @@ describe("MapWorkspace", () => {
     }]);
   });
 
-  it("always renders finish, undo, and clear commands while editing", () => {
+  it("leaves editing commands to the parent map-pick bar", () => {
     const wrapper = mount(MapWorkspace, {
       props: {
         kind: "point",
         draft: createSpatialDraft("point"),
-        editing: true
+        editing: true,
+        dem: demA
       }
     });
 
-    expect(wrapper.get('[data-action="finish-editing"]')).toBeTruthy();
-    expect(wrapper.get('[data-action="undo-editing"]')).toBeTruthy();
-    expect(wrapper.get('[data-action="clear-editing"]')).toBeTruthy();
+    expect(wrapper.find('[data-action="finish-editing"]').exists()).toBe(false);
+  });
+
+  it("runs custom layer cleanup when the map is removed", () => {
+    const wrapper = mount(MapWorkspace, {
+      props: {
+        kind: "point",
+        draft: createSpatialDraft("point")
+      }
+    });
+    const map = mapHarness.instances[0];
+    const onRemove = vi.fn();
+    map.addLayer({ id: "custom-scene", onRemove });
+
+    wrapper.unmount();
+
+    expect(onRemove).toHaveBeenCalledOnce();
+  });
+
+  it("does not reinstall unchanged DEM terrain but does sync a new DEM", async () => {
+    const wrapper = mount(MapWorkspace, {
+      props: {
+        kind: "point",
+        draft: createSpatialDraft("point"),
+        dem: demA
+      }
+    });
+    const map = mapHarness.instances[0];
+    map.emit("load", undefined);
+    expect(map.setTerrain).toHaveBeenCalledTimes(2);
+
+    await wrapper.setProps({ dem: { ...demA } });
+    expect(map.setTerrain).toHaveBeenCalledTimes(2);
+
+    await wrapper.setProps({ dem: { ...demA, dem_id: "dem-b", filename: "b.tif" } });
+    expect(map.setTerrain).toHaveBeenCalledTimes(4);
   });
 });
 
 class FakeMap {
   handlers = new Map<string, (event?: never) => void>();
   resize = vi.fn();
-  remove = vi.fn();
+  layers = new Map<string, { id: string; onRemove?: () => void }>();
+  remove = vi.fn(() => {
+    for (const layer of this.layers.values()) layer.onRemove?.();
+    this.layers.clear();
+  });
   addControl = vi.fn();
   addSource = vi.fn();
   getSource = vi.fn();
-  getLayer = vi.fn();
-  removeLayer = vi.fn();
+  getLayer = vi.fn((id: string) => this.layers.get(id));
+  addLayer = vi.fn((layer: { id: string; onRemove?: () => void }) => {
+    this.layers.set(layer.id, layer);
+  });
+  removeLayer = vi.fn((id: string) => {
+    const layer = this.layers.get(id);
+    layer?.onRemove?.();
+    this.layers.delete(id);
+  });
   removeSource = vi.fn();
   setTerrain = vi.fn();
 

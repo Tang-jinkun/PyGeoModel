@@ -1,25 +1,11 @@
 <template>
   <section ref="workspace" class="map-workspace" aria-label="Interactive map">
     <div ref="mapContainer" class="map-workspace__canvas"></div>
-    <div v-if="editing" class="map-workspace__toolbar" role="toolbar" aria-label="Map editing commands">
-      <ElTooltip content="Finish editing" :show-after="300">
-        <ElButton circle :icon="Check" data-action="finish-editing" aria-label="Finish editing" @click="emit('finish')" />
-      </ElTooltip>
-      <ElTooltip content="Undo edit" :show-after="300">
-        <ElButton circle :icon="RefreshLeft" data-action="undo-editing" aria-label="Undo edit" @click="emitCommand('undo')" />
-      </ElTooltip>
-      <ElTooltip content="Clear spatial input" :show-after="300">
-        <ElButton circle :icon="Delete" data-action="clear-editing" aria-label="Clear spatial input" @click="emitCommand('clear')" />
-      </ElTooltip>
-    </div>
   </section>
 </template>
 
 <script setup lang="ts">
-import { Check, Delete, RefreshLeft } from "@element-plus/icons-vue";
-import { ElButton, ElTooltip } from "element-plus";
-import maplibregl from "maplibre-gl";
-import { onBeforeUnmount, onMounted, ref, shallowRef, watch } from "vue";
+import { onBeforeUnmount, onMounted, ref, shallowRef, toRaw, watch } from "vue";
 
 import { demTerrainUrlTemplate, demTileUrlTemplate, type DemMetadata } from "../../api/dem";
 import {
@@ -35,6 +21,10 @@ import type {
   SpatialDraftAction
 } from "../../map/spatialInput";
 import type { SpatialInputKind } from "../../models/shared";
+import mapEngine from "../../map/mapEngine";
+import type { Map, MapMouseEvent, StyleSpecification } from "../../map/mapEngineTypes";
+import { createTiandituStyle } from "../../map/tiandituStyle";
+import { isCoordinateInDemBounds } from "../../map/mapPickPolicy";
 
 type EditTarget = "auto" | "point" | "route" | "start" | "end" | "threat";
 
@@ -45,7 +35,7 @@ const props = withDefaults(defineProps<{
   editTarget?: EditTarget;
   activeThreatId?: string | null;
   dem?: DemMetadata | null;
-  mapStyle?: string | maplibregl.StyleSpecification;
+  mapStyle?: string | StyleSpecification;
   center?: SpatialCoordinate;
   zoom?: number;
 }>(), {
@@ -53,7 +43,7 @@ const props = withDefaults(defineProps<{
   editTarget: "auto",
   activeThreatId: null,
   dem: null,
-  mapStyle: "https://demotiles.maplibre.org/style.json",
+  mapStyle: (): StyleSpecification => createTiandituStyle() as StyleSpecification,
   center: () => [79.80513693057287, 31.4827708959419],
   zoom: 8
 });
@@ -61,30 +51,30 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{
   "coordinate-edit": [coordinate: SpatialCoordinate];
   "spatial-edit": [action: SpatialDraftAction];
-  "map-ready": [map: maplibregl.Map];
-  finish: [];
-  undo: [];
-  clear: [];
+  "map-ready": [map: Map];
+  "out-of-bounds": [coordinate: SpatialCoordinate];
 }>();
 
 const workspace = ref<HTMLElement | null>(null);
 const mapContainer = ref<HTMLDivElement | null>(null);
-const map = shallowRef<maplibregl.Map | null>(null);
+const map = shallowRef<Map | null>(null);
 let resizeObserver: ResizeObserver | null = null;
 let transitionTarget: Element | null = null;
 let styleLoaded = false;
+let lastSyncedDemId: string | null = null;
+let lastSyncedTerrainUrl: string | null = null;
 
 onMounted(() => {
   if (!mapContainer.value || map.value) return;
 
-  const instance = new maplibregl.Map({
+  const instance = new mapEngine.Map({
     container: mapContainer.value,
-    style: props.mapStyle,
+    style: typeof props.mapStyle === "string" ? props.mapStyle : toRaw(props.mapStyle),
     center: props.center,
     zoom: props.zoom
   });
   map.value = instance;
-  instance.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), "top-right");
+  instance.addControl(new mapEngine.NavigationControl({ visualizePitch: true }), "top-right");
   instance.on("click", handleMapClick);
   instance.on("load", handleMapLoad);
   emit("map-ready", instance);
@@ -119,19 +109,29 @@ function handleMapLoad() {
   syncDem(map.value, props.dem);
 }
 
-function syncDem(instance: maplibregl.Map, dem: DemMetadata | null) {
+function syncDem(instance: Map, dem: DemMetadata | null) {
   if (!dem || dem.bounds.length !== 4) {
     removeDemTerrain(instance);
     removeDemRasterLayer(instance);
+    lastSyncedDemId = null;
+    lastSyncedTerrainUrl = null;
     return;
   }
+  const terrainUrl = demTerrainUrlTemplate(dem.dem_id);
+  if (lastSyncedDemId === dem.dem_id && lastSyncedTerrainUrl === terrainUrl) return;
   addOrUpdateDemRasterLayer(instance, demTileUrlTemplate(dem.dem_id), dem.bounds);
-  addOrUpdateDemTerrain(instance, demTerrainUrlTemplate(dem.dem_id), dem.bounds);
+  addOrUpdateDemTerrain(instance, terrainUrl, dem.bounds);
+  lastSyncedDemId = dem.dem_id;
+  lastSyncedTerrainUrl = terrainUrl;
 }
 
-function handleMapClick(event: maplibregl.MapMouseEvent) {
+function handleMapClick(event: MapMouseEvent) {
   if (!props.editing) return;
   const coordinate = normalizeCoordinate([event.lngLat.lng, event.lngLat.lat]);
+  if (!props.dem || !isCoordinateInDemBounds(coordinate, props.dem.bounds)) {
+    emit("out-of-bounds", coordinate);
+    return;
+  }
   emit("coordinate-edit", coordinate);
   const action = actionForCoordinate(coordinate);
   if (action) emit("spatial-edit", action);
@@ -161,15 +161,6 @@ function normalizeCoordinate([longitude, latitude]: SpatialCoordinate): SpatialC
 
 function roundCoordinate(value: number) {
   return Math.round(value * 1_000_000) / 1_000_000;
-}
-
-function emitCommand(type: "undo" | "clear") {
-  if (type === "undo") {
-    emit("undo");
-  } else {
-    emit("clear");
-  }
-  emit("spatial-edit", { type });
 }
 
 function resizeAfterTransition() {
@@ -202,17 +193,4 @@ defineExpose({ map, resize, focusBounds });
   inset: 0;
 }
 
-.map-workspace__toolbar {
-  position: absolute;
-  z-index: 2;
-  top: 10px;
-  left: 10px;
-  display: flex;
-  gap: 4px;
-  padding: 4px;
-  border: 1px solid #dcdfe6;
-  border-radius: 6px;
-  background: #ffffff;
-  box-shadow: 0 1px 4px rgb(0 0 0 / 14%);
-}
 </style>
