@@ -37,7 +37,25 @@ describe("WorkbenchTaskCenter", () => {
 
     await wrapper.get("[data-multi-radar-task]").trigger("click");
     expect(wrapper.get("[data-multi-radar-task]").text()).toContain("已完成");
-    expect(wrapper.emitted("select-multi-radar-task")?.[0]).toEqual(["multi-1"]);
+    expect(wrapper.emitted("select-multi-radar-task")?.[0]).toEqual(["multi-1", "layers"]);
+  });
+
+  it("renders terminal multi-radar layer and file actions", async () => {
+    const wrapper = mount(WorkbenchTaskCenter, {
+      props: { rows: [], activeTab: "history", multiRadarTasks: [multiRadarTask("finished")] }
+    });
+
+    const row = wrapper.get("[data-multi-radar-task]");
+    expect(row.classes()).toContain("is-terminal");
+    expect(row.find(".progress").exists()).toBe(false);
+
+    await row.get('[data-action="layers"]').trigger("click");
+    await row.get('[data-action="files"]').trigger("click");
+
+    expect(wrapper.emitted("select-multi-radar-task")).toEqual([
+      ["multi-1", "layers"],
+      ["multi-1", "files"]
+    ]);
   });
 });
 
