@@ -546,6 +546,8 @@ function selectWorkbenchModel(modelId: ModelId) {
 }
 
 function selectWorkbenchTask(modelId: ModelId, taskId: string) {
+  const task = taskManager.getTask(modelId, taskId) as GenericTask | undefined;
+  if (task?.dem_id) demManager.select(task.dem_id);
   selectedMultiRadarResultTask.value = null;
   taskManager.select(modelId, taskId);
   presentation.selectTask();

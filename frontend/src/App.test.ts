@@ -2,6 +2,7 @@ import { flushPromises, mount } from "@vue/test-utils";
 import { defineComponent, h } from "vue";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { listDems } from "./api/dem";
 import App from "./App.vue";
 
 vi.mock("./api/dem", () => ({
@@ -9,7 +10,7 @@ vi.mock("./api/dem", () => ({
   demTileUrlTemplate: vi.fn(() => ""), demTerrainUrlTemplate: vi.fn(() => "")
 }));
 vi.mock("./api/tasks", () => ({
-  createTaskClient: vi.fn(() => ({ create: vi.fn(), get: vi.fn(), list: vi.fn(), metrics: vi.fn(), delete: vi.fn() }))
+  createTaskClient: vi.fn(() => ({ create: vi.fn(), get: vi.fn(), list: vi.fn(async () => [finishedRadarTask()]), metrics: vi.fn(), outputs: vi.fn(async () => []), delete: vi.fn() }))
 }));
 vi.mock("./api/multiRadar", () => ({
   listMultiRadarTasks: vi.fn(async () => [finishedMultiRadarTask()]),
@@ -98,6 +99,18 @@ describe("App model run workflow", () => {
         "coverage_count_geojson"
       ]));
   });
+
+  it("restores the selected radar task DEM before opening its results", async () => {
+    vi.mocked(listDems).mockResolvedValueOnce([dem()]);
+    const wrapper = mountApp();
+    await flushPromises();
+
+    await wrapper.findAll(".task-tab").find((tab) => tab.text().includes("历史记录"))!.trigger("click");
+    await wrapper.get('[data-task-key="radar:task-1"]').trigger("click");
+    await flushPromises();
+
+    expect(wrapper.get("[data-workbench-region='topbar']").text()).toContain("Task DEM");
+  });
 });
 
 function mountApp() {
@@ -134,5 +147,36 @@ function multiRadarOutputFile() {
     required: true,
     exists: true,
     download_path: "/api/radar/multi-coverage/multi-1/outputs/visible_union_geojson"
+  };
+}
+
+function finishedRadarTask() {
+  return {
+    task_id: "task-1",
+    dem_id: "dem-1",
+    status: "finished" as const,
+    result_state: "ready" as const,
+    progress: 100,
+    message: "done",
+    output_files: [],
+    warnings: [],
+    metrics: null
+  };
+}
+
+function dem() {
+  return {
+    dem_id: "dem-1",
+    filename: "Task DEM",
+    crs: "EPSG:4326",
+    bounds: [79, 31, 80, 32],
+    width: 10,
+    height: 10,
+    resolution: [30, 30],
+    nodata: null,
+    min_elevation: 0,
+    max_elevation: 1,
+    task_count: 0,
+    active_task_count: 0
   };
 }
