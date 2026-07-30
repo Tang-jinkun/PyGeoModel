@@ -8,6 +8,7 @@ from skimage import measure
 
 from app.scene3d.exporter import MaterialSpec, SceneNode, export_glb
 from app.scene3d.frame import SceneFrame
+from app.services.coverage_model import PROJECTED_DEM_NODATA
 
 
 UNION_MATERIAL = MaterialSpec("fusion_union_jade", (31, 138, 112, 72), shading="unlit", emissive_rgb=(18, 82, 66))
@@ -52,7 +53,7 @@ def accumulate_fusion_height_counts(masks) -> numpy.ndarray:
 
 
 def write_multi_radar_fusion_glb(path: Path, *, task_id: str, counts: FusionHeightCounts) -> dict:
-    counts = replace(counts, terrain_m=_fill_non_finite_terrain(counts.terrain_m))
+    counts = replace(counts, terrain_m=_fill_invalid_terrain(counts.terrain_m))
     nodes: list[SceneNode] = []
     frame = _fusion_frame(counts)
     for threshold, name, material in (
@@ -88,7 +89,7 @@ def write_cooperative_intersection_glb(
     task_id: str,
     counts: FusionHeightCounts,
 ) -> dict | None:
-    counts = replace(counts, terrain_m=_fill_non_finite_terrain(counts.terrain_m))
+    counts = replace(counts, terrain_m=_fill_invalid_terrain(counts.terrain_m))
     frame = _fusion_frame(counts)
     mesh = _coverage_mesh(counts, threshold=2, frame=frame)
     if mesh is None:
@@ -116,19 +117,28 @@ def write_cooperative_intersection_glb(
     return metadata
 
 
-def _fill_non_finite_terrain(terrain_m: numpy.ndarray) -> numpy.ndarray:
-    terrain = numpy.asarray(terrain_m, dtype=numpy.float32)
-    finite = numpy.isfinite(terrain)
-    if not finite.any():
-        raise ValueError("Fusion GLB requires at least one finite terrain elevation.")
-    if finite.all():
+def _fill_invalid_terrain(terrain_m: numpy.ndarray) -> numpy.ndarray:
+    masked = numpy.ma.asarray(terrain_m, dtype=numpy.float32)
+    terrain = numpy.asarray(masked.data, dtype=numpy.float32)
+    invalid = (
+        numpy.ma.getmaskarray(masked)
+        | ~numpy.isfinite(terrain)
+        | (terrain == numpy.float32(PROJECTED_DEM_NODATA))
+    )
+    valid = ~invalid
+    if not valid.any():
+        raise ValueError("Fusion GLB requires at least one valid terrain elevation.")
+    if valid.all():
         return terrain
     filled = fillnodata(
-        numpy.where(finite, terrain, 0.0),
-        mask=finite.astype(numpy.uint8),
+        numpy.where(valid, terrain, 0.0),
+        mask=valid.astype(numpy.uint8),
         max_search_distance=float(max(terrain.shape) * 2),
     )
-    if not numpy.isfinite(filled).all():
+    if (
+        not numpy.isfinite(filled).all()
+        or (filled == numpy.float32(PROJECTED_DEM_NODATA)).any()
+    ):
         raise ValueError("Fusion GLB terrain elevations could not be completed.")
     return numpy.asarray(filled, dtype=numpy.float32)
 

@@ -137,10 +137,7 @@ def build_multi_radar_artifacts(
         cooperative_intersection_path = None
         if fusion_masks:
             rows, columns, fusion_transform = fusion_grid_spec(shared)
-            import rasterio
-
-            with rasterio.open(shared.projected_dem) as source:
-                terrain = source.read(1)[numpy.ix_(rows, columns)]
+            terrain = _read_fusion_terrain(shared.projected_dem, rows, columns)
             fusion_counts = FusionHeightCounts(
                 target_epsg=shared.target_epsg,
                 transform=fusion_transform,
@@ -278,6 +275,18 @@ def fusion_grid_spec(shared):
         abs(shared.transform.e) * scale,
     )
     return rows, columns, transform
+
+
+def _read_fusion_terrain(
+    projected_dem: Path,
+    rows: numpy.ndarray,
+    columns: numpy.ndarray,
+) -> numpy.ma.MaskedArray:
+    import rasterio
+
+    with rasterio.open(projected_dem) as source:
+        terrain = source.read(1, masked=True)
+    return terrain[rows][:, columns]
 
 
 def _station_fusion_masks(shared, data, local_transform, local_domain, radar_x, radar_y, request):

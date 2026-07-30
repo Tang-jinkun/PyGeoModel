@@ -8,6 +8,7 @@ from rasterio.transform import from_origin
 from app.core.config import settings
 from app.schemas.radar import MultiRadarRequest
 from app.services.multi_radar_task_store import create_multi_task, get_multi_task
+from app.services.coverage_model import PROJECTED_DEM_NODATA
 from app.workers import multi_radar_coverage_task
 from app.workers.multi_radar_coverage_task import station_masks_to_shared_grid
 
@@ -120,6 +121,35 @@ def test_station_masks_are_placed_back_on_the_shared_grid(tmp_path: Path) -> Non
         [False, False, False, False],
     ]
     assert theoretical.sum() == 4
+
+
+def test_fusion_terrain_read_preserves_projected_dem_nodata_mask(tmp_path: Path) -> None:
+    projected_dem = tmp_path / "projected.tif"
+    terrain = numpy.array(
+        [[PROJECTED_DEM_NODATA, 1200], [1200, 1200]], dtype=numpy.float32
+    )
+    with rasterio.open(
+        projected_dem,
+        "w",
+        driver="GTiff",
+        width=2,
+        height=2,
+        count=1,
+        dtype="float32",
+        crs="EPSG:32644",
+        transform=from_origin(0, 2, 1, 1),
+        nodata=PROJECTED_DEM_NODATA,
+    ) as destination:
+        destination.write(terrain, 1)
+
+    sampled = multi_radar_coverage_task._read_fusion_terrain(
+        projected_dem,
+        numpy.array([0, 1], dtype=numpy.int32),
+        numpy.array([0, 1], dtype=numpy.int32),
+    )
+
+    assert numpy.ma.isMaskedArray(sampled)
+    assert sampled.mask.tolist() == [[True, False], [False, False]]
 
 
 def test_cooperative_worker_records_a_complete_scene_task_for_each_station(tmp_path: Path, monkeypatch) -> None:

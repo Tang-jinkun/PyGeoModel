@@ -1,15 +1,23 @@
 from pathlib import Path
 
 import numpy
+import pytest
 from rasterio.transform import from_origin
+import trimesh
 
 from app.scene3d.exporter import read_glb_document
+from app.services.coverage_model import PROJECTED_DEM_NODATA
 from app.services.multi_radar_fusion_volume import (
     FusionHeightCounts,
     accumulate_fusion_height_counts,
     write_cooperative_intersection_glb,
     write_multi_radar_fusion_glb,
 )
+
+
+def _glb_vertices(path: Path) -> numpy.ndarray:
+    scene = trimesh.load(path, force="scene")
+    return numpy.vstack([geometry.vertices for geometry in scene.geometry.values()])
 
 
 def test_fusion_height_counts_preserve_overlap_per_height() -> None:
@@ -64,6 +72,28 @@ def test_fusion_glb_fills_non_finite_terrain_samples(tmp_path: Path) -> None:
     assert metadata["kind"] == "multi_radar_fusion"
 
 
+def test_fusion_glb_fills_projected_dem_nodata_sentinel(tmp_path: Path) -> None:
+    counts = FusionHeightCounts(
+        target_epsg=32644,
+        transform=from_origin(400_000, 3_500_000, 100, 100),
+        heights_m=numpy.array([0, 200, 500], dtype=numpy.float32),
+        coverage_count=numpy.ones((3, 3, 3), dtype=numpy.uint16),
+        terrain_m=numpy.array([
+            [PROJECTED_DEM_NODATA, 1200, 1200],
+            [1200, 1200, 1200],
+            [1200, 1200, 1200],
+        ], dtype=numpy.float32),
+    )
+    path = tmp_path / "fusion_scene.glb"
+
+    metadata = write_multi_radar_fusion_glb(
+        path, task_id="multi_task_nodata_terrain", counts=counts
+    )
+
+    assert metadata["origin"]["altitude_amsl_m"] == 1200
+    assert numpy.abs(_glb_vertices(path)).max() < 10_000
+
+
 def test_cooperative_intersection_glb_contains_only_common_detection_mesh(tmp_path: Path) -> None:
     counts = FusionHeightCounts(
         target_epsg=32644,
@@ -90,6 +120,49 @@ def test_cooperative_intersection_glb_contains_only_common_detection_mesh(tmp_pa
     assert material[0] > 0.95
     assert material[1] > 0.6
     assert material[3] > 0.8
+
+
+def test_cooperative_intersection_glb_fills_masked_terrain(tmp_path: Path) -> None:
+    terrain = numpy.ma.array(
+        [
+            [-98_765_432, 1200, 1200],
+            [1200, 1200, 1200],
+            [1200, 1200, 1200],
+        ],
+        mask=[[True, False, False], [False, False, False], [False, False, False]],
+        dtype=numpy.float32,
+    )
+    counts = FusionHeightCounts(
+        target_epsg=32644,
+        transform=from_origin(400_000, 3_500_000, 100, 100),
+        heights_m=numpy.array([0, 200], dtype=numpy.float32),
+        coverage_count=numpy.full((2, 3, 3), 2, dtype=numpy.uint16),
+        terrain_m=terrain,
+    )
+    path = tmp_path / "cooperative_intersection.glb"
+
+    metadata = write_cooperative_intersection_glb(
+        path, task_id="multi_task_masked_terrain", counts=counts
+    )
+
+    assert metadata is not None
+    assert metadata["origin"]["altitude_amsl_m"] == 1200
+    assert numpy.abs(_glb_vertices(path)).max() < 10_000
+
+
+def test_fusion_glb_rejects_terrain_without_valid_samples(tmp_path: Path) -> None:
+    counts = FusionHeightCounts(
+        target_epsg=32644,
+        transform=from_origin(400_000, 3_500_000, 100, 100),
+        heights_m=numpy.array([0, 200], dtype=numpy.float32),
+        coverage_count=numpy.ones((2, 2, 2), dtype=numpy.uint16),
+        terrain_m=numpy.full((2, 2), PROJECTED_DEM_NODATA, dtype=numpy.float32),
+    )
+
+    with pytest.raises(ValueError, match="valid terrain elevation"):
+        write_multi_radar_fusion_glb(
+            tmp_path / "fusion_scene.glb", task_id="multi_task_invalid_terrain", counts=counts
+        )
 
 
 def test_cooperative_intersection_glb_returns_none_without_common_detection(tmp_path: Path) -> None:
