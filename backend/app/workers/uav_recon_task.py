@@ -29,6 +29,7 @@ from app.services.artifact_store import get_artifact_store
 from app.services.projection import utm_epsg_from_lonlat
 from app.services.uav_output_files import UAV_OUTPUT_FILENAMES, describe_uav_output_files, list_uav_task_output_files
 from app.services.uav_task_store import mark_uav_failed, mark_uav_finished, mark_uav_running
+from app.services.task_scheduler import TaskCancelled
 
 
 def run_uav_recon_task(task_id: str, payload: UavReconRequest) -> None:
@@ -37,6 +38,8 @@ def run_uav_recon_task(task_id: str, payload: UavReconRequest) -> None:
             task_id, payload, lambda message, value: mark_uav_running(task_id, message, value)
         )
         mark_uav_finished(task_id, metrics=metrics, outputs=outputs, output_files=output_files, model=model, warnings=warnings)
+    except TaskCancelled as exc:
+        mark_uav_failed(task_id, str(exc))
     except Exception as exc:
         mark_uav_failed(task_id, str(exc))
 

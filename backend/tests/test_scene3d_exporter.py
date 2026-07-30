@@ -428,45 +428,29 @@ def test_export_glb_rejects_missing_serialized_hierarchy(
         export_glb(tmp_path / "scene.glb", nodes, scene_metadata={})
 
 
-def test_glb_hard_limit_is_exactly_fifty_million_bytes() -> None:
+def test_glb_size_threshold_is_a_non_blocking_client_guideline() -> None:
     assert exporter.MAX_GLB_BYTES == 50_000_000
-    exporter._ensure_glb_size_within_limit(b"\0" * exporter.MAX_GLB_BYTES)
-
-    with pytest.raises(
-        ValueError,
-        match="GLB payload exceeds 50000000-byte hard limit: 50000001 bytes",
-    ):
-        exporter._ensure_glb_size_within_limit(
-            b"\0" * (exporter.MAX_GLB_BYTES + 1)
-        )
+    assert exporter.exceeds_recommended_glb_size(b"\0" * exporter.MAX_GLB_BYTES) is False
+    assert exporter.exceeds_recommended_glb_size(b"\0" * (exporter.MAX_GLB_BYTES + 1)) is True
 
 
-def test_export_glb_rejects_oversize_payload_before_writing(
+def test_export_glb_writes_oversize_payload_without_failing_the_analysis(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     path = tmp_path / "oversize.glb"
-    oversized_payload = b"\0" * 50_000_001
-    monkeypatch.setattr(
-        exporter,
-        "inject_glb_extras",
-        lambda *_args, **_kwargs: oversized_payload,
+    monkeypatch.setattr(exporter, "MAX_GLB_BYTES", 1)
+
+    export_glb(
+        path,
+        [
+            SceneNode(
+                name="mesh",
+                mesh=marker_mesh(numpy.zeros(3), 4),
+                material=MaterialSpec("material", (1, 2, 3, 255)),
+            )
+        ],
+        scene_metadata={},
     )
 
-    with pytest.raises(
-        ValueError,
-        match="GLB payload exceeds 50000000-byte hard limit: 50000001 bytes",
-    ):
-        export_glb(
-            path,
-            [
-                SceneNode(
-                    name="mesh",
-                    mesh=marker_mesh(numpy.zeros(3), 4),
-                    material=MaterialSpec("material", (1, 2, 3, 255)),
-                )
-            ],
-            scene_metadata={},
-        )
-
-    assert not path.exists()
+    assert path.stat().st_size > exporter.MAX_GLB_BYTES

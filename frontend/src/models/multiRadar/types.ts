@@ -1,5 +1,5 @@
 import type { RadarAdvancedInput, RadarCoverageInput, RadarInput, RadarMetrics, RadarRequest, RadarTargetInput } from "../radar/types";
-import type { OutputFile, ResultState } from "../shared";
+import type { OutputFile, ResultState, TaskExecutionState } from "../shared";
 
 export interface MultiRadarStationInput {
   radar_id: string;
@@ -65,6 +65,11 @@ export interface MultiRadarTask {
   scene_assets?: MultiRadarSceneAsset[];
   stations: MultiRadarStationSummary[];
   request?: MultiRadarRequest | null;
+  execution_state?: TaskExecutionState;
+  queue_position?: number | null;
+  estimated_wait_seconds?: number | null;
+  estimated_run_seconds?: number | null;
+  cancel_requested?: boolean;
 }
 
 export interface MultiRadarTargetEvaluation {

@@ -35,6 +35,7 @@ from app.services.mobility_output_files import (
     list_mobility_task_output_files,
 )
 from app.services.mobility_task_store import mark_mobility_failed, mark_mobility_finished, mark_mobility_running
+from app.services.task_scheduler import TaskCancelled
 from app.services.projection import utm_epsg_from_lonlat
 
 
@@ -80,6 +81,8 @@ def run_mobility_task(task_id: str, payload: MobilityAccessibilityRequest) -> No
             task_id, payload, lambda message, value: mark_mobility_running(task_id, message, value)
         )
         mark_mobility_finished(task_id, metrics=metrics, outputs=outputs, output_files=output_files, model=model, warnings=warnings)
+    except TaskCancelled as exc:
+        mark_mobility_failed(task_id, str(exc))
     except Exception as exc:
         mark_mobility_failed(task_id, str(exc))
 

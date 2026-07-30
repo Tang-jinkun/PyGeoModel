@@ -1,6 +1,7 @@
 export const MODEL_IDS = ["radar", "uav", "watchpost", "artillery", "reconVehicle", "mobility", "airCorridor"] as const;
 export type ModelId = (typeof MODEL_IDS)[number];
 export type TaskStatus = "pending" | "running" | "finished" | "failed";
+export type TaskExecutionState = "unknown" | "queued" | "running" | "cancelling" | "cancelled" | "finished" | "failed";
 export type ResultState = "pending" | "ready" | "unavailable";
 export type SpatialInputKind = "point" | "point-or-route" | "start-end" | "start-end-threats";
 
@@ -22,6 +23,9 @@ export interface TaskSummary<
   metrics?: Metrics | null; outputs?: Record<string, string | null> | null;
   model?: Model | null; diagnostics?: Diagnostics | null;
   output_files: OutputFile[]; warnings: string[];
+  execution_state?: TaskExecutionState; queue_position?: number | null;
+  estimated_wait_seconds?: number | null; estimated_run_seconds?: number | null;
+  cancel_requested?: boolean;
 }
 export interface MetricDefinition<Metrics> {
   key: keyof Metrics & string; label: string; format: "area" | "distance" | "duration" | "percent" | "number" | "text";

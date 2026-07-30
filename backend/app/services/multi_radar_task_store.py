@@ -89,6 +89,9 @@ def list_multi_tasks() -> list[MultiRadarTaskStatus]:
 
 
 def mark_multi_running(task_id: str, message: str, progress: int) -> None:
+    from app.services.task_scheduler import get_task_scheduler
+
+    get_task_scheduler().raise_if_cancel_requested(task_id)
     with _TASK_LOCK:
         task = get_multi_task(task_id)
         task.status = "running"

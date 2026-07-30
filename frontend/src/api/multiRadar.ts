@@ -7,6 +7,7 @@ import type {
   MultiRadarTask
 } from "../models/multiRadar/types";
 import type { OutputFile } from "../models/shared";
+import type { TaskExecutionSnapshot } from "./tasks";
 
 export async function createMultiRadarTask(payload: MultiRadarRequest): Promise<MultiRadarTask> {
   return requestJson<MultiRadarTask>("/api/radar/multi-coverage", {
@@ -21,6 +22,16 @@ export function listMultiRadarTasks(): Promise<MultiRadarTask[]> {
 
 export function getMultiRadarTask(taskId: string): Promise<MultiRadarTask> {
   return requestJson<MultiRadarTask>(`/api/radar/multi-coverage/${taskId}`);
+}
+
+export function rerunMultiRadarTask(taskId: string, idempotencyKey = crypto.randomUUID()): Promise<MultiRadarTask> {
+  return requestJson<MultiRadarTask>(`/api/radar/multi-coverage/${taskId}/rerun`, {
+    method: "POST", headers: { "Idempotency-Key": idempotencyKey }
+  });
+}
+
+export function cancelMultiRadarTask(taskId: string): Promise<TaskExecutionSnapshot> {
+  return requestJson<TaskExecutionSnapshot>(`/api/radar/multi-coverage/${taskId}/cancel`, { method: "POST" });
 }
 
 export function getMultiRadarOutputs(taskId: string): Promise<OutputFile[]> {

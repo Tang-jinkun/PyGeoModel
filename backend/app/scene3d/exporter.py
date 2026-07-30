@@ -10,6 +10,7 @@ import trimesh
 
 JSON_CHUNK = 0x4E4F534A
 BIN_CHUNK = 0x004E4942
+# This is a client-performance guideline, not a server-side failure threshold.
 MAX_GLB_BYTES = 50_000_000
 
 
@@ -73,7 +74,6 @@ def export_glb(
     )
     if animations:
         payload = inject_glb_animations(payload, animations)
-    _ensure_glb_size_within_limit(payload)
     _validate_serialized_scene(payload, nodes)
 
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -86,12 +86,9 @@ def export_glb(
         )
 
 
-def _ensure_glb_size_within_limit(payload: bytes) -> None:
-    size = len(payload)
-    if size > MAX_GLB_BYTES:
-        raise ValueError(
-            f"GLB payload exceeds {MAX_GLB_BYTES}-byte hard limit: {size} bytes"
-        )
+def exceeds_recommended_glb_size(payload: bytes) -> bool:
+    """Return whether a GLB may be expensive for browser preview, without rejecting it."""
+    return len(payload) > MAX_GLB_BYTES
 
 
 def _normalize_scene_nodes(

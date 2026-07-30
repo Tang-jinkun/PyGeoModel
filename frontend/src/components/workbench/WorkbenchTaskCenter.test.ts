@@ -40,6 +40,14 @@ describe("WorkbenchTaskCenter", () => {
     expect(wrapper.emitted("select-multi-radar-task")?.[0]).toEqual(["multi-1", "layers"]);
   });
 
+  it("emits a cancellation request for a queued task", async () => {
+    const wrapper = mount(WorkbenchTaskCenter, { props: { rows: [queuedRadarRow()], activeTab: "running" } });
+
+    await wrapper.get('[data-action="cancel"]').trigger("click");
+
+    expect(wrapper.emitted("cancel-task")?.[0]).toEqual(["radar", "radar-queued"]);
+  });
+
   it("renders terminal multi-radar layer and file actions", async () => {
     const wrapper = mount(WorkbenchTaskCenter, {
       props: { rows: [], activeTab: "history", multiRadarTasks: [multiRadarTask("finished")] }
@@ -76,5 +84,12 @@ function finishedRadarRow(): WorkbenchTaskRow {
   return {
     key: "radar:radar-1", modelId: "radar", label: "Radar Coverage", statusLabel: "Completed", primaryMetric: "Visible area 2.50 km2", timestamp: 1,
     task: { task_id: "radar-1", status: "finished", result_state: "ready", progress: 100, message: "done", output_files: [], warnings: [], metrics: { visible_area_m2: 2_500_000, blocked_ratio: 0.31 } }
+  };
+}
+
+function queuedRadarRow(): WorkbenchTaskRow {
+  return {
+    key: "radar:radar-queued", modelId: "radar", label: "Radar Coverage", statusLabel: "Waiting", primaryMetric: null, timestamp: 1,
+    task: { task_id: "radar-queued", status: "pending", result_state: "pending", progress: 0, message: "queued", output_files: [], warnings: [], execution_state: "queued", queue_position: 2, estimated_wait_seconds: 45 }
   };
 }

@@ -39,6 +39,7 @@ from app.services.recon_vehicle_task_store import (
     mark_recon_vehicle_finished,
     mark_recon_vehicle_running,
 )
+from app.services.task_scheduler import TaskCancelled
 
 
 class PreparedReconVehicleDem:
@@ -65,6 +66,8 @@ def run_recon_vehicle_task(task_id: str, payload: ReconVehicleCoverageRequest) -
             task_id, payload, lambda message, value: mark_recon_vehicle_running(task_id, message, value)
         )
         mark_recon_vehicle_finished(task_id, metrics=metrics, outputs=outputs, output_files=output_files, model=model, warnings=warnings)
+    except TaskCancelled as exc:
+        mark_recon_vehicle_failed(task_id, str(exc))
     except Exception as exc:
         mark_recon_vehicle_failed(task_id, str(exc))
 

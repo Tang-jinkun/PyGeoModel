@@ -29,7 +29,7 @@ from app.services.coverage_model import validate_coverage_extent
 from app.services.dem_store import find_dem_file, read_dem_metadata
 from app.services.fusion_analysis import analyze_fusion
 from app.services.profile_analysis import analyze_coverage_profile, analyze_coverage_profiles
-from app.services.task_store import create_rerun, create_task, delete_task, get_task, list_tasks
+from app.services.task_store import create_rerun, create_task, delete_task, get_task, list_tasks, mark_failed
 from app.services.multi_radar_dem import station_coverage_request
 from app.services.multi_radar_task_store import (
     create_multi_rerun,
@@ -37,7 +37,10 @@ from app.services.multi_radar_task_store import (
     delete_multi_task,
     get_multi_task,
     list_multi_tasks,
+    mark_multi_failed,
 )
+from app.services.task_dispatch import enqueue_task
+from app.services.task_scheduler import TaskScheduleSnapshot, get_task_scheduler
 from app.services.multi_radar_target_evaluation import evaluate_multi_radar_target
 from app.services.target_evaluation import evaluate_coverage_target
 from app.workers.coverage_task import run_coverage_task
@@ -59,7 +62,7 @@ def create_multi_coverage_task(payload: MultiRadarRequest, background_tasks: Bac
         for station in payload.radars:
             validate_coverage_extent(source, station_coverage_request(payload.dem_id, station))
         task = create_multi_task(payload)
-        background_tasks.add_task(run_multi_radar_coverage_task, task.task_id, payload)
+        background_tasks.add_task(enqueue_task, task.task_id, "multi_radar", run_multi_radar_coverage_task, payload, on_cancel=lambda: mark_multi_failed(task.task_id, "Task cancelled by user."))
         return task
     except AppError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.as_detail()) from exc
@@ -97,7 +100,7 @@ def rerun_multi_coverage_task(
             )
         task, created = create_multi_rerun(task_id, original.request, idempotency_key)
         if created:
-            background_tasks.add_task(run_multi_radar_coverage_task, task.task_id, original.request)
+            background_tasks.add_task(enqueue_task, task.task_id, "multi_radar", run_multi_radar_coverage_task, original.request, on_cancel=lambda: mark_multi_failed(task.task_id, "Task cancelled by user."))
         return task
     except AppError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.as_detail()) from exc
@@ -179,7 +182,7 @@ def create_multi_station_detail(task_id: str, radar_id: str, background_tasks: B
         if station is None:
             raise AppError("MULTI_RADAR_NOT_FOUND", f"Radar '{radar_id}' was not found.", status_code=404)
         task = create_task(station_coverage_request(multi_task.dem_id, station))
-        background_tasks.add_task(run_coverage_task, task.task_id, task.request)
+        background_tasks.add_task(enqueue_task, task.task_id, "radar", run_coverage_task, task.request, on_cancel=lambda: mark_failed(task.task_id, "Task cancelled by user."))
         return task
     except AppError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.as_detail()) from exc
@@ -196,7 +199,7 @@ def create_coverage_task(payload: CoverageRequest, background_tasks: BackgroundT
         read_dem_metadata(payload.dem_id)
         validate_coverage_extent(find_dem_file(payload.dem_id), payload)
         task = create_task(payload)
-        background_tasks.add_task(run_coverage_task, task.task_id, payload)
+        background_tasks.add_task(enqueue_task, task.task_id, "radar", run_coverage_task, payload, on_cancel=lambda: mark_failed(task.task_id, "Task cancelled by user."))
         return task
     except AppError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.as_detail()) from exc
@@ -242,7 +245,7 @@ def rerun_coverage_task(
         read_dem_metadata(original.request.dem_id)
         task, created = create_rerun(original.task_id, original.request, idempotency_key)
         if created:
-            background_tasks.add_task(run_coverage_task, task.task_id, original.request)
+            background_tasks.add_task(enqueue_task, task.task_id, "radar", run_coverage_task, original.request, on_cancel=lambda: mark_failed(task.task_id, "Task cancelled by user."))
         return task
     except AppError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.as_detail()) from exc
@@ -298,6 +301,24 @@ def delete_coverage_task(task_id: str) -> CoverageTaskDeleteResult:
         return delete_task(task_id)
     except AppError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.as_detail()) from exc
+
+
+@router.post("/coverage/{task_id}/cancel", response_model=TaskScheduleSnapshot)
+def cancel_coverage_task(task_id: str) -> TaskScheduleSnapshot:
+    snapshot = get_task_scheduler().snapshot(task_id)
+    if snapshot is None:
+        raise HTTPException(status_code=409, detail={"code": "TASK_NOT_ACTIVE", "message": "Task is not queued or running in this service."})
+    get_task_scheduler().request_cancel(task_id)
+    return get_task_scheduler().snapshot(task_id) or snapshot
+
+
+@router.post("/multi-coverage/{task_id}/cancel", response_model=TaskScheduleSnapshot)
+def cancel_multi_coverage_task(task_id: str) -> TaskScheduleSnapshot:
+    snapshot = get_task_scheduler().snapshot(task_id)
+    if snapshot is None:
+        raise HTTPException(status_code=409, detail={"code": "TASK_NOT_ACTIVE", "message": "Task is not queued or running in this service."})
+    get_task_scheduler().request_cancel(task_id)
+    return get_task_scheduler().snapshot(task_id) or snapshot
 
 
 @router.get("/coverage/{task_id}/outputs", response_model=list[CoverageOutputFile])

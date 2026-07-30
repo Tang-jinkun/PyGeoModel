@@ -18,7 +18,7 @@
         @show-parameters="presentation.showParameters"
       />
     </template>
-    <template #tasks><WorkbenchTaskCenter :rows="workbenchTaskRows" :multi-radar-tasks="multiRadarTasks" :active-tab="presentation.taskTab.value" @update:active-tab="presentation.selectTaskTab" @select-task="selectWorkbenchTask" @select-multi-radar-task="selectMultiRadarTask" /></template>
+    <template #tasks><WorkbenchTaskCenter :rows="workbenchTaskRows" :multi-radar-tasks="multiRadarTasks" :active-tab="presentation.taskTab.value" @update:active-tab="presentation.selectTaskTab" @select-task="selectWorkbenchTask" @select-multi-radar-task="selectMultiRadarTask" @cancel-task="cancelTask" @recover-task="recoverTask" @cancel-multi-radar-task="cancelMultiRadarTaskFromCenter" @recover-multi-radar-task="recoverMultiRadarTask" /></template>
     <template #status>
       <div class="workbench-status">
         <span class="workbench-status__item workbench-status__map-info">坐标 <span class="workbench-status__mono">—</span></span>
@@ -248,7 +248,7 @@ import {
   type HeightLayerManifest
 } from "./models/radar/heightLayerLoader";
 import { getCoverageOutputs, getCoverageTask, type CoverageTaskStatus } from "./api/radar";
-import { createMultiRadarTask, findMultiRadarOutputPath, getMultiRadarOutputs, getMultiRadarTask, listMultiRadarTasks } from "./api/multiRadar";
+import { cancelMultiRadarTask, createMultiRadarTask, findMultiRadarOutputPath, getMultiRadarOutputs, getMultiRadarTask, listMultiRadarTasks, rerunMultiRadarTask } from "./api/multiRadar";
 import type { MultiRadarPresentationMode, MultiRadarSceneAsset, MultiRadarStationInput, MultiRadarTask } from "./models/multiRadar/types";
 import { createFusionSceneTask } from "./models/multiRadar/fusionScene";
 import { createMultiRadarSceneTask } from "./models/multiRadar/sceneAssets";
@@ -304,6 +304,7 @@ const heightLayerLoader = createHeightLayerLoader(requestGeoJson);
 let heightRenderToken = 0;
 let lastRadarTaskId: string | null = null;
 let multiRadarPollTimer: number | null = null;
+let multiRadarPollFailures = 0;
 const radarControlLayers = reactive<RadarControlLayer[]>([
   { kind: "volume", label: "Radar volume", color: "#22c55e", visible: true, opacity: 0.62, available: true },
   { kind: "boundary", label: "Request boundary", color: "#94a3b8", visible: false, opacity: 0.45, available: true },
@@ -563,6 +564,55 @@ function selectWorkbenchTask(modelId: ModelId, taskId: string) {
   presentation.selectTask();
 }
 
+async function cancelTask(modelId: ModelId, taskId: string) {
+  try {
+    await taskManager.cancel(modelId, taskId);
+  } catch (error) {
+    showError(error);
+  }
+}
+
+async function recoverTask(modelId: ModelId, taskId: string) {
+  try {
+    await taskManager.rerun(modelId, taskId);
+  } catch (error) {
+    showError(error);
+  }
+}
+
+async function cancelMultiRadarTaskFromCenter(taskId: string) {
+  try {
+    const execution = await cancelMultiRadarTask(taskId);
+    const existing = multiRadarTasks.value.find((task) => task.task_id === taskId);
+    if (existing) {
+      const updated = {
+        ...existing,
+        execution_state: execution.state,
+        queue_position: execution.queue_position,
+        estimated_wait_seconds: execution.estimated_wait_seconds,
+        estimated_run_seconds: execution.estimated_run_seconds,
+        cancel_requested: execution.cancel_requested,
+        message: execution.state === "cancelling" ? "Cancellation requested" : "Cancelled"
+      };
+      upsertMultiRadarTask(updated);
+      if (activeMultiRadarTask.value?.task_id === taskId) activeMultiRadarTask.value = updated;
+    }
+  } catch (error) {
+    showError(error);
+  }
+}
+
+async function recoverMultiRadarTask(taskId: string) {
+  try {
+    const task = await rerunMultiRadarTask(taskId);
+    activeMultiRadarTask.value = task;
+    upsertMultiRadarTask(task);
+    startMultiRadarPolling(task.task_id);
+  } catch (error) {
+    showError(error);
+  }
+}
+
 async function selectMultiRadarTask(taskId: string, intent: "layers" | "files" = "layers") {
   try {
     const task = await getMultiRadarTask(taskId);
@@ -759,14 +809,20 @@ async function submitMultiRadarRun(
 
 function startMultiRadarPolling(taskId: string) {
   stopMultiRadarPolling();
-  multiRadarPollTimer = window.setInterval(() => {
-    void refreshMultiRadarTask(taskId);
-  }, 1000);
+  multiRadarPollFailures = 0;
+  scheduleMultiRadarPoll(taskId, 0);
 }
 
 function stopMultiRadarPolling() {
-  if (multiRadarPollTimer !== null) window.clearInterval(multiRadarPollTimer);
+  if (multiRadarPollTimer !== null) window.clearTimeout(multiRadarPollTimer);
   multiRadarPollTimer = null;
+}
+
+function scheduleMultiRadarPoll(taskId: string, delay: number) {
+  multiRadarPollTimer = window.setTimeout(() => {
+    multiRadarPollTimer = null;
+    void refreshMultiRadarTask(taskId);
+  }, delay);
 }
 
 async function refreshMultiRadarTask(taskId: string) {
@@ -774,12 +830,16 @@ async function refreshMultiRadarTask(taskId: string) {
     const task = await getMultiRadarTask(taskId);
     activeMultiRadarTask.value = task;
     upsertMultiRadarTask(task);
-    if (!["finished", "partial", "failed"].includes(task.status)) return;
-    stopMultiRadarPolling();
+    multiRadarPollFailures = 0;
+    if (!["finished", "partial", "failed"].includes(task.status) && task.execution_state !== "cancelled") {
+      scheduleMultiRadarPoll(taskId, 1000);
+      return;
+    }
     if (task.status === "finished" || task.status === "partial") await showMultiRadarAggregate(task);
   } catch (error) {
-    stopMultiRadarPolling();
-    showError(error);
+    multiRadarPollFailures += 1;
+    if (multiRadarPollFailures === 1) showError(error);
+    scheduleMultiRadarPoll(taskId, Math.min(30_000, 1000 * 2 ** multiRadarPollFailures));
   }
 }
 
@@ -891,13 +951,13 @@ function handleMapLoad() {
   renderRadarAnalysisLayers();
 }
 
-function setLayerVisibility(kind: string, visible: boolean) {
+async function setLayerVisibility(kind: string, visible: boolean) {
   if (selectedMultiRadarResultTask.value) {
     if (map.value) multiRadarAdapter.setLayerVisibility(map.value, kind, visible);
     multiRadarLayerVersion.value += 1;
     return;
   }
-  mapWorkspace.setTaskLayerVisibility(kind, visible);
+  await mapWorkspace.setTaskLayerVisibility(kind, visible);
 }
 
 function setLayerOpacity(kind: string, opacity: number) {
@@ -909,12 +969,12 @@ function setLayerOpacity(kind: string, opacity: number) {
   mapWorkspace.setTaskLayerOpacity(kind, opacity);
 }
 
-function focusLayer(kind: string) {
+async function focusLayer(kind: string) {
   if (selectedMultiRadarResultTask.value) {
     if (map.value) multiRadarAdapter.focusLayer(map.value, kind);
     return;
   }
-  if (map.value) mapWorkspace.focusTaskLayer(map.value, kind);
+  if (map.value) await mapWorkspace.focusTaskLayer(map.value, kind);
 }
 
 function idleSceneState(taskId: string, demId: string): SceneGlbOverlayState {

@@ -34,6 +34,7 @@ from app.services.artifact_contracts import ArtifactSpec, get_output_contract
 from app.services.artifact_store import get_artifact_store
 from app.services.output_files import OUTPUT_FILENAMES, describe_output_files
 from app.services.task_store import mark_failed, mark_finished, mark_running
+from app.services.task_scheduler import TaskCancelled
 from app.scene3d.radar import write_radar_coverage_glb
 from app.scene3d.radar_platform import write_radar_platform_glb
 
@@ -56,6 +57,8 @@ def run_coverage_task(task_id: str, payload: CoverageRequest) -> None:
             diagnostics=diagnostics,
             warnings=warnings,
         )
+    except TaskCancelled:
+        mark_failed(task_id, "Task cancelled by user.")
     except Exception as exc:
         mark_failed(task_id, str(exc))
 

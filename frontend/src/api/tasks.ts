@@ -8,6 +8,14 @@ export interface TaskDeleteResult {
   errors: string[];
 }
 
+export interface TaskExecutionSnapshot {
+  state: "queued" | "running" | "cancelling" | "cancelled" | "finished" | "failed";
+  queue_position: number | null;
+  estimated_wait_seconds: number | null;
+  estimated_run_seconds: number | null;
+  cancel_requested: boolean;
+}
+
 export function createTaskClient<Request extends BaseModelRequest = BaseModelRequest, Metrics = Record<string, unknown>>(basePath: string) {
   return {
     list: () => requestJson<TaskSummary<Request, Metrics>[]>(basePath),
@@ -19,6 +27,7 @@ export function createTaskClient<Request extends BaseModelRequest = BaseModelReq
       `${basePath}/${taskId}/rerun`,
       { method: "POST", headers: { "Idempotency-Key": idempotencyKey } }
     ),
+    cancel: (taskId: string) => requestJson<TaskExecutionSnapshot>(`${basePath}/${taskId}/cancel`, { method: "POST" }),
     delete: (taskId: string) => requestJson<TaskDeleteResult>(`${basePath}/${taskId}`, { method: "DELETE" })
   };
 }

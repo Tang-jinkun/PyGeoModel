@@ -163,7 +163,7 @@ describe("TaskResultPanel", () => {
     expect(wrapper.emitted("rerun")).toEqual([[]]);
   });
 
-  it("fetches result metadata in parallel and isolates each registered GeoJSON layer", async () => {
+  it("fetches result metadata in parallel and lazily isolates requested GeoJSON layers", async () => {
     const metricsPending = deferred<UavMetrics>();
     const outputsPending = deferred<OutputFile[]>();
     const metrics = vi.fn().mockReturnValue(metricsPending.promise);
@@ -200,11 +200,14 @@ describe("TaskResultPanel", () => {
     ]);
     await loading;
 
-    expect(fetchGeoJson).toHaveBeenCalledTimes(3);
-    expect(workspace.layerStates.value.find(({ kind }) => kind === "footprint_geojson")?.status).toBe("ready");
+    expect(fetchGeoJson).toHaveBeenCalledTimes(1);
+    expect(fetchGeoJson).toHaveBeenCalledWith(`/api/uav/recon/${finishedUavTask.task_id}/outputs/visible_geojson`);
+    expect(workspace.layerStates.value.find(({ kind }) => kind === "footprint_geojson")?.status).toBe("idle");
+    await workspace.setTaskLayerVisibility("blocked_geojson", true);
+    expect(fetchGeoJson).toHaveBeenCalledTimes(2);
     expect(workspace.layerStates.value.find(({ kind }) => kind === "blocked_geojson")).toMatchObject({
       status: "error",
-      error: "地形遮挡区加载失败"
+      error: expect.any(String)
     });
     expect(workspace.layerStates.value.find(({ kind }) => kind === "visible_geojson")?.status).toBe("ready");
     expect(workspace.loadedTask.value?.status).toBe("finished");

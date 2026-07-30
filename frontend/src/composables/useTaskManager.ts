@@ -1,13 +1,18 @@
 import { reactive, readonly, ref, toRaw } from "vue";
 import { createTaskClient } from "../api/tasks";
 import { getModelDefinition, MODEL_IDS } from "../models/registry";
-import type { BaseModelRequest, ModelId, TaskSummary } from "../models/shared";
+import type { BaseModelRequest, ModelId, TaskExecutionState, TaskSummary } from "../models/shared";
 
 interface TaskClientLike {
   list?(): Promise<TaskSummary[]>;
   create?(request: BaseModelRequest): Promise<TaskSummary>;
   get(taskId: string): Promise<TaskSummary>;
   delete?(taskId: string): Promise<unknown>;
+  rerun?(taskId: string, idempotencyKey?: string): Promise<TaskSummary>;
+  cancel?(taskId: string): Promise<{
+    state: TaskExecutionState; queue_position: number | null; estimated_wait_seconds: number | null;
+    estimated_run_seconds: number | null; cancel_requested: boolean;
+  }>;
 }
 
 export interface UseTaskManagerOptions {
@@ -17,7 +22,7 @@ export interface UseTaskManagerOptions {
 }
 
 const taskKey = (modelId: ModelId, taskId: string) => `${modelId}:${taskId}`;
-const isTerminal = (task: TaskSummary) => task.status === "finished" || task.status === "failed";
+const isTerminal = (task: TaskSummary) => task.status === "finished" || task.status === "failed" || task.execution_state === "cancelled";
 
 function createTaskState() {
   const state = {} as Record<ModelId, TaskSummary[]>;
@@ -190,6 +195,33 @@ export function useTaskManager(options: UseTaskManagerOptions) {
     if (selectedTaskKey.value === key) selectedTaskKey.value = null;
   }
 
+  async function cancel(modelId: ModelId, taskId: string) {
+    const cancelTask = clientFor(modelId).cancel;
+    if (!cancelTask) throw new Error(`Task client for ${modelId} does not support cancellation`);
+    const execution = await cancelTask(taskId);
+    const current = getTask(modelId, taskId);
+    if (!current) return;
+    storeTask(modelId, {
+      ...current,
+      execution_state: execution.state,
+      queue_position: execution.queue_position,
+      estimated_wait_seconds: execution.estimated_wait_seconds,
+      estimated_run_seconds: execution.estimated_run_seconds,
+      cancel_requested: execution.cancel_requested,
+      message: execution.state === "cancelling" ? "Cancellation requested" : "Cancelled"
+    });
+    if (execution.state === "cancelled") clearPollingState(taskKey(modelId, taskId));
+  }
+
+  async function rerun(modelId: ModelId, taskId: string, idempotencyKey?: string) {
+    const rerunTask = clientFor(modelId).rerun;
+    if (!rerunTask) throw new Error(`Task client for ${modelId} does not support rerun`);
+    const task = await rerunTask(taskId, idempotencyKey);
+    track(modelId, task);
+    selectedTaskKey.value = taskKey(modelId, task.task_id);
+    return task;
+  }
+
   async function restoreRequest(modelId: ModelId, taskId: string): Promise<BaseModelRequest | null> {
     const task = getTask(modelId, taskId);
     if (!task) return null;
@@ -241,6 +273,8 @@ export function useTaskManager(options: UseTaskManagerOptions) {
     getTask,
     select,
     remove,
+    cancel,
+    rerun,
     restoreRequest,
     dispose
   };

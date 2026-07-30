@@ -225,7 +225,10 @@ export function useMapWorkspace(kind: SpatialInputKind, initialDraft?: SpatialDr
     loadedTask.value = task as TaskSummary<never, unknown, unknown, unknown>;
     taskMetrics.value = toMetricRecord(task.metrics);
     outputFiles.value = [];
-    layerStates.value = definition.outputLayers.map((layer) => createLayerState(layer, task.result_state === "ready" ? "loading" : "idle"));
+    layerStates.value = definition.outputLayers.map((layer) => createLayerState(
+      layer,
+      task.result_state === "ready" && layer.primary ? "loading" : "idle"
+    ));
 
     if (task.result_state !== "ready") return snapshot(modelId, task);
 
@@ -251,7 +254,7 @@ export function useMapWorkspace(kind: SpatialInputKind, initialDraft?: SpatialDr
     ensureSceneGlbState(modelId, task, outputFiles.value);
 
     const files = outputFiles.value;
-    const layerLoads = definition.outputLayers.map(async (layer) => {
+    const layerLoads = definition.outputLayers.filter((layer) => layer.primary).map(async (layer) => {
       const url = resolveLayerUrl(layer.kind, files);
       if (!url) {
         updateLayer(version, layer.kind, { status: "idle", error: null });
@@ -275,15 +278,17 @@ export function useMapWorkspace(kind: SpatialInputKind, initialDraft?: SpatialDr
     return snapshot(modelId, task);
   }
 
-  function setTaskLayerVisibility(kind: string, visible: boolean) {
+  async function setTaskLayerVisibility(kind: string, visible: boolean) {
     updateLayer(outputLoadVersion, kind, { visible });
+    if (visible) await loadTaskLayer(kind);
   }
 
   function setTaskLayerOpacity(kind: string, opacity: number) {
     updateLayer(outputLoadVersion, kind, { opacity: Math.min(1, Math.max(0, opacity)) });
   }
 
-  function focusTaskLayer(map: MapInstance, kind: string) {
+  async function focusTaskLayer(map: MapInstance, kind: string) {
+    await loadTaskLayer(kind);
     const layer = layerStates.value.find((candidate) => candidate.kind === kind);
     return layer?.data ? focusBounds(map, layer.data) : false;
   }
@@ -477,6 +482,26 @@ export function useMapWorkspace(kind: SpatialInputKind, initialDraft?: SpatialDr
   function updateLayer(version: number, kind: string, patch: Partial<TaskOutputLayerState>) {
     if (version !== outputLoadVersion) return;
     layerStates.value = layerStates.value.map((layer) => layer.kind === kind ? { ...layer, ...patch } : layer);
+  }
+
+  async function loadTaskLayer(kind: string) {
+    const version = outputLoadVersion;
+    const layer = layerStates.value.find((candidate) => candidate.kind === kind);
+    if (!layer || layer.status === "loading" || layer.status === "ready") return;
+    const url = resolveLayerUrl(kind, outputFiles.value);
+    if (!url) return;
+    updateLayer(version, kind, { status: "loading", error: null });
+    try {
+      const data = await fetchGeoJson(url);
+      if (!isGeoJson(data)) throw new Error("Invalid GeoJSON document");
+      updateLayer(version, kind, { status: "ready", data, error: null });
+    } catch {
+      updateLayer(version, kind, {
+        status: "error",
+        data: null,
+        error: `Failed to load ${localizedLayerLabel(kind, kind)}`
+      });
+    }
   }
 
   function snapshot<K extends ModelId>(modelId: K, task: ModelTaskSummary<K>): LoadedTaskOutputs<K> {

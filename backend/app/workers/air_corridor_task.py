@@ -28,6 +28,7 @@ from app.services.air_corridor_output_files import (
     list_air_corridor_task_output_files,
 )
 from app.services.air_corridor_task_store import mark_air_corridor_failed, mark_air_corridor_finished, mark_air_corridor_running
+from app.services.task_scheduler import TaskCancelled
 from app.services.dem_store import find_dem_file
 from app.services.artifact_contracts import get_output_contract
 from app.services.artifact_store import get_artifact_store
@@ -74,6 +75,8 @@ def run_air_corridor_task(task_id: str, payload: AirCorridorPlanningRequest) -> 
             task_id, payload, lambda message, value: mark_air_corridor_running(task_id, message, value)
         )
         mark_air_corridor_finished(task_id, metrics=metrics, outputs=outputs, output_files=output_files, model=model, warnings=warnings)
+    except TaskCancelled as exc:
+        mark_air_corridor_failed(task_id, str(exc))
     except Exception as exc:
         mark_air_corridor_failed(task_id, str(exc))
 

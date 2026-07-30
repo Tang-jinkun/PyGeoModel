@@ -68,6 +68,41 @@ const finishedAirTask = {
 } satisfies TaskSummary<AirCorridorRequest, AirCorridorMetrics>;
 
 describe("useMapWorkspace", () => {
+  it("does not fetch hidden result layers until the user displays one", async () => {
+    const fetchGeoJson = vi.fn(async () => ({ type: "FeatureCollection", features: [] }));
+    const workspace = useMapWorkspace("point", undefined, {
+      clientFactory: () => ({
+        metrics: vi.fn(async () => ({})),
+        outputs: vi.fn(async () => [
+          {
+            kind: "visible_geojson", label: "Visible", filename: "visible.geojson",
+            media_type: "application/geo+json", required: true, exists: true,
+            download_path: "/api/radar/coverage/task-1/outputs/visible_geojson"
+          },
+          {
+            kind: "blocked_geojson", label: "Blocked", filename: "blocked.geojson",
+            media_type: "application/geo+json", required: true, exists: true,
+            download_path: "/api/radar/coverage/task-1/outputs/blocked_geojson"
+          }
+        ]),
+      }),
+      fetchGeoJson
+    });
+
+    await workspace.loadTaskOutputs("radar", {
+      ...finishedAirTask,
+      task_id: "task-1",
+      request: { ...MODEL_REGISTRY.radar.createDefaultRequest(), dem_id: "dem-a" }
+    } as never);
+
+    expect(fetchGeoJson).toHaveBeenCalledTimes(1);
+    expect(fetchGeoJson).toHaveBeenCalledWith("/api/radar/coverage/task-1/outputs/visible_geojson");
+
+    await workspace.setTaskLayerVisibility("blocked_geojson", true);
+
+    expect(fetchGeoJson).toHaveBeenCalledTimes(2);
+    expect(fetchGeoJson).toHaveBeenLastCalledWith("/api/radar/coverage/task-1/outputs/blocked_geojson");
+  });
   it("provides immutable point and waypoint commands with undo and clear", () => {
     const workspace = useMapWorkspace("point-or-route");
     const first: [number, number] = [79.8, 31.4];

@@ -1,3 +1,5 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -12,6 +14,15 @@ from app.services.uav_task_store import recover_interrupted_uav_tasks
 from app.services.watchpost_task_store import recover_interrupted_watchpost_tasks
 from app.services.tianditu import tianditu_integration_status
 from app.services.reconciliation import cleanup_stale_staging_dirs
+from app.services.task_scheduler import get_task_scheduler
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    try:
+        yield
+    finally:
+        get_task_scheduler().shutdown(wait=False)
 
 
 def create_app() -> FastAPI:
@@ -19,8 +30,8 @@ def create_app() -> FastAPI:
         title="PyGeoModel API",
         description="DEM-based radar terrain coverage analysis service.",
         version="0.1.0",
+        lifespan=lifespan,
     )
-
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,

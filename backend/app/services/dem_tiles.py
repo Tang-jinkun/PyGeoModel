@@ -92,7 +92,7 @@ def dem_color_range(dem_path: Path) -> tuple[float, float]:
     import rasterio
 
     with rasterio.open(dem_path) as dataset:
-        stats = dataset.statistics(1, approx=True, clear_cache=False)
+        stats = dataset.stats(indexes=1, approx=True)[0]
         vmin = float(stats.min)
         vmax = float(stats.max)
         if math.isfinite(vmin) and math.isfinite(vmax) and vmax > vmin:

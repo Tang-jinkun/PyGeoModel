@@ -173,6 +173,9 @@ def list_tasks() -> list[CoverageTaskSummary]:
 
 
 def mark_running(task_id: str, message: str, progress: int = 10) -> None:
+    from app.services.task_scheduler import get_task_scheduler
+
+    get_task_scheduler().raise_if_cancel_requested(task_id)
     with _task_lock(task_id):
         task = get_task(task_id)
         task.status = "running"

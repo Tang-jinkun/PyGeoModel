@@ -26,6 +26,7 @@ from app.services.multi_radar_fusion_volume import (
 )
 from app.services.multi_radar_task_store import mark_multi_completed, mark_multi_failed, mark_multi_running
 from app.services.task_store import create_task, get_task
+from app.services.task_scheduler import TaskCancelled
 from app.workers.coverage_task import _build_coverage_metrics, _coverage_masks, _mask_area, _mask_to_geometry, _run_gdal_viewshed, run_coverage_task
 
 
@@ -80,6 +81,8 @@ def run_multi_radar_coverage_task(
             stations=result.stations,
             message=result.message,
         )
+    except TaskCancelled:
+        mark_multi_failed(task_id, "Task cancelled by user.")
     except Exception as exc:
         mark_multi_failed(task_id, str(exc))
 

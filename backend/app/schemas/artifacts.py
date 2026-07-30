@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field
 
 
 ResultState = Literal["pending", "ready", "unavailable"]
+TaskExecutionState = Literal["unknown", "queued", "running", "cancelling", "cancelled", "finished", "failed"]
 
 
 class ArtifactManifestEntry(BaseModel):
@@ -61,3 +62,8 @@ class TaskResultFields(BaseModel):
     result_state: ResultState = "pending"
     result_reason_code: str | None = None
     rerun_of: str | None = None
+    execution_state: TaskExecutionState = "unknown"
+    queue_position: int | None = Field(default=None, ge=1)
+    estimated_wait_seconds: int | None = Field(default=None, ge=0)
+    estimated_run_seconds: int | None = Field(default=None, ge=0)
+    cancel_requested: bool = False

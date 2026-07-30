@@ -19,14 +19,14 @@
           <span class="tinfo">{{ [task.dem_id, task.message || multiRadarStatusLabel(task)].filter(Boolean).join(" · ") }}</span>
           <span v-if="isMultiRadarRunning(task)" class="progress"><span class="bar"><i :style="{ width: `${task.progress}%` }"></i></span><span class="pv">{{ task.progress }}%</span></span>
           <span class="status-chip" :class="multiRadarStatusClass(task)">{{ multiRadarStatusLabel(task) }}</span>
-          <span class="task-act"><template v-if="isMultiRadarResultReady(task)"><button type="button" data-action="layers" @click.stop="emit('select-multi-radar-task', task.task_id, 'layers')">查看图层</button><button type="button" data-action="files" @click.stop="emit('select-multi-radar-task', task.task_id, 'files')">下载</button></template><button v-else-if="task.status === 'failed'" type="button" data-action="logs" @click.stop="emit('select-multi-radar-task', task.task_id, 'layers')">查看日志</button></span>
+          <span class="task-act"><button v-if="isMultiRadarRunning(task) && !task.cancel_requested" type="button" data-action="cancel" @click.stop="emit('cancel-multi-radar-task', task.task_id)">Cancel</button><button v-else-if="task.status === 'failed' || task.execution_state === 'cancelled'" type="button" data-action="recover" @click.stop="emit('recover-multi-radar-task', task.task_id)">Recover</button><template v-else-if="isMultiRadarResultReady(task)"><button type="button" data-action="layers" @click.stop="emit('select-multi-radar-task', task.task_id, 'layers')">查看图层</button><button type="button" data-action="files" @click.stop="emit('select-multi-radar-task', task.task_id, 'files')">下载</button></template></span>
         </div>
         <div v-for="row in visibleRows" :key="row.key" class="task-row" :class="{ 'is-terminal': !isRunning(row) }" :data-task-key="row.key" role="button" tabindex="0" @click="select(row)" @keydown.enter="select(row)">
           <span class="tid">{{ shortId(row.task.task_id) }}</span><span class="tmodel">{{ row.label }}</span>
           <span class="tinfo">{{ taskInfo(row) }}</span>
           <span v-if="isRunning(row)" class="progress"><span class="bar"><i :style="{ width: `${row.task.progress}%` }"></i></span><span class="pv">{{ row.task.progress }}%</span></span>
           <span class="status-chip" :class="statusClass(row)">{{ row.statusLabel }}</span>
-          <span class="task-act"><button type="button" @click.stop="select(row)">{{ row.task.status === 'failed' ? '查看日志' : '查看图层' }}</button><a v-if="row.task.status === 'finished' && firstDownload(row)" :href="firstDownload(row)" target="_blank" @click.stop>下载</a></span>
+          <span class="task-act"><button v-if="isRunning(row) && !row.task.cancel_requested" type="button" data-action="cancel" @click.stop="emit('cancel-task', row.modelId, row.task.task_id)">Cancel</button><button v-else-if="row.task.status === 'failed' || row.task.execution_state === 'cancelled'" type="button" data-action="recover" @click.stop="emit('recover-task', row.modelId, row.task.task_id)">Recover</button><button v-else type="button" @click.stop="select(row)">查看图层</button><a v-if="row.task.status === 'finished' && firstDownload(row)" :href="firstDownload(row)" target="_blank" @click.stop>下载</a></span>
         </div>
         <p v-if="!visibleRows.length && !visibleMultiRadarTasks.length" class="empty-state">暂无任务</p>
       </div>
@@ -45,10 +45,10 @@ import type { TaskCenterTab } from "../../workbench/useWorkbenchPresentation";
 const props = withDefaults(defineProps<{ rows: readonly WorkbenchTaskRow[]; activeTab?: TaskCenterTab; multiRadarTasks?: readonly MultiRadarTask[] }>(), { activeTab: "running", multiRadarTasks: () => [] });
 type MultiRadarTaskIntent = "layers" | "files";
 
-const emit = defineEmits<{ "update:activeTab": [tab: TaskCenterTab]; "select-task": [modelId: WorkbenchTaskRow["modelId"], taskId: string]; "select-multi-radar-task": [taskId: string, intent: MultiRadarTaskIntent] }>();
+const emit = defineEmits<{ "update:activeTab": [tab: TaskCenterTab]; "select-task": [modelId: WorkbenchTaskRow["modelId"], taskId: string]; "select-multi-radar-task": [taskId: string, intent: MultiRadarTaskIntent]; "cancel-task": [modelId: WorkbenchTaskRow["modelId"], taskId: string]; "recover-task": [modelId: WorkbenchTaskRow["modelId"], taskId: string]; "cancel-multi-radar-task": [taskId: string]; "recover-multi-radar-task": [taskId: string] }>();
 const tabs: Array<{ id: TaskCenterTab; label: string }> = [{ id: "running", label: "运行中" }, { id: "history", label: "历史记录" }, { id: "logs", label: "日志" }];
 const runningRows = computed(() => props.rows.filter(isRunning));
-const visibleRows = computed(() => props.activeTab === "running" ? runningRows.value : props.rows.filter(({ task }) => task.status === "finished" || task.status === "failed"));
+const visibleRows = computed(() => props.activeTab === "running" ? runningRows.value : props.rows.filter(({ task }) => task.status === "finished" || task.status === "failed" || task.execution_state === "cancelled"));
 const runningMultiRadarTasks = computed(() => props.multiRadarTasks.filter(isMultiRadarRunning));
 const runningTaskCount = computed(() => runningRows.value.length + runningMultiRadarTasks.value.length);
 const visibleMultiRadarTasks = computed(() => props.activeTab === "running"
@@ -56,21 +56,22 @@ const visibleMultiRadarTasks = computed(() => props.activeTab === "running"
   : props.activeTab === "history"
     ? props.multiRadarTasks.filter((task) => !isMultiRadarRunning(task))
     : []);
-function isMultiRadarRunning(task: MultiRadarTask) { return task.status === "pending" || task.status === "running"; }
+function isMultiRadarRunning(task: MultiRadarTask) { return (task.status === "pending" || task.status === "running") && task.execution_state !== "cancelled"; }
 function isMultiRadarResultReady(task: MultiRadarTask) { return (task.status === "finished" || task.status === "partial") && task.result_state === "ready"; }
 function multiRadarStatusLabel(task: MultiRadarTask) { return { pending: "等待中", running: "运行中", finished: "已完成", partial: "部分完成", failed: "失败" }[task.status]; }
 function multiRadarStatusClass(task: MultiRadarTask) {
   const status = task.status;
   return status === "finished" ? "ok" : status === "failed" ? "fail" : status === "partial" ? "partial" : "run";
 }
-function isRunning(row: WorkbenchTaskRow) { return row.task.status === "pending" || row.task.status === "running"; }
+function isRunning(row: WorkbenchTaskRow) { return (row.task.status === "pending" || row.task.status === "running") && row.task.execution_state !== "cancelled"; }
 function statusClass(row: WorkbenchTaskRow) { return row.task.status === "finished" ? "ok" : row.task.status === "failed" ? "fail" : "run"; }
 function select(row: WorkbenchTaskRow) { emit("select-task", row.modelId, row.task.task_id); }
 function taskInfo(row: WorkbenchTaskRow) {
-  const summary = row.task.status === "finished" ? row.primaryMetric || row.task.message : row.task.message || row.primaryMetric;
+  const summary = queueSummary(row.task) || (row.task.status === "finished" ? row.primaryMetric || row.task.message : row.task.message || row.primaryMetric);
   return [row.task.dem_id, summary].filter(Boolean).join(" · ") || "--";
 }
 function firstDownload(row: WorkbenchTaskRow) { const file = row.task.output_files.find(({ exists, download_path }) => exists && download_path); return file?.download_path ? resolveApiUrl(file.download_path) : ""; }
+function queueSummary(task: { execution_state?: string; queue_position?: number | null; estimated_wait_seconds?: number | null }) { return task.execution_state === "queued" && task.queue_position ? `Queue #${task.queue_position}${task.estimated_wait_seconds == null ? "" : `, about ${task.estimated_wait_seconds}s`}` : task.execution_state === "cancelling" ? "Cancellation requested" : ""; }
 function shortId(id: string) { return id.length > 10 ? `T-${id.slice(0, 8)}` : id; }
 function taskTime(row: WorkbenchTaskRow) { const value = row.task.updated_at || row.task.created_at; return value ? new Date(value).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "--:--:--"; }
 function multiRadarTaskTime(task: MultiRadarTask) { const value = task.updated_at || task.created_at; return value ? new Date(value).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "--:--:--"; }

@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     data_dir: Path | None = None
     cors_origins: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173"]
     max_upload_mb: int = 500
+    max_concurrent_tasks: int = 1
     tianditu_token: SecretStr | None = None
     tianditu_referer: str | None = None
 

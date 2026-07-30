@@ -34,6 +34,7 @@ from app.services.watchpost_output_files import (
     list_watchpost_task_output_files,
 )
 from app.services.watchpost_task_store import mark_watchpost_failed, mark_watchpost_finished, mark_watchpost_running
+from app.services.task_scheduler import TaskCancelled
 
 
 class PreparedWatchpostDem:
@@ -60,6 +61,8 @@ def run_watchpost_task(task_id: str, payload: WatchpostDetectionRequest) -> None
             task_id, payload, lambda message, value: mark_watchpost_running(task_id, message, value)
         )
         mark_watchpost_finished(task_id, metrics=metrics, outputs=outputs, output_files=output_files, model=model, warnings=warnings)
+    except TaskCancelled as exc:
+        mark_watchpost_failed(task_id, str(exc))
     except Exception as exc:
         mark_watchpost_failed(task_id, str(exc))
 

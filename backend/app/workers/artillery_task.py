@@ -28,6 +28,7 @@ from app.services.artillery_output_files import (
     list_artillery_task_output_files,
 )
 from app.services.artillery_task_store import mark_artillery_failed, mark_artillery_finished, mark_artillery_running
+from app.services.task_scheduler import TaskCancelled
 from app.services.dem_store import find_dem_file
 from app.services.artifact_contracts import get_output_contract
 from app.services.artifact_store import get_artifact_store
@@ -61,6 +62,8 @@ def run_artillery_task(task_id: str, payload: ArtilleryCoverageRequest) -> None:
             task_id, payload, lambda message, value: mark_artillery_running(task_id, message, value)
         )
         mark_artillery_finished(task_id, metrics=metrics, outputs=outputs, output_files=output_files, model=model, warnings=warnings)
+    except TaskCancelled as exc:
+        mark_artillery_failed(task_id, str(exc))
     except Exception as exc:
         mark_artillery_failed(task_id, str(exc))
 

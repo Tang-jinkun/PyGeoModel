@@ -20,7 +20,10 @@ from app.services.watchpost_task_store import (
     delete_watchpost_task,
     get_watchpost_task,
     list_watchpost_tasks,
+    mark_watchpost_failed,
 )
+from app.services.task_dispatch import enqueue_task
+from app.services.task_scheduler import TaskScheduleSnapshot, get_task_scheduler
 from app.workers.watchpost_task import run_watchpost_task
 
 router = APIRouter()
@@ -37,7 +40,7 @@ def create_detection_task(payload: WatchpostDetectionRequest, background_tasks: 
         read_dem_metadata(payload.dem_id)
         find_dem_file(payload.dem_id)
         task = create_watchpost_task(payload)
-        background_tasks.add_task(run_watchpost_task, task.task_id, payload)
+        background_tasks.add_task(enqueue_task, task.task_id, "watchpost", run_watchpost_task, payload, on_cancel=lambda: mark_watchpost_failed(task.task_id, "Task cancelled by user."))
         return task
     except AppError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.as_detail()) from exc
@@ -61,7 +64,7 @@ def rerun_detection_task(task_id: str, background_tasks: BackgroundTasks, idempo
         find_dem_file(original.request.dem_id)
         task, created = create_watchpost_rerun(task_id, original.request, idempotency_key)
         if created:
-            background_tasks.add_task(run_watchpost_task, task.task_id, original.request)
+            background_tasks.add_task(enqueue_task, task.task_id, "watchpost", run_watchpost_task, original.request, on_cancel=lambda: mark_watchpost_failed(task.task_id, "Task cancelled by user."))
         return task
     except AppError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.as_detail()) from exc
@@ -96,6 +99,15 @@ def download_detection_output(task_id: str, kind: str) -> FileResponse:
         return FileResponse(path, media_type=info.media_type, filename=info.filename)
     except AppError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.as_detail()) from exc
+
+
+@router.post("/detection/{task_id}/cancel", response_model=TaskScheduleSnapshot)
+def cancel_detection_task(task_id: str) -> TaskScheduleSnapshot:
+    snapshot = get_task_scheduler().snapshot(task_id)
+    if snapshot is None:
+        raise HTTPException(status_code=409, detail={"code": "TASK_NOT_ACTIVE", "message": "Task is not queued or running in this service."})
+    get_task_scheduler().request_cancel(task_id)
+    return get_task_scheduler().snapshot(task_id) or snapshot
 
 
 @router.delete("/detection/{task_id}", response_model=WatchpostDetectionTaskDeleteResult)

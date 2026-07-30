@@ -28,6 +28,36 @@ afterEach(() => {
 });
 
 describe("useTaskManager", () => {
+  it("stops polling a cancelled task and records its execution state", async () => {
+    vi.useFakeTimers();
+    const cancel = vi.fn().mockResolvedValue({
+      state: "cancelled", queue_position: null, estimated_wait_seconds: null,
+      estimated_run_seconds: null, cancel_requested: true
+    });
+    const get = vi.fn();
+    const manager = useTaskManager({ pollIntervalMs: 100, clientFactory: () => ({ get, cancel }) });
+    manager.track("radar", task("r1", "pending", 0));
+
+    await manager.cancel("radar", "r1");
+
+    expect(cancel).toHaveBeenCalledWith("r1");
+    expect(manager.getTask("radar", "r1")?.execution_state).toBe("cancelled");
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(get).not.toHaveBeenCalled();
+    manager.dispose();
+  });
+
+  it("creates and tracks a recovery rerun", async () => {
+    const rerun = vi.fn().mockResolvedValue(task("r2", "pending", 0));
+    const manager = useTaskManager({ pollIntervalMs: 100, clientFactory: () => ({ get: vi.fn(), rerun }) });
+
+    const recovered = await manager.rerun("radar", "r1", "recover-r1-001");
+
+    expect(rerun).toHaveBeenCalledWith("r1", "recover-r1-001");
+    expect(recovered.task_id).toBe("r2");
+    expect(manager.selectedTaskKey.value).toBe("radar:r2");
+    manager.dispose();
+  });
   it("initializes task arrays for every registered model", () => {
     const manager = useTaskManager({ pollIntervalMs: 1000 });
 

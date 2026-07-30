@@ -28,14 +28,14 @@ export function buildWorkbenchTaskRows(
     modelId,
     task,
     label: MODEL_REGISTRY[modelId].label,
-    statusLabel: STATUS_LABELS[task.status],
+    statusLabel: task.execution_state === "cancelled" ? "Cancelled" : task.execution_state === "cancelling" ? "Cancelling" : STATUS_LABELS[task.status],
     primaryMetric: task.status === "finished" ? formatFirstMetric(modelId, task.metrics) : null,
     timestamp: taskTimestamp(task)
   }))).sort((left, right) => right.timestamp - left.timestamp);
 }
 
 export function isActiveTask(task: GenericTask) {
-  return task.status === "pending" || task.status === "running";
+  return (task.status === "pending" || task.status === "running") && task.execution_state !== "cancelled";
 }
 
 function formatFirstMetric(modelId: ModelId, metrics: Record<string, unknown> | null | undefined) {
