@@ -73,6 +73,15 @@ describe("SceneGlbControl", () => {
     expect(wrapper.emitted("focus")).toHaveLength(1);
   });
 
+  it("offers an explicit reset to the original GLB palette", async () => {
+    const wrapper = mount(SceneGlbControl, {
+      props: { file, state: { ...idleState, color: "#d4a017" } }
+    });
+
+    await wrapper.get('[data-scene-glb-reset-color]').trigger("click");
+    expect(wrapper.emitted("reset-color")).toEqual([[]]);
+  });
+
   it("shows an error and allows retry", async () => {
     const wrapper = mount(SceneGlbControl, {
       props: {

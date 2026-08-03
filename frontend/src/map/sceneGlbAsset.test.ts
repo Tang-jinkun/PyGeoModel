@@ -3,10 +3,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import proj4 from "proj4";
 
 import {
+  applyPreparedSceneColor,
   disposePreparedScene,
   fetchSceneGlb,
   inheritedUserData,
-  prepareStaticScene
+  prepareStaticScene,
+  restorePreparedSceneColors
 } from "./sceneGlbAsset";
 import type { Scene3dMetadata } from "./sceneGlbGeoReference";
 
@@ -61,7 +63,7 @@ describe("static scene GLB preparation", () => {
       status: "active",
       role: "body"
     });
-    expect(flattened.material).toBe(material);
+    expect(flattened.material).not.toBe(material);
   });
 
   it("bakes node transforms, preserves semantics, and returns finite bounds", () => {
@@ -91,6 +93,32 @@ describe("static scene GLB preparation", () => {
     const prepared = asset.group.children[0] as THREE.Mesh;
 
     expect((prepared.material as THREE.Material).depthWrite).toBe(false);
+  });
+
+  it("tints GLB materials while retaining their original palette and can restore it", () => {
+    const root = new THREE.Group();
+    const standard = new THREE.MeshStandardMaterial({ color: "#d946ef" });
+    const basic = new THREE.MeshBasicMaterial({ color: "#2563eb" });
+    root.add(new THREE.Mesh(new THREE.BoxGeometry(), standard));
+    root.add(new THREE.Mesh(new THREE.BoxGeometry(), basic));
+    const asset = prepareStaticScene(root, metadata, []);
+    const originalColors = asset.group.children.map((child) => (
+      ((child as THREE.Mesh).material as THREE.MeshBasicMaterial).color.getHexString()
+    ));
+
+    applyPreparedSceneColor(asset, "#d4a017");
+
+    const tintedColors = asset.group.children.map((child) => (
+      ((child as THREE.Mesh).material as THREE.MeshBasicMaterial).color.getHexString()
+    ));
+    expect(tintedColors).not.toEqual(originalColors);
+    expect(tintedColors[0]).not.toBe(tintedColors[1]);
+
+    restorePreparedSceneColors(asset);
+    for (const [index, child] of asset.group.children.entries()) {
+      const material = (child as THREE.Mesh).material as THREE.MeshBasicMaterial;
+      expect(material.color.getHexString()).toBe(originalColors[index]);
+    }
   });
 
   it("retains standard animations while rejecting skinned meshes", () => {
@@ -128,7 +156,7 @@ describe("static scene GLB preparation", () => {
     const prepared = asset.group.children[0] as THREE.Mesh;
     asset.group.add(new THREE.Mesh(prepared.geometry, prepared.material));
     const geometryDispose = vi.spyOn(prepared.geometry, "dispose");
-    const materialDispose = vi.spyOn(material, "dispose");
+    const materialDispose = vi.spyOn(prepared.material as THREE.Material, "dispose");
 
     disposePreparedScene(asset);
     disposePreparedScene(asset);

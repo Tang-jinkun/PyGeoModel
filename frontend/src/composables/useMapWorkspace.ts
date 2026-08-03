@@ -5,6 +5,7 @@ import { createTaskClient } from "../api/tasks";
 import { fitGeoJsonBounds } from "../map/mapLayers";
 import type { Map as MapInstance } from "../map/mapEngineTypes";
 import {
+  applyPreparedSceneColor,
   disposePreparedScene,
   fetchSceneGlb,
   parseSceneGlb,
@@ -15,7 +16,9 @@ import {
   focusSceneGlbLayer,
   focusSceneGlbLayers,
   removeAllSceneGlbLayers,
-  removeSceneGlbLayer
+  removeSceneGlbLayer,
+  restoreSceneGlbLayerColors,
+  setSceneGlbLayerColor
 } from "../map/sceneGlbLayer";
 import {
   createSpatialDraft,
@@ -36,6 +39,7 @@ export interface TaskOutputLayerState {
   status: TaskOutputLayerStatus;
   visible: boolean;
   opacity: number;
+  color?: string;
   data: GeoJSON.GeoJSON | null;
   error: string | null;
 }
@@ -49,6 +53,7 @@ export interface SceneGlbOverlayState {
   demId: string;
   status: SceneGlbOverlayStatus;
   visible: boolean;
+  color?: string;
   progress: SceneGlbProgress | null;
   error: string | null;
 }
@@ -59,6 +64,8 @@ export interface SceneGlbLoadRequest {
   assetId: string;
   kind: SceneGlbKind;
   foreground: boolean;
+  color?: string;
+  colorReference: string;
   modelId: string;
   url: string;
   signal: AbortSignal;
@@ -72,6 +79,8 @@ export interface SceneGlbAdapter {
   removeAll(map: MapInstance): void;
   focus(map: MapInstance, taskId: string): boolean;
   focusMany?(map: MapInstance, taskIds: string[]): boolean;
+  setColor?(map: MapInstance, taskId: string, color: string, referenceColor: string): boolean;
+  restoreColor?(map: MapInstance, taskId: string): boolean;
 }
 
 export type RadarTaskSummary = TaskSummary<RadarRequest, RadarMetrics, RadarModelMetadata, RadarDiagnostics>;
@@ -111,6 +120,7 @@ const DEFAULT_SCENE_GLB_ADAPTER: SceneGlbAdapter = {
       throw abortError();
     }
     try {
+      if (request.color) applyPreparedSceneColor(asset, request.color, request.colorReference);
       addSceneGlbLayer(request.map, request.assetId, asset, {
         foreground: request.foreground,
         onLost: request.onLayerLost
@@ -123,7 +133,14 @@ const DEFAULT_SCENE_GLB_ADAPTER: SceneGlbAdapter = {
   remove: removeSceneGlbLayer,
   removeAll: removeAllSceneGlbLayers,
   focus: focusSceneGlbLayer,
-  focusMany: focusSceneGlbLayers
+  focusMany: focusSceneGlbLayers,
+  setColor: setSceneGlbLayerColor,
+  restoreColor: restoreSceneGlbLayerColors
+};
+
+const SCENE_GLB_DEFAULT_COLORS: Record<SceneGlbKind, string> = {
+  scene_glb: "#0f9f78",
+  radar_platform_glb: "#d99a24"
 };
 
 const SCENE_METADATA_MODEL_IDS: Record<ModelId, string> = {
@@ -287,6 +304,11 @@ export function useMapWorkspace(kind: SpatialInputKind, initialDraft?: SpatialDr
     updateLayer(outputLoadVersion, kind, { opacity: Math.min(1, Math.max(0, opacity)) });
   }
 
+  function setTaskLayerColor(kind: string, color: string) {
+    if (!isCssHexColor(color)) return;
+    updateLayer(outputLoadVersion, kind, { color });
+  }
+
   async function focusTaskLayer(map: MapInstance, kind: string) {
     await loadTaskLayer(kind);
     const layer = layerStates.value.find((candidate) => candidate.kind === kind);
@@ -366,6 +388,8 @@ export function useMapWorkspace(kind: SpatialInputKind, initialDraft?: SpatialDr
         assetId,
         kind,
         foreground,
+        color: sceneGlbStates.value[assetId]?.color,
+        colorReference: SCENE_GLB_DEFAULT_COLORS[kind],
         modelId: sceneMetadataModelId(modelId),
         url,
         signal: controller.signal,
@@ -424,6 +448,24 @@ export function useMapWorkspace(kind: SpatialInputKind, initialDraft?: SpatialDr
     kind: SceneGlbKind = "scene_glb"
   ) {
     return sceneGlb.focus(map, sceneAssetId(taskId, kind));
+  }
+
+  function setSceneGlbColor(
+    map: MapInstance,
+    taskId: string,
+    kind: SceneGlbKind,
+    color: string
+  ) {
+    if (!isCssHexColor(color)) return;
+    const assetId = sceneAssetId(taskId, kind);
+    updateSceneGlbState(assetId, { color });
+    sceneGlb.setColor?.(map, assetId, color, SCENE_GLB_DEFAULT_COLORS[kind]);
+  }
+
+  function restoreSceneGlbColor(map: MapInstance, taskId: string, kind: SceneGlbKind) {
+    const assetId = sceneAssetId(taskId, kind);
+    updateSceneGlbState(assetId, { color: undefined });
+    sceneGlb.restoreColor?.(map, assetId);
   }
 
   function focusSceneGlbs(
@@ -538,9 +580,12 @@ export function useMapWorkspace(kind: SpatialInputKind, initialDraft?: SpatialDr
     loadTaskOutputs,
     setTaskLayerVisibility,
     setTaskLayerOpacity,
+    setTaskLayerColor,
     focusTaskLayer,
     sceneGlbStateFor,
     setSceneGlbVisibility,
+    setSceneGlbColor,
+    restoreSceneGlbColor,
     focusSceneGlb,
     focusSceneGlbs,
     removeSceneGlb,
@@ -588,7 +633,7 @@ function sceneAssetId(taskId: string, kind: SceneGlbKind) {
 }
 
 function createLayerState(
-  layer: { kind: string; defaultOpacity: number; primary?: boolean },
+  layer: { kind: string; defaultOpacity: number; color: string; primary?: boolean },
   status: TaskOutputLayerStatus
 ): TaskOutputLayerState {
   return {
@@ -596,6 +641,7 @@ function createLayerState(
     status,
     visible: Boolean(layer.primary),
     opacity: layer.defaultOpacity,
+    color: layer.color,
     data: null,
     error: null
   };
@@ -646,4 +692,8 @@ function isAbortError(error: unknown) {
 
 function abortError() {
   return new DOMException("GLB loading was aborted", "AbortError");
+}
+
+function isCssHexColor(value: string) {
+  return /^#[0-9a-f]{6}$/i.test(value);
 }

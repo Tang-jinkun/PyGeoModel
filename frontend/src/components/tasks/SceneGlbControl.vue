@@ -5,7 +5,7 @@
     :data-scene-glb-kind="file.kind"
     :title="`任务 ${state.taskId}`"
   >
-    <span class="scene-glb-row__swatch" aria-hidden="true" />
+    <span class="scene-glb-row__swatch" :style="{ backgroundColor: displayColor, borderColor: displayColor }" aria-hidden="true" />
     <div class="scene-glb-row__identity">
       <strong>三维结果 · {{ displayLabel }}</strong>
       <span :data-state="state.status">任务 {{ shortTaskId }} · {{ stateText }}</span>
@@ -17,6 +17,25 @@
       :aria-label="`显示${file.label}`"
       @change="emit('visibility', Boolean($event))"
     />
+    <input
+      class="scene-glb-row__color"
+      type="color"
+      data-scene-glb-color
+      :value="displayColor"
+      aria-label="3D result color"
+      @input="emitColor($event)"
+    >
+    <ElTooltip content="恢复原始配色" placement="top" :show-after="300">
+      <button
+        type="button"
+        class="scene-glb-row__reset"
+        data-scene-glb-reset-color
+        aria-label="恢复原始配色"
+        @click="emit('reset-color')"
+      >
+        <ElIcon><Refresh /></ElIcon>
+      </button>
+    </ElTooltip>
     <ElTooltip content="定位三维结果" placement="top" :show-after="300">
       <button
         type="button"
@@ -33,7 +52,7 @@
 </template>
 
 <script setup lang="ts">
-import { Location } from "@element-plus/icons-vue";
+import { Location, Refresh } from "@element-plus/icons-vue";
 import { ElIcon, ElSwitch, ElTooltip } from "element-plus";
 import { computed } from "vue";
 
@@ -48,11 +67,16 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   visibility: [visible: boolean];
+  color: [color: string];
+  "reset-color": [];
   focus: [];
 }>();
 
 const shortTaskId = computed(() => props.state.taskId.slice(-8));
 const displayLabel = computed(() => props.file.label.replace(/ 3D Result GLB$/, " Planning"));
+const displayColor = computed(() => (
+  props.state.color ?? (props.file.kind === "radar_platform_glb" ? "#d99a24" : "#0f9f78")
+));
 const switchOn = computed(() => (
   props.state.status === "loading" || props.state.status === "visible"
 ));
@@ -76,12 +100,16 @@ const stateText = computed(() => {
   }
   return "未加载";
 });
+
+function emitColor(event: Event) {
+  emit("color", (event.target as HTMLInputElement).value);
+}
 </script>
 
 <style scoped>
 .scene-glb-row {
   display: grid;
-  grid-template-columns: 10px minmax(0, 1fr) 42px 30px;
+  grid-template-columns: 10px minmax(0, 1fr) 42px 28px 30px 30px;
   align-items: center;
   gap: 8px;
   min-width: 0;
@@ -95,6 +123,15 @@ const stateText = computed(() => {
   background: #0f9f78;
   border: 1px solid #08745a;
   border-radius: 2px;
+}
+
+.scene-glb-row__color {
+  width: 28px;
+  height: 28px;
+  padding: 2px;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
 }
 
 .scene-glb-row[data-scene-glb-kind="radar_platform_glb"] .scene-glb-row__swatch {
@@ -140,6 +177,25 @@ const stateText = computed(() => {
   border: 1px solid transparent;
   border-radius: 4px;
   cursor: pointer;
+}
+
+.scene-glb-row__reset {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  place-items: center;
+  color: #475569;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.scene-glb-row__reset:hover {
+  color: #1d4ed8;
+  background: #eff6ff;
+  border-color: #bfdbfe;
 }
 
 .scene-glb-row__focus:hover:not(:disabled) {

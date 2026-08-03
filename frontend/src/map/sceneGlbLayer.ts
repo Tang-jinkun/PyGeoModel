@@ -3,7 +3,13 @@ import * as THREE from "three";
 import { customLayerProjectionMatrix } from "./customLayerProjection";
 import { DEM_TERRAIN_SOURCE_ID } from "./mapLayers";
 import type { CustomLayerInterface, Map as MapInstance } from "./mapEngineTypes";
-import { disposePreparedScene, type PreparedSceneGlb, type SceneGlbBounds } from "./sceneGlbAsset";
+import {
+  applyPreparedSceneColor,
+  disposePreparedScene,
+  restorePreparedSceneColors,
+  type PreparedSceneGlb,
+  type SceneGlbBounds
+} from "./sceneGlbAsset";
 
 const DEFAULT_TERRAIN_EXAGGERATION = 1.35;
 const TRUE_SCALE_TERRAIN_EXAGGERATION = 1;
@@ -104,6 +110,27 @@ function focusSceneGlbBounds(map: MapInstance, bounds: SceneGlbBounds[]) {
 
 export function hasSceneGlbLayer(map: MapInstance, taskId: string) {
   return registry.get(map)?.has(taskId) ?? false;
+}
+
+export function setSceneGlbLayerColor(
+  map: MapInstance,
+  taskId: string,
+  color: string,
+  referenceColor?: string
+) {
+  const asset = registry.get(map)?.get(taskId)?.asset;
+  if (!asset) return false;
+  applyPreparedSceneColor(asset, color, referenceColor);
+  map.triggerRepaint();
+  return true;
+}
+
+export function restoreSceneGlbLayerColors(map: MapInstance, taskId: string) {
+  const asset = registry.get(map)?.get(taskId)?.asset;
+  if (!asset) return false;
+  restorePreparedSceneColors(asset);
+  map.triggerRepaint();
+  return true;
 }
 
 export function getSceneGlbTerrainTaskCount(map: MapInstance) {

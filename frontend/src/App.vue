@@ -2,7 +2,7 @@
   <GisWorkbenchShell :tasks-collapsed="presentation.taskCenterCollapsed.value" :inspector-open="presentation.inspectorMode.value === 'result' && Boolean(selectedWorkbenchResultContext)" @update:tasks-collapsed="presentation.toggleTaskCenter">
     <template #topbar><WorkbenchTopbar :dem-label="selectedDem?.filename ?? 'No DEM selected'" :connected="!taskManager.connectionInterrupted.value" :search="modelSearch" @update:search="modelSearch = $event" /></template>
     <template #dock>
-  <WorkbenchDock :model-value="workspace.selectedModel.value" :active-tab="presentation.dockTab.value" :model-search="modelSearch" :layer-definitions="selectedLayerDefinitions" :layer-states="selectedLayerStates" :scene-entries="workbenchSceneEntries" :multi-radar-stations="activeMultiRadarTask?.stations ?? []" @select-model="selectWorkbenchModel" @update:active-tab="presentation.selectDockTab" @update:model-search="modelSearch = $event" @update-layer-visibility="setLayerVisibility" @update-layer-opacity="setLayerOpacity" @focus-layer="focusLayer" @update-scene-glb="setWorkbenchSceneVisibility" @focus-scene-glb="focusWorkbenchScene" @focus-station="focusMultiRadarStation">
+  <WorkbenchDock :model-value="workspace.selectedModel.value" :active-tab="presentation.dockTab.value" :model-search="modelSearch" :layer-definitions="selectedLayerDefinitions" :layer-states="selectedLayerStates" :scene-entries="workbenchSceneEntries" :multi-radar-stations="activeMultiRadarTask?.stations ?? []" @select-model="selectWorkbenchModel" @update:active-tab="presentation.selectDockTab" @update:model-search="modelSearch = $event" @update-layer-visibility="setLayerVisibility" @update-layer-opacity="setLayerOpacity" @update-layer-color="setLayerColor" @focus-layer="focusLayer" @update-scene-glb="setWorkbenchSceneVisibility" @update-scene-glb-color="setWorkbenchSceneColor" @reset-scene-glb-color="resetWorkbenchSceneColor" @focus-scene-glb="focusWorkbenchScene" @focus-station="focusMultiRadarStation">
         <template #data><WorkbenchDataPane :dems="demManager.dems.value" :model-value="demManager.selectedDem.value" :loading="demManager.loading.value" :uploading="demManager.uploading.value" @update:model-value="demManager.select" @upload="(file) => runCommand(demManager.upload, file)" @delete="(demId) => runCommand(demManager.remove, demId)" @refresh="runCommand(demManager.load)" /></template>
       </WorkbenchDock>
     </template>
@@ -167,8 +167,11 @@
             :radar-platform-glb-state="mapWorkspace.sceneGlbStateFor(selectedTaskContext.task.task_id, 'radar_platform_glb')"
             @layer-visibility="setLayerVisibility"
             @layer-opacity="setLayerOpacity"
+            @layer-color="setLayerColor"
             @layer-focus="focusLayer"
             @scene-glb-visibility="setSceneGlbVisibility"
+            @scene-glb-color="setSceneGlbColor"
+            @scene-glb-reset-color="resetSceneGlbColor"
             @scene-glb-focus="focusSceneGlb"
             @rerun="rerunTask(selectedTaskContext.modelId, selectedTaskContext.task)"
           />
@@ -969,6 +972,15 @@ function setLayerOpacity(kind: string, opacity: number) {
   mapWorkspace.setTaskLayerOpacity(kind, opacity);
 }
 
+function setLayerColor(kind: string, color: string) {
+  if (selectedMultiRadarResultTask.value) {
+    if (map.value) multiRadarAdapter.setLayerColor(map.value, kind, color);
+    multiRadarLayerVersion.value += 1;
+    return;
+  }
+  mapWorkspace.setTaskLayerColor(kind, color);
+}
+
 async function focusLayer(kind: string) {
   if (selectedMultiRadarResultTask.value) {
     if (map.value) multiRadarAdapter.focusLayer(map.value, kind);
@@ -984,6 +996,7 @@ function idleSceneState(taskId: string, demId: string): SceneGlbOverlayState {
     demId,
     status: "idle",
     visible: false,
+    color: "#0f9f78",
     progress: null,
     error: null
   };
@@ -1033,6 +1046,18 @@ async function setWorkbenchSceneVisibility(entryId: string, visible: boolean) {
   );
 }
 
+function setWorkbenchSceneColor(entryId: string, color: string) {
+  const instance = map.value;
+  const entry = workbenchSceneEntries.value.find((candidate) => candidate.id === entryId);
+  if (instance && entry) mapWorkspace.setSceneGlbColor(instance, entry.taskId, entry.kind, color);
+}
+
+function resetWorkbenchSceneColor(entryId: string) {
+  const instance = map.value;
+  const entry = workbenchSceneEntries.value.find((candidate) => candidate.id === entryId);
+  if (instance && entry) mapWorkspace.restoreSceneGlbColor(instance, entry.taskId, entry.kind);
+}
+
 function focusWorkbenchScene(entryId: string) {
   const instance = map.value;
   const entry = workbenchSceneEntries.value.find((candidate) => candidate.id === entryId);
@@ -1063,6 +1088,18 @@ async function setSceneGlbVisibility(
   );
 }
 
+function setSceneGlbColor(kind: SceneGlbKind, color: string) {
+  const instance = map.value;
+  const context = selectedTaskContext.value;
+  if (instance && context) mapWorkspace.setSceneGlbColor(instance, context.task.task_id, kind, color);
+}
+
+function resetSceneGlbColor(kind: SceneGlbKind) {
+  const instance = map.value;
+  const context = selectedTaskContext.value;
+  if (instance && context) mapWorkspace.restoreSceneGlbColor(instance, context.task.task_id, kind);
+}
+
 function focusSceneGlb(kind: SceneGlbKind = "scene_glb") {
   const instance = map.value;
   const context = selectedTaskContext.value;
@@ -1083,7 +1120,7 @@ function renderTaskLayers() {
     if (!definition) continue;
     const id = `task-output-${sanitizeId(state.kind)}`;
     activeIds.add(id);
-    renderGeoJsonLayer(instance, id, state.data, definition, state.visible, state.opacity);
+    renderGeoJsonLayer(instance, id, state.data, { ...definition, color: state.color ?? definition.color }, state.visible, state.opacity);
   }
   for (const id of [...renderedTaskLayers.keys()]) {
     if (!activeIds.has(id)) removeGeoJsonLayer(instance, id);

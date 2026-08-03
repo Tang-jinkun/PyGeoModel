@@ -106,6 +106,7 @@ def build_coverage_artifacts(
             task_id=task_id,
             prepared=prepared,
             payload=payload,
+            effective_range_m=scene_metadata["effective_max_range_m"],
             scan_azimuths_deg=scene_metadata["scan_animation"]["azimuth_deg"],
         )
 

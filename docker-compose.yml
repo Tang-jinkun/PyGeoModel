@@ -6,7 +6,7 @@ services:
       args:
         DEBIAN_MIRROR: https://mirrors.cloud.tencent.com/debian
         DEBIAN_SECURITY_MIRROR: https://mirrors.cloud.tencent.com/debian-security
-        PIP_INDEX_URL: https://pypi.org/simple
+        PIP_INDEX_URL: https://mirrors.cloud.tencent.com/pypi/simple/
     environment:
       PYGEOMODEL_DATA_DIR: /workspace/data
       PYGEOMODEL_CORS_ORIGINS: '${PYGEOMODEL_CORS_ORIGINS:-["http://localhost:5173","http://127.0.0.1:5173"]}'
@@ -28,6 +28,6 @@ services:
     environment:
       PYGEOMODEL_API_BASE_URL: '${PYGEOMODEL_API_BASE_URL-}'
     ports:
-      - "${PYGEOMODEL_FRONTEND_BIND:-127.0.0.1}:5173:5173"
+      - "${PYGEOMODEL_FRONTEND_BIND:-127.0.0.1}:${PYGEOMODEL_FRONTEND_PORT:-5173}:5173"
     depends_on:
       - backend

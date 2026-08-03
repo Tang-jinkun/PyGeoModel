@@ -37,6 +37,29 @@ describe("WorkbenchDock", () => {
     expect(wrapper.text()).toContain("active DEM content");
   });
 
+  it("emits independent colour updates for GeoJSON and GLB results", async () => {
+    const wrapper = mount(WorkbenchDock, {
+      props: {
+        modelValue: "radar",
+        layerDefinitions: [{ kind: "visible_geojson", label: "Visible", color: "#16a34a", geometry: "fill", defaultOpacity: 0.2 }],
+        layerStates: [{ kind: "visible_geojson", status: "ready", visible: true, opacity: 0.2, color: "#16a34a", data: { type: "FeatureCollection", features: [] }, error: null }],
+        sceneEntries: [{ id: "task-1:scene_glb", taskId: "task-1", kind: "scene_glb", file: sceneFile(), state: readyScene() }]
+      }
+    });
+
+    await wrapper.get('[data-dock-tab="layers"]').trigger("click");
+    expect(wrapper.find('[data-layer-kind="visible_geojson"] .layer-row__color').exists()).toBe(true);
+    expect(wrapper.find('[data-layer-kind="visible_geojson"] > i').exists()).toBe(false);
+    expect(wrapper.find('[data-layer-id="task-1:scene_glb"] .layer-row__color').exists()).toBe(true);
+    await wrapper.get('[data-layer-kind="visible_geojson"] [data-layer-color]').setValue("#d4a017");
+    await wrapper.get('[data-layer-id="task-1:scene_glb"] [data-scene-glb-color]').setValue("#d4a017");
+    await wrapper.get('[data-layer-id="task-1:scene_glb"] [data-scene-glb-reset-color]').trigger("click");
+
+    expect(wrapper.emitted("update-layer-color")?.[0]).toEqual(["visible_geojson", "#d4a017"]);
+    expect(wrapper.emitted("update-scene-glb-color")?.[0]).toEqual(["task-1:scene_glb", "#d4a017"]);
+    expect(wrapper.emitted("reset-scene-glb-color")?.[0]).toEqual(["task-1:scene_glb"]);
+  });
+
   it("does not render the deprecated radar-scene folder after an analysis", async () => {
     const wrapper = mount(WorkbenchDock, { props: { modelValue: "radar" } });
 

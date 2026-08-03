@@ -21,6 +21,8 @@ from app.services.projection import utm_epsg_from_lonlat
 MIN_DEM_COVERAGE_RATIO = 0.5
 WARN_DEM_COVERAGE_RATIO = 0.98
 PROJECTED_DEM_NODATA = -3.4028235e38
+LOWEST_PLAUSIBLE_TERRAIN_ELEVATION_M = -20_000.0
+MIN_VALID_ELEVATION_WEIGHT = 1e-6
 COVERAGE_RATIO_ROW_CHUNK_SIZE = 256
 MAX_COVERAGE_CELLS = 16_777_216
 
@@ -39,6 +41,30 @@ class PreparedCoverageDem:
     analysis_domain: numpy.ndarray | None = None
     beam_clip_profile_m: tuple[float, ...] = ()
     beam_clip_azimuth_step_deg: float = 2.0
+
+
+def normalize_weighted_elevation(
+    elevation_sum: numpy.ndarray,
+    valid_weight: numpy.ndarray,
+) -> tuple[numpy.ndarray, numpy.ndarray]:
+    """Normalize bilinearly resampled elevations without blending in nodata."""
+    elevation_sum = numpy.asarray(elevation_sum, dtype=numpy.float32)
+    valid_weight = numpy.asarray(valid_weight, dtype=numpy.float32)
+    if elevation_sum.shape != valid_weight.shape:
+        raise ValueError("Elevation sums and weights must share one shape.")
+    elevation = numpy.full(elevation_sum.shape, PROJECTED_DEM_NODATA, dtype=numpy.float32)
+    valid = (
+        numpy.isfinite(elevation_sum)
+        & numpy.isfinite(valid_weight)
+        & (valid_weight > MIN_VALID_ELEVATION_WEIGHT)
+    )
+    numpy.divide(elevation_sum, valid_weight, out=elevation, where=valid)
+    valid &= (
+        numpy.isfinite(elevation)
+        & (elevation >= LOWEST_PLAUSIBLE_TERRAIN_ELEVATION_M)
+    )
+    elevation[~valid] = PROJECTED_DEM_NODATA
+    return elevation, valid
 
 
 def prepare_coverage_dem(source: Path, destination: Path, payload: CoverageRequest) -> PreparedCoverageDem:
@@ -140,36 +166,37 @@ def prepare_coverage_dem(source: Path, destination: Path, payload: CoverageReque
         )
 
         source_data = src.read(1, window=window, masked=True)
-        source_values = numpy.asarray(source_data)
+        source_values = numpy.asarray(source_data, dtype=numpy.float32)
         source_valid = (
-            ~numpy.ma.getmaskarray(source_data) & numpy.isfinite(source_values)
-        ).astype(numpy.uint8)
-        source_array = numpy.where(
-            source_valid,
-            source_values,
-            PROJECTED_DEM_NODATA,
-        ).astype(numpy.float32)
-        destination_array = numpy.full(
-            (dst_height, dst_width),
-            PROJECTED_DEM_NODATA,
-            dtype=numpy.float32,
+            ~numpy.ma.getmaskarray(source_data)
+            & numpy.isfinite(source_values)
+            & (source_values >= LOWEST_PLAUSIBLE_TERRAIN_ELEVATION_M)
         )
-        destination_valid = numpy.zeros((dst_height, dst_width), dtype=numpy.uint8)
+        source_array = numpy.where(source_valid, source_values, 0.0).astype(numpy.float32)
+        destination_sum = numpy.zeros((dst_height, dst_width), dtype=numpy.float32)
+        destination_weight = numpy.zeros((dst_height, dst_width), dtype=numpy.float32)
+        destination_nearest_valid = numpy.zeros((dst_height, dst_width), dtype=numpy.uint8)
 
         reproject(
-            source=source_array,
-            destination=destination_array,
+            source=source_array, destination=destination_sum,
             src_transform=crop_transform,
             src_crs=src.crs,
-            src_nodata=PROJECTED_DEM_NODATA,
             dst_transform=dst_transform,
             dst_crs=target_crs,
-            dst_nodata=PROJECTED_DEM_NODATA,
             resampling=Resampling.bilinear,
         )
         reproject(
-            source=source_valid,
-            destination=destination_valid,
+            source=source_valid.astype(numpy.float32),
+            destination=destination_weight,
+            src_transform=crop_transform,
+            src_crs=src.crs,
+            dst_transform=dst_transform,
+            dst_crs=target_crs,
+            resampling=Resampling.bilinear,
+        )
+        reproject(
+            source=source_valid.astype(numpy.uint8),
+            destination=destination_nearest_valid,
             src_transform=crop_transform,
             src_crs=src.crs,
             src_nodata=0,
@@ -178,6 +205,11 @@ def prepare_coverage_dem(source: Path, destination: Path, payload: CoverageReque
             dst_nodata=0,
             resampling=Resampling.nearest,
         )
+        destination_array, destination_valid = normalize_weighted_elevation(
+            destination_sum, destination_weight
+        )
+        destination_valid &= destination_nearest_valid.astype(bool)
+        destination_array[~destination_valid] = PROJECTED_DEM_NODATA
 
         destination.parent.mkdir(parents=True, exist_ok=True)
         with rasterio.open(destination, "w", **kwargs) as dst:

@@ -94,6 +94,48 @@ def test_fusion_glb_fills_projected_dem_nodata_sentinel(tmp_path: Path) -> None:
     assert numpy.abs(_glb_vertices(path)).max() < 10_000
 
 
+def test_fusion_glb_fills_interpolated_nodata_artifacts(tmp_path: Path) -> None:
+    counts = FusionHeightCounts(
+        target_epsg=32644,
+        transform=from_origin(400_000, 3_500_000, 100, 100),
+        heights_m=numpy.array([0, 200, 500], dtype=numpy.float32),
+        coverage_count=numpy.ones((3, 3, 3), dtype=numpy.uint16),
+        terrain_m=numpy.array([
+            [-2.2394891524064644e38, 1200, 1200],
+            [1200, 1200, 1200],
+            [1200, 1200, 1200],
+        ], dtype=numpy.float32),
+    )
+    path = tmp_path / "fusion_scene.glb"
+
+    write_multi_radar_fusion_glb(
+        path, task_id="multi_task_interpolated_nodata", counts=counts
+    )
+
+    assert numpy.abs(_glb_vertices(path)).max() < 10_000
+
+
+def test_fusion_glb_fills_implausibly_low_terrain(tmp_path: Path) -> None:
+    counts = FusionHeightCounts(
+        target_epsg=32644,
+        transform=from_origin(400_000, 3_500_000, 100, 100),
+        heights_m=numpy.array([0, 200, 500], dtype=numpy.float32),
+        coverage_count=numpy.ones((3, 3, 3), dtype=numpy.uint16),
+        terrain_m=numpy.array([
+            [-100_000, 1200, 1200],
+            [1200, 1200, 1200],
+            [1200, 1200, 1200],
+        ], dtype=numpy.float32),
+    )
+    path = tmp_path / "fusion_scene.glb"
+
+    write_multi_radar_fusion_glb(
+        path, task_id="multi_task_low_terrain", counts=counts
+    )
+
+    assert numpy.abs(_glb_vertices(path)).max() < 10_000
+
+
 def test_cooperative_intersection_glb_contains_only_common_detection_mesh(tmp_path: Path) -> None:
     counts = FusionHeightCounts(
         target_epsg=32644,

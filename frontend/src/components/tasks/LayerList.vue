@@ -2,7 +2,7 @@
   <div class="task-layer-list">
     <p v-if="!rows.length" class="task-layer-list__empty">暂无可加载图层</p>
     <div v-for="row in rows" :key="row.definition.kind" class="task-layer-row">
-      <span class="task-layer-row__swatch" :style="{ backgroundColor: row.definition.color }" aria-hidden="true" />
+      <span class="task-layer-row__swatch" :style="{ backgroundColor: row.state.color ?? row.definition.color }" aria-hidden="true" />
       <div class="task-layer-row__identity">
         <strong>{{ layerLabel(row.definition.kind, row.definition.label) }}</strong>
         <span :data-state="row.state.status">{{ stateLabel(row.state) }}</span>
@@ -16,6 +16,15 @@
           @change="emitVisibility(row.state.kind, $event)"
         >
       </label>
+      <input
+        class="task-layer-row__color"
+        type="color"
+        data-layer-color
+        :value="row.state.color ?? row.definition.color"
+        :disabled="row.state.status === 'loading'"
+        :aria-label="`${layerLabel(row.definition.kind, row.definition.label)} color`"
+        @input="emitColor(row.state.kind, $event)"
+      >
       <input
         class="task-layer-row__opacity"
         type="range"
@@ -58,6 +67,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   visibility: [kind: string, visible: boolean];
   opacity: [kind: string, opacity: number];
+  color: [kind: string, color: string];
   focus: [kind: string];
 }>();
 
@@ -75,6 +85,7 @@ const rows = computed(() => props.definitions.map((definition) => ({
     status: "idle" as const,
     visible: Boolean(definition.primary),
     opacity: definition.defaultOpacity,
+    color: definition.color,
     data: null,
     error: null
   }
@@ -98,6 +109,10 @@ function emitVisibility(kind: string, event: Event) {
 function emitOpacity(kind: string, event: Event) {
   emit("opacity", kind, Number((event.target as HTMLInputElement).value));
 }
+
+function emitColor(kind: string, event: Event) {
+  emit("color", kind, (event.target as HTMLInputElement).value);
+}
 </script>
 
 <style scoped>
@@ -113,7 +128,7 @@ function emitOpacity(kind: string, event: Event) {
 
 .task-layer-row {
   display: grid;
-  grid-template-columns: 10px minmax(92px, 1fr) 30px minmax(72px, 110px) 30px;
+  grid-template-columns: 10px minmax(76px, 1fr) 30px 28px minmax(60px, 96px) 30px;
   align-items: center;
   gap: 8px;
   min-height: 48px;
@@ -171,6 +186,20 @@ function emitOpacity(kind: string, event: Event) {
 .task-layer-row__opacity {
   width: 100%;
   accent-color: #2563eb;
+}
+
+.task-layer-row__color {
+  width: 28px;
+  height: 28px;
+  padding: 2px;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.task-layer-row__color:disabled {
+  cursor: default;
+  opacity: 0.35;
 }
 
 .task-layer-row__focus {

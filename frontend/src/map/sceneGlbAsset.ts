@@ -23,6 +23,7 @@ export interface PreparedSceneGlb {
   bounds: SceneGlbBounds;
   metadata: Scene3dMetadata;
   animations: THREE.AnimationClip[];
+  originalMaterialColors?: Map<THREE.Material, THREE.Color>;
   disposed: boolean;
 }
 
@@ -116,6 +117,7 @@ export function prepareStaticScene(
     maxAltitudeM: -Infinity
   };
   let vertexCount = 0;
+  const originalMaterialColors = new Map<THREE.Material, THREE.Color>();
 
   root.traverse((object) => {
     if (!(object instanceof THREE.Mesh)) return;
@@ -146,8 +148,11 @@ export function prepareStaticScene(
     geometry.computeBoundingSphere();
     geometry.computeVertexNormals();
 
-    const mesh = new THREE.Mesh(geometry, object.material);
+    const mesh = new THREE.Mesh(geometry, cloneMeshMaterials(object.material));
     for (const material of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) {
+      if ("color" in material && material.color instanceof THREE.Color) {
+        originalMaterialColors.set(material, material.color.clone());
+      }
       if (!material.transparent) continue;
       material.depthWrite = false;
       material.needsUpdate = true;
@@ -172,6 +177,7 @@ export function prepareStaticScene(
     bounds,
     metadata,
     animations: [...animations],
+    originalMaterialColors,
     disposed: false
   };
 }
@@ -198,7 +204,37 @@ export function disposePreparedScene(asset: PreparedSceneGlb) {
   for (const geometry of geometries) geometry.dispose();
   for (const texture of textures) texture.dispose();
   for (const material of materials) material.dispose();
+  asset.originalMaterialColors?.clear();
   asset.group.clear();
+}
+
+export function applyPreparedSceneColor(
+  asset: PreparedSceneGlb,
+  color: string,
+  referenceColor = "#0f9f78"
+) {
+  if (!isCssHexColor(color)) return;
+  const targetHue = new THREE.Color(color).getHSL({ h: 0, s: 0, l: 0 }).h;
+  const referenceHue = new THREE.Color(referenceColor).getHSL({ h: 0, s: 0, l: 0 }).h;
+  const hueOffset = targetHue - referenceHue;
+  for (const [material, originalColor] of asset.originalMaterialColors ?? []) {
+    if (!("color" in material) || !(material.color instanceof THREE.Color)) continue;
+    const original = originalColor.getHSL({ h: 0, s: 0, l: 0 });
+    const next = material.color.getHSL({ h: 0, s: 0, l: 0 });
+    next.h = normalizeHue(original.h + hueOffset);
+    next.s = original.s < 0.12 ? Math.max(original.s, 0.42) : original.s;
+    next.l = original.l;
+    material.color.setHSL(next.h, next.s, next.l);
+    material.needsUpdate = true;
+  }
+}
+
+export function restorePreparedSceneColors(asset: PreparedSceneGlb) {
+  for (const [material, originalColor] of asset.originalMaterialColors ?? []) {
+    if (!("color" in material) || !(material.color instanceof THREE.Color)) continue;
+    material.color.copy(originalColor);
+    material.needsUpdate = true;
+  }
 }
 
 function parseGltf(buffer: ArrayBuffer): Promise<GLTF> {
@@ -255,4 +291,18 @@ function assertPreviewSize(size: number) {
   if (size > SCENE_GLB_PREVIEW_MAX_BYTES) {
     throw new Error("GLB file exceeds the 50 MB preview limit");
   }
+}
+
+function isCssHexColor(value: string) {
+  return /^#[0-9a-f]{6}$/i.test(value);
+}
+
+function cloneMeshMaterials(material: THREE.Material | THREE.Material[]) {
+  return Array.isArray(material)
+    ? material.map((item) => item.clone())
+    : material.clone();
+}
+
+function normalizeHue(value: number) {
+  return ((value % 1) + 1) % 1;
 }

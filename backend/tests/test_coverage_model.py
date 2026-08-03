@@ -9,9 +9,11 @@ from app.core.errors import AppError
 from app.schemas.radar import CoverageRequest
 from app.services.coverage_domain import build_coverage_domain
 from app.services.coverage_model import (
+    PROJECTED_DEM_NODATA,
     _coverage_ratio_for_domain,
     bounded_canvas,
     default_simplify_tolerance,
+    normalize_weighted_elevation,
     prepare_coverage_dem,
     project_lonlat_to_crs,
     validate_coverage_extent,
@@ -53,6 +55,17 @@ def test_bounded_canvas_scales_resolution_to_fit_cell_budget() -> None:
     assert width * x_resolution >= 200_000
     assert height * y_resolution >= 200_000
     assert x_resolution / 10 == pytest.approx(y_resolution / 10)
+
+
+def test_normalize_weighted_elevation_excludes_nodata_from_interpolation() -> None:
+    elevation_sum = numpy.array([[1200, 600, -1e38]], dtype=numpy.float32)
+    valid_weight = numpy.array([[1, 0.5, 0]], dtype=numpy.float32)
+
+    elevation, valid = normalize_weighted_elevation(elevation_sum, valid_weight)
+
+    assert elevation[0, :2].tolist() == [1200, 1200]
+    assert valid.tolist() == [[True, True, False]]
+    assert elevation[0, 2] == numpy.float32(PROJECTED_DEM_NODATA)
 
 
 def test_build_coverage_domain_stops_at_first_nodata_gap() -> None:

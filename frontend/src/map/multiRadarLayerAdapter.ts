@@ -20,6 +20,7 @@ export interface MultiRadarLayerState {
   status: "ready";
   visible: boolean;
   opacity: number;
+  color: string;
   data: GeoJSON.GeoJSON;
   error: null;
 }
@@ -70,6 +71,7 @@ export function createMultiRadarLayerAdapter(options: MultiRadarLayerAdapterOpti
           status: "ready",
           visible: previous?.visible ?? true,
           opacity: previous?.opacity ?? config.defaultOpacity,
+          color: previous?.color ?? config.color,
           data: layers[config.dataKey],
           error: null
         };
@@ -84,6 +86,10 @@ export function createMultiRadarLayerAdapter(options: MultiRadarLayerAdapterOpti
     },
     setLayerOpacity(map: Map, kind: string, opacity: number) {
       updateAggregateState(map, kind, { opacity: Math.min(1, Math.max(0, opacity)) });
+    },
+    setLayerColor(map: Map, kind: string, color: string) {
+      if (!isCssHexColor(color)) return;
+      updateAggregateState(map, kind, { color });
     },
     focusLayer(map: Map, kind: string) {
       const state = aggregateStates.find((candidate) => candidate.kind === kind);
@@ -103,7 +109,7 @@ export function createMultiRadarLayerAdapter(options: MultiRadarLayerAdapterOpti
     }
   };
 
-  function updateAggregateState(map: Map, kind: string, patch: Partial<Pick<MultiRadarLayerState, "visible" | "opacity">>) {
+  function updateAggregateState(map: Map, kind: string, patch: Partial<Pick<MultiRadarLayerState, "visible" | "opacity" | "color">>) {
     const config = AGGREGATE_LAYER_CONFIG.find((candidate) => candidate.kind === kind);
     const current = aggregateStates.find((candidate) => candidate.kind === kind);
     if (!config || !current) return;
@@ -121,6 +127,11 @@ function applyLayerPresentation(
   if (!map.getLayer(config.mapId)) return;
   map.setLayoutProperty(config.mapId, "visibility", state.visible ? "visible" : "none");
   map.setPaintProperty(config.mapId, config.opacityProperty, state.opacity);
+  const colorProperty = config.geometry === "line" ? "line-color" : "fill-color";
+  map.setPaintProperty(config.mapId, colorProperty, state.color);
+  if (config.geometry === "fill") {
+    map.setPaintProperty(config.mapId, "fill-outline-color", state.color);
+  }
 }
 
 function upsertGeoJsonLayer(
@@ -160,4 +171,8 @@ function removeLayerAndSource(map: Map, id: string) {
   const sourceId = `${id}-source`;
   if (map.getSource(sourceId)) map.removeSource(sourceId);
   if (id === "multi-radar-stations" && map.getSource("multi-radar-stations-source")) map.removeSource("multi-radar-stations-source");
+}
+
+function isCssHexColor(value: string) {
+  return /^#[0-9a-f]{6}$/i.test(value);
 }

@@ -68,7 +68,10 @@ def test_build_coverage_artifacts_cleans_staging_without_partial_publication(
         writer_saw_staged_raster = (
             writer_min_height_path is not None and writer_min_height_path.exists()
         )
-        return {"scan_animation": {"azimuth_deg": []}}
+        return {
+            "effective_max_range_m": 1_000,
+            "scan_animation": {"azimuth_deg": []},
+        }
 
     monkeypatch.setattr(
         coverage_task,

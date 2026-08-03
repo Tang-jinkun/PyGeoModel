@@ -8,7 +8,10 @@ from skimage import measure
 
 from app.scene3d.exporter import MaterialSpec, SceneNode, export_glb
 from app.scene3d.frame import SceneFrame
-from app.services.coverage_model import PROJECTED_DEM_NODATA
+from app.services.coverage_model import (
+    LOWEST_PLAUSIBLE_TERRAIN_ELEVATION_M,
+    PROJECTED_DEM_NODATA,
+)
 
 
 UNION_MATERIAL = MaterialSpec("fusion_union_jade", (31, 138, 112, 72), shading="unlit", emissive_rgb=(18, 82, 66))
@@ -124,6 +127,7 @@ def _fill_invalid_terrain(terrain_m: numpy.ndarray) -> numpy.ndarray:
         numpy.ma.getmaskarray(masked)
         | ~numpy.isfinite(terrain)
         | (terrain == numpy.float32(PROJECTED_DEM_NODATA))
+        | (terrain < numpy.float32(LOWEST_PLAUSIBLE_TERRAIN_ELEVATION_M))
     )
     valid = ~invalid
     if not valid.any():

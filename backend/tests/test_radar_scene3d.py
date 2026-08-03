@@ -321,6 +321,7 @@ def test_target_independent_radar_glb_is_self_contained_and_open_at_nodata(
         task_id="radar_task_demo",
         prepared=prepared,
         payload=payload,
+        effective_range_m=1_000,
     )
     platform_document = read_glb_document(platform_output.read_bytes())
     platform_nodes = {node.get("name") for node in platform_document["nodes"]}
@@ -334,9 +335,25 @@ def test_target_independent_radar_glb_is_self_contained_and_open_at_nodata(
     } <= platform_nodes
     assert platform_metadata["animation"]["period_s"] == 20
     assert platform_metadata["axes"] == {"x": "east", "y": "north", "z": "up"}
-    assert platform_metadata["dimensions_m"]["width"] == 5.5 * 1000
-    assert platform_metadata["dimensions_m"]["height"] == 12.35 * 30 / 9.6 * 10
-    assert platform_metadata["display_magnification"] == 10
+    assert platform_metadata["linked_effective_range_m"] == 1_000
+    assert platform_metadata["visual_width_m"] == 40
+    assert platform_metadata["visual_scale"] == 40 / 5.5
+    assert platform_metadata["dimensions_m"]["width"] == 40
+    assert platform_metadata["dimensions_m"]["height"] == 12.35 * 40 / 5.5
+    large_platform_metadata = radar_platform.write_radar_platform_glb(
+        tmp_path / "radar_platform_large.glb",
+        task_id="radar_task_large",
+        prepared=prepared,
+        payload=payload,
+        effective_range_m=50_000,
+    )
+    assert large_platform_metadata["visual_width_m"] == 1_250
+    assert large_platform_metadata["visual_scale"] == 1_250 / 5.5
+    assert large_platform_metadata["dimensions_m"] == {
+        "width": 1_250,
+        "depth": 1_250,
+        "height": 12.35 * 1_250 / 5.5,
+    }
     assert platform_metadata["antenna_phase_center"] == {
         "height_above_ground_m": 30,
         "azimuth_deg": 30,

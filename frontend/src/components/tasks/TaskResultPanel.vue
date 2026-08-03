@@ -32,6 +32,7 @@
           :states="layerStates"
           @visibility="(kind, visible) => emit('layer-visibility', kind, visible)"
           @opacity="(kind, opacity) => emit('layer-opacity', kind, opacity)"
+          @color="(kind, color) => emit('layer-color', kind, color)"
           @focus="(kind) => emit('layer-focus', kind)"
         />
         <SceneGlbControl
@@ -40,6 +41,8 @@
           :file="entry.file"
           :state="entry.state"
           @visibility="emit('scene-glb-visibility', entry.kind, $event)"
+          @color="emit('scene-glb-color', entry.kind, $event)"
+          @reset-color="emit('scene-glb-reset-color', entry.kind)"
           @focus="emit('scene-glb-focus', entry.kind)"
         />
       </div>
@@ -87,8 +90,11 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{
   "layer-visibility": [kind: string, visible: boolean];
   "layer-opacity": [kind: string, opacity: number];
+  "layer-color": [kind: string, color: string];
   "layer-focus": [kind: string];
   "scene-glb-visibility": [kind: SceneGlbKind, visible: boolean];
+  "scene-glb-color": [kind: SceneGlbKind, color: string];
+  "scene-glb-reset-color": [kind: SceneGlbKind];
   "scene-glb-focus": [kind: SceneGlbKind];
   rerun: [];
 }>();

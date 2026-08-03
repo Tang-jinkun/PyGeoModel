@@ -11,10 +11,12 @@ from rasterio.windows import from_bounds
 from app.core.errors import AppError
 from app.schemas.radar import CoverageRequest, MultiRadarRequest
 from app.services.coverage_model import (
+    LOWEST_PLAUSIBLE_TERRAIN_ELEVATION_M,
     MAX_COVERAGE_CELLS,
     PROJECTED_DEM_NODATA,
     bounded_canvas,
     clamp_window,
+    normalize_weighted_elevation,
 )
 from app.services.coverage_range import effective_max_range
 from app.services.multi_radar_projection import prepare_multi_radar_projection
@@ -92,21 +94,36 @@ def prepare_shared_multi_radar_dem(source: Path, destination: Path, payload: Mul
         )
         transform = from_origin(target_bounds[0], target_bounds[3], x_resolution, y_resolution)
         source_data = src.read(1, window=window, masked=True)
-        source_values = numpy.asarray(source_data)
-        source_valid = (~numpy.ma.getmaskarray(source_data) & numpy.isfinite(source_values)).astype(numpy.uint8)
-        source_array = numpy.where(source_valid, source_values, PROJECTED_DEM_NODATA).astype(numpy.float32)
-        destination_array = numpy.full((height, width), PROJECTED_DEM_NODATA, dtype=numpy.float32)
-        destination_valid = numpy.zeros((height, width), dtype=numpy.uint8)
+        source_values = numpy.asarray(source_data, dtype=numpy.float32)
+        source_valid = (
+            ~numpy.ma.getmaskarray(source_data)
+            & numpy.isfinite(source_values)
+            & (source_values >= LOWEST_PLAUSIBLE_TERRAIN_ELEVATION_M)
+        )
+        source_array = numpy.where(source_valid, source_values, 0.0).astype(numpy.float32)
+        destination_sum = numpy.zeros((height, width), dtype=numpy.float32)
+        destination_weight = numpy.zeros((height, width), dtype=numpy.float32)
+        destination_nearest_valid = numpy.zeros((height, width), dtype=numpy.uint8)
         reproject(
-            source=source_array, destination=destination_array, src_transform=crop_transform, src_crs=src.crs,
-            src_nodata=PROJECTED_DEM_NODATA, dst_transform=transform, dst_crs=target_crs,
-            dst_nodata=PROJECTED_DEM_NODATA, resampling=Resampling.bilinear,
+            source=source_array, destination=destination_sum, src_transform=crop_transform, src_crs=src.crs,
+            dst_transform=transform, dst_crs=target_crs, resampling=Resampling.bilinear,
         )
         reproject(
-            source=source_valid, destination=destination_valid, src_transform=crop_transform, src_crs=src.crs,
-            src_nodata=0, dst_transform=transform, dst_crs=target_crs, dst_nodata=0,
+            source=source_valid.astype(numpy.float32), destination=destination_weight,
+            src_transform=crop_transform, src_crs=src.crs, dst_transform=transform, dst_crs=target_crs,
+            resampling=Resampling.bilinear,
+        )
+        reproject(
+            source=source_valid.astype(numpy.uint8), destination=destination_nearest_valid,
+            src_transform=crop_transform, src_crs=src.crs, src_nodata=0,
+            dst_transform=transform, dst_crs=target_crs, dst_nodata=0,
             resampling=Resampling.nearest,
         )
+        destination_array, destination_valid = normalize_weighted_elevation(
+            destination_sum, destination_weight
+        )
+        destination_valid &= destination_nearest_valid.astype(bool)
+        destination_array[~destination_valid] = PROJECTED_DEM_NODATA
         destination.parent.mkdir(parents=True, exist_ok=True)
         metadata = src.meta.copy()
         metadata.update({

@@ -4,6 +4,7 @@ import type { OutputLayerDefinition } from "../models/shared";
 import {
   focusModelLayer,
   removeTaskLayers,
+  setModelLayerColor,
   setModelLayerOpacity,
   setModelLayerVisibility,
   upsertModelGeoJsonLayer
@@ -72,6 +73,25 @@ describe("model layers", () => {
       "circle-opacity",
       1
     );
+  });
+
+  it.each([
+    ["fill", "fill-color"],
+    ["line", "line-color"],
+    ["circle", "circle-color"]
+  ] as const)("changes the %s result colour without recreating its layer", (geometry, paintProperty) => {
+    const map = new MemoryMap();
+    const definition = layerDefinition(geometry);
+    upsertModelGeoJsonLayer(map.asMap(), "artillery", "task-2", definition, polygon);
+
+    setModelLayerColor(map.asMap(), "artillery", "task-2", definition, "#d4a017");
+
+    expect(map.setPaintProperty).toHaveBeenCalledWith(
+      `artillery-task-2-result_${geometry}-layer`,
+      paintProperty,
+      "#d4a017"
+    );
+    expect(map.addLayer).toHaveBeenCalledTimes(1);
   });
 
   it("focuses data bounds and removes only the selected task layers", () => {

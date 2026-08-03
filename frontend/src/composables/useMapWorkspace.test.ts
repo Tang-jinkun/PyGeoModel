@@ -103,6 +103,25 @@ describe("useMapWorkspace", () => {
     expect(fetchGeoJson).toHaveBeenCalledTimes(2);
     expect(fetchGeoJson).toHaveBeenLastCalledWith("/api/radar/coverage/task-1/outputs/blocked_geojson");
   });
+
+  it("keeps result colours as frontend presentation state", async () => {
+    const sceneGlb = sceneGlbAdapter();
+    const workspace = sceneWorkspace(sceneGlb);
+    await workspace.loadTaskOutputs("airCorridor", finishedAirTask);
+
+    const firstLayer = workspace.layerStates.value[0];
+    workspace.setTaskLayerColor(firstLayer.kind, "#d4a017");
+    workspace.setSceneGlbColor({} as never, finishedAirTask.task_id, "scene_glb", "#d4a017");
+
+    expect(workspace.layerStates.value.find((layer) => layer.kind === firstLayer.kind)?.color).toBe("#d4a017");
+    expect(workspace.sceneGlbStateFor(finishedAirTask.task_id)?.color).toBe("#d4a017");
+    expect(sceneGlb.setColor).toHaveBeenCalledWith(
+      {},
+      finishedAirTask.task_id,
+      "#d4a017",
+      "#0f9f78"
+    );
+  });
   it("provides immutable point and waypoint commands with undo and clear", () => {
     const workspace = useMapWorkspace("point-or-route");
     const first: [number, number] = [79.8, 31.4];
@@ -491,7 +510,8 @@ function sceneGlbAdapter() {
     load: vi.fn<SceneGlbAdapter["load"]>().mockResolvedValue(undefined),
     remove: vi.fn<SceneGlbAdapter["remove"]>(),
     removeAll: vi.fn<SceneGlbAdapter["removeAll"]>(),
-    focus: vi.fn<SceneGlbAdapter["focus"]>(() => true)
+    focus: vi.fn<SceneGlbAdapter["focus"]>(() => true),
+    setColor: vi.fn(() => true)
   };
 }
 

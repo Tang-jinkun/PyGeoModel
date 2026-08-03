@@ -82,6 +82,26 @@ export function setModelLayerOpacity(
   );
 }
 
+export function setModelLayerColor(
+  map: MapInstance,
+  modelId: ModelId,
+  taskId: string,
+  definition: OutputLayerDefinition,
+  color: string
+) {
+  const { layerId } = getModelLayerIds(modelId, taskId, definition.kind);
+  if (!map.getLayer(layerId)) return;
+  const property = definition.geometry === "fill"
+    ? "fill-color"
+    : definition.geometry === "line"
+      ? "line-color"
+      : "circle-color";
+  map.setPaintProperty(layerId, property, color);
+  if (definition.geometry === "fill") {
+    map.setPaintProperty(layerId, "fill-outline-color", color);
+  }
+}
+
 export function focusModelLayer(
   map: MapInstance,
   modelId: ModelId,

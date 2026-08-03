@@ -21,10 +21,10 @@ from .primitives import tube_mesh
 from .radar import SCAN_PERIOD_S, _azimuths
 
 
-BASE_DISPLAY_SCALE = 100.0
-DISPLAY_SCALE = 1000.0
-DISPLAY_MAGNIFICATION = DISPLAY_SCALE / BASE_DISPLAY_SCALE
-ANTENNA_PHASE_CENTER_HEIGHT_M = 9.6
+PLATFORM_BASE_WIDTH_M = 5.5
+RANGE_TO_PLATFORM_WIDTH_RATIO = 1 / 25
+MIN_VISUAL_PLATFORM_WIDTH_M = 30.0
+MAX_VISUAL_PLATFORM_WIDTH_M = 1_250.0
 EQUIPMENT_MATERIAL = MaterialSpec("radar_equipment_olive", (72, 82, 68, 255))
 PEDESTAL_MATERIAL = MaterialSpec("radar_pedestal_metal", (70, 78, 80, 255))
 TURNTABLE_MATERIAL = MaterialSpec("radar_turntable_metal", (47, 56, 60, 255))
@@ -38,8 +38,11 @@ def write_radar_platform_glb(
     task_id: str,
     prepared: PreparedCoverageDem,
     payload: CoverageRequest,
+    effective_range_m: float,
     scan_azimuths_deg: list[float] | None = None,
 ) -> dict:
+    if not math.isfinite(effective_range_m) or effective_range_m <= 0:
+        raise ValueError("Radar platform requires a positive effective detection range")
     if scan_azimuths_deg is None:
         azimuths = _azimuths(payload)
         scan_azimuths_deg = (
@@ -61,11 +64,11 @@ def write_radar_platform_glb(
         axes="z_up",
     )
     ground_offset = numpy.asarray([0.0, 0.0, ground_m - frame.origin_altitude_m])
-    vertical_scale = max(
-        payload.radar.height_m / ANTENNA_PHASE_CENTER_HEIGHT_M,
-        0.01,
+    visual_width_m = min(
+        MAX_VISUAL_PLATFORM_WIDTH_M,
+        max(MIN_VISUAL_PLATFORM_WIDTH_M, effective_range_m * RANGE_TO_PLATFORM_WIDTH_RATIO),
     )
-    display_vertical_scale = vertical_scale * DISPLAY_MAGNIFICATION
+    visual_scale = visual_width_m / PLATFORM_BASE_WIDTH_M
 
     cabinet = trimesh.creation.box(extents=[4.8, 2.6, 3.2])
     cabinet.apply_translation([0, 1.3, 0])
@@ -102,7 +105,7 @@ def write_radar_platform_glb(
     feed_arm = trimesh.util.concatenate([feed_arm, feed_horn])
 
     for mesh in (cabinet, pedestal, turntable, dish, feed_arm):
-        mesh.apply_scale([DISPLAY_SCALE, display_vertical_scale, DISPLAY_SCALE])
+        mesh.apply_scale(visual_scale)
         mesh.apply_transform(trimesh.transformations.rotation_matrix(numpy.pi / 2, [1, 0, 0]))
         mesh.apply_translation(ground_offset)
 
@@ -115,8 +118,9 @@ def write_radar_platform_glb(
         name="radar_platform",
         extras={
             "kind": "radar_platform",
-            "display_scale": DISPLAY_SCALE,
-            "display_magnification": DISPLAY_MAGNIFICATION,
+            "visual_scale": visual_scale,
+            "visual_width_m": visual_width_m,
+            "linked_effective_range_m": effective_range_m,
         },
         children=[
             SceneNode(
@@ -182,11 +186,13 @@ def write_radar_platform_glb(
             "radar_ground_elevation_amsl_m": ground_m,
             "analysis_origin_altitude_amsl_m": ground_m + payload.radar.height_m,
             "dimensions_m": {
-                "width": 5.5 * DISPLAY_SCALE,
-                "depth": 5.5 * DISPLAY_SCALE,
-                "height": 12.35 * display_vertical_scale,
+                "width": PLATFORM_BASE_WIDTH_M * visual_scale,
+                "depth": PLATFORM_BASE_WIDTH_M * visual_scale,
+                "height": 12.35 * visual_scale,
             },
-            "display_magnification": DISPLAY_MAGNIFICATION,
+            "visual_scale": visual_scale,
+            "visual_width_m": visual_width_m,
+            "linked_effective_range_m": effective_range_m,
             "antenna_phase_center": {
                 "height_above_ground_m": payload.radar.height_m,
                 "azimuth_deg": float(scan_azimuths[0]),
