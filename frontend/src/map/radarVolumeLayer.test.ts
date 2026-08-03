@@ -58,20 +58,33 @@ describe("radarVolumeLayer", () => {
 
   it("uses sparse structural grids at distant zoom levels and never restores triangle wireframes", () => {
     expect(resolveRadarGridDetail("auto", 7)).toEqual({
+      rings: 2,
+      meridians: 4,
+      rays: 4,
+      boundaries: 8,
+      groundConnections: 0,
+      supplementaryLobes: false
+    });
+    expect(resolveRadarGridDetail("auto", 12)).toEqual({
+      rings: 5,
+      meridians: 10,
+      rays: 12,
+      boundaries: 24,
+      groundConnections: 8,
+      supplementaryLobes: true
+    });
+    expect(resolveRadarGridDetail("auto", 10)).toEqual({
       rings: 3,
       meridians: 6,
       rays: 8,
-      boundaries: 12,
-      groundConnections: 6
+      boundaries: 16,
+      groundConnections: 4,
+      supplementaryLobes: true
     });
-    expect(resolveRadarGridDetail("auto", 12)).toEqual({
-      rings: 6,
-      meridians: 12,
-      rays: 18,
-      boundaries: 36,
-      groundConnections: 12
+    expect(resolveRadarGridDetail("sparse", 18)).toMatchObject({
+      meridians: 4,
+      supplementaryLobes: false
     });
-    expect(resolveRadarGridDetail("sparse", 18).meridians).toBe(6);
   });
 });
 

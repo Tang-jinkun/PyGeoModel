@@ -3,6 +3,7 @@ import * as THREE from "three";
 import { customLayerProjectionMatrix } from "./customLayerProjection";
 import { DEM_TERRAIN_SOURCE_ID } from "./mapLayers";
 import type { CustomLayerInterface, Map as MapInstance } from "./mapEngineTypes";
+import type { RadarGridDensity } from "./radarVolumeLayer";
 import {
   applyPreparedSceneColor,
   disposePreparedScene,
@@ -16,6 +17,7 @@ const TRUE_SCALE_TERRAIN_EXAGGERATION = 1;
 
 interface ManagedCustomLayer extends CustomLayerInterface {
   cleanup(): void;
+  setGridDensity(density: RadarGridDensity): void;
 }
 
 interface RegisteredSceneGlb {
@@ -30,8 +32,17 @@ const terrainTasks = new WeakMap<MapInstance, Set<string>>();
 
 export interface SceneGlbLayerOptions {
   foreground?: boolean;
+  gridDensity?: RadarGridDensity;
   onLost?: () => void;
 }
+
+export type SceneGlbGridLod = Exclude<RadarGridDensity, "auto"> | "hidden";
+
+const RADAR_GRID_NAMES = {
+  sparse: "radar_result/shell_grid_sparse",
+  standard: "radar_result/shell_grid",
+  detailed: "radar_result/shell_grid_detailed"
+} as const;
 
 export function sceneGlbLayerId(taskId: string) {
   return `scene-glb-${taskId.replace(/[^A-Za-z0-9_-]+/g, "_")}`;
@@ -112,6 +123,37 @@ export function hasSceneGlbLayer(map: MapInstance, taskId: string) {
   return registry.get(map)?.has(taskId) ?? false;
 }
 
+export function resolveSceneGlbGridLod(
+  density: RadarGridDensity,
+  zoom: number
+): SceneGlbGridLod {
+  if (density !== "auto") return density;
+  if (zoom < 7) return "hidden";
+  if (zoom < 9) return "sparse";
+  if (zoom < 12) return "standard";
+  return "detailed";
+}
+
+export function setSceneGlbLayerGridDensity(
+  map: MapInstance,
+  taskId: string,
+  density: RadarGridDensity
+) {
+  const layer = registry.get(map)?.get(taskId)?.layer;
+  if (!layer) return false;
+  layer.setGridDensity(density);
+  return true;
+}
+
+export function setAllSceneGlbLayerGridDensity(
+  map: MapInstance,
+  density: RadarGridDensity
+) {
+  for (const registered of registry.get(map)?.values() ?? []) {
+    registered.layer.setGridDensity(density);
+  }
+}
+
 export function setSceneGlbLayerColor(
   map: MapInstance,
   taskId: string,
@@ -150,6 +192,16 @@ function createCustomLayer(
   let canvas: HTMLCanvasElement | null = null;
   let contextLostQueued = false;
   let cleaned = false;
+  let gridDensity = options.gridDensity ?? "auto";
+  let currentGridLod: SceneGlbGridLod | null = null;
+  const gridMeshes = findRadarGridMeshes(asset.group);
+
+  const updateGridLod = () => {
+    const nextLod = resolveSceneGlbGridLod(gridDensity, map.getZoom());
+    if (nextLod === currentGridLod) return;
+    applyRadarGridLod(gridMeshes, nextLod);
+    currentGridLod = nextLod;
+  };
 
   const handleContextLost = (event: Event) => {
     event.preventDefault();
@@ -171,6 +223,7 @@ function createCustomLayer(
       scene = new THREE.Scene();
       scene.add(createSceneGlbLights());
       scene.add(asset.group);
+      updateGridLod();
       if (asset.animations.length) {
         mixer = new THREE.AnimationMixer(asset.group);
         for (const clip of asset.animations) mixer.clipAction(clip).play();
@@ -182,6 +235,7 @@ function createCustomLayer(
     },
     render(_gl, renderInput) {
       if (!camera || !scene || !renderer || cleaned) return;
+      updateGridLod();
       const mapMatrix = new THREE.Matrix4().fromArray(customLayerProjectionMatrix(renderInput));
       const anchorMatrix = new THREE.Matrix4().makeTranslation(...asset.anchor);
       camera.projectionMatrix.copy(mapMatrix).multiply(anchorMatrix);
@@ -193,6 +247,14 @@ function createCustomLayer(
     },
     onRemove() {
       layer.cleanup();
+    },
+    setGridDensity(density) {
+      if (gridDensity === density) return;
+      gridDensity = density;
+      const nextLod = resolveSceneGlbGridLod(gridDensity, map.getZoom());
+      if (nextLod === currentGridLod) return;
+      updateGridLod();
+      map.triggerRepaint();
     },
     cleanup() {
       if (cleaned) return;
@@ -214,6 +276,40 @@ function createCustomLayer(
     }
   };
   return layer;
+}
+
+interface RadarGridMeshes {
+  sparse: THREE.Object3D | null;
+  standard: THREE.Object3D | null;
+  detailed: THREE.Object3D | null;
+}
+
+function findRadarGridMeshes(group: THREE.Group): RadarGridMeshes {
+  return {
+    sparse: group.getObjectByName(RADAR_GRID_NAMES.sparse) ?? null,
+    standard: group.getObjectByName(RADAR_GRID_NAMES.standard) ?? null,
+    detailed: group.getObjectByName(RADAR_GRID_NAMES.detailed) ?? null
+  };
+}
+
+function applyRadarGridLod(meshes: RadarGridMeshes, lod: SceneGlbGridLod) {
+  const available = [...new Set(Object.values(meshes).filter((mesh) => mesh !== null))];
+  if (!available.length) return;
+  for (const mesh of available) mesh.visible = false;
+  if (lod === "hidden") return;
+  const target = meshes[lod] ?? meshes.standard ?? meshes.sparse ?? meshes.detailed;
+  if (!target) return;
+  target.visible = true;
+  const opacity = target.userData.grid_opacity;
+  if (typeof opacity !== "number" || !Number.isFinite(opacity)) return;
+  const materials = target instanceof THREE.Mesh
+    ? Array.isArray(target.material) ? target.material : [target.material]
+    : [];
+  for (const material of materials) {
+    material.opacity = Math.min(1, Math.max(0, opacity));
+    material.transparent = material.opacity < 1;
+    material.needsUpdate = true;
+  }
 }
 
 export function createSceneGlbLights() {

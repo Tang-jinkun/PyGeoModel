@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 import math
 from pathlib import Path
+from typing import Literal
 
 import numpy
 import rasterio
@@ -32,6 +33,8 @@ DIAGNOSTIC_MAX_MARKERS = 256
 ENVELOPE_GRID_SIZE = 256
 TERRAIN_CONTACT_OFFSET_M = 2.0
 
+GridLod = Literal["sparse", "standard", "detailed"]
+
 SHELL_MATERIAL = MaterialSpec(
     "radar_detectable_shell",
     (41, 74, 53, 34),
@@ -52,9 +55,21 @@ BLOCKED_CONTACT_MATERIAL = MaterialSpec(
 )
 GRID_MATERIAL = MaterialSpec(
     "radar_shell_grid",
-    (255, 255, 255, 255),
+    (245, 250, 248, 176),
     shading="unlit",
-    emissive_rgb=(180, 180, 180),
+    emissive_rgb=(80, 80, 80),
+)
+SPARSE_GRID_MATERIAL = MaterialSpec(
+    "radar_shell_grid_sparse",
+    (235, 245, 240, 0),
+    shading="unlit",
+    emissive_rgb=(45, 45, 45),
+)
+DETAILED_GRID_MATERIAL = MaterialSpec(
+    "radar_shell_grid_detailed",
+    (255, 255, 255, 0),
+    shading="unlit",
+    emissive_rgb=(120, 120, 120),
 )
 FLOOR_BOUNDARY_MATERIAL = MaterialSpec(
     "radar_detection_floor_boundary",
@@ -237,12 +252,17 @@ def write_radar_coverage_glb(
         if visibility_volume is not None
         else None
     )
-    grid = _grid_mesh(
-        actual_local_grid,
-        ray_grid,
-        wrap,
-        radius_m=max(3.0, min(45.0, effective_range_m * 0.0008)),
-    )
+    grid_radius_m = max(3.0, min(45.0, effective_range_m * 0.0008))
+    grids = {
+        lod: _grid_mesh(
+            actual_local_grid,
+            ray_grid,
+            wrap,
+            radius_m=grid_radius_m,
+            lod=lod,
+        )
+        for lod in ("sparse", "standard", "detailed")
+    }
     floor_boundary = (
         _lower_surface_boundary_mesh(
             visibility_volume,
@@ -346,10 +366,37 @@ def write_radar_coverage_glb(
                 else []
             ),
             SceneNode(
+                name="radar_result/shell_grid_sparse",
+                mesh=grids["sparse"],
+                material=SPARSE_GRID_MATERIAL,
+                extras={
+                    "kind": "shell_grid",
+                    "lod": "sparse",
+                    "default_visible": False,
+                    "grid_opacity": 128 / 255,
+                },
+            ),
+            SceneNode(
                 name="radar_result/shell_grid",
-                mesh=grid,
+                mesh=grids["standard"],
                 material=GRID_MATERIAL,
-                extras={"kind": "shell_grid"},
+                extras={
+                    "kind": "shell_grid",
+                    "lod": "standard",
+                    "default_visible": True,
+                    "grid_opacity": 176 / 255,
+                },
+            ),
+            SceneNode(
+                name="radar_result/shell_grid_detailed",
+                mesh=grids["detailed"],
+                material=DETAILED_GRID_MATERIAL,
+                extras={
+                    "kind": "shell_grid",
+                    "lod": "detailed",
+                    "default_visible": False,
+                    "grid_opacity": 220 / 255,
+                },
             ),
             *(
                 [
@@ -898,11 +945,16 @@ def _ground_contact_mesh(local_grid, ray_grid, wrap: bool, *, radius_m: float):
     )
 
 
-def _grid_strides() -> tuple[int, int]:
-    return (
-        max(1, round(6 / AZIMUTH_STEP_DEG)),
-        max(1, round(5 / ELEVATION_STEP_DEG)),
-    )
+def _grid_strides(lod: GridLod = "standard") -> tuple[int, int]:
+    strides = {
+        "sparse": (12, 8),
+        "standard": (8, 6),
+        "detailed": (4, 3),
+    }
+    try:
+        return strides[lod]
+    except KeyError as error:
+        raise ValueError(f"Unknown radar grid LOD: {lod}") from error
 
 
 def _grid_mesh(
@@ -911,10 +963,11 @@ def _grid_mesh(
     wrap: bool,
     *,
     radius_m: float = 2.0,
+    lod: GridLod = "standard",
 ) -> trimesh.Trimesh:
     paths: list[numpy.ndarray] = []
     azimuth_count = len(local_grid[0])
-    azimuth_stride, elevation_stride = _grid_strides()
+    azimuth_stride, elevation_stride = _grid_strides(lod)
     for azimuth_index in range(0, azimuth_count, azimuth_stride):
         _append_closed_paths(
             paths,

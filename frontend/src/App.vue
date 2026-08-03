@@ -1344,6 +1344,7 @@ function updateRadarControl(kind: RadarControlKind, patch: { visible?: boolean; 
 
 function updateRadarGridDensity(density: RadarGridDensity) {
   radarGridDensity.value = density;
+  if (map.value) mapWorkspace.setSceneGlbGridDensity(map.value, density);
   refreshRadarLayerRendering();
 }
 

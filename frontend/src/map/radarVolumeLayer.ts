@@ -19,6 +19,7 @@ export interface RadarGridDetail {
   rays: number;
   boundaries: number;
   groundConnections: number;
+  supplementaryLobes: boolean;
 }
 
 type RadarVolumeCustomLayer = CustomLayerInterface & {
@@ -192,7 +193,9 @@ function buildRadarVolume(
     group.add(buildSupplementaryLobes(shape, request, options, gridDetail));
     group.add(buildRayLines(shape, gridDetail.rays, options));
     group.add(buildBoundaryLines(shape, options, 0xbfdbfe, gridDetail.boundaries));
-    group.add(buildGroundConnectionLines(shape, gridDetail.groundConnections, options));
+    if (gridDetail.groundConnections > 0) {
+      group.add(buildGroundConnectionLines(shape, gridDetail.groundConnections, options));
+    }
     if (options.showScanPlane) {
       group.add(buildScanPlane(shape, options));
     }
@@ -446,11 +449,13 @@ function buildSupplementaryLobes(
         })
       )
     );
-    group.add(buildRadarGrid(
-      lobeShape,
-      { ...options, opacity: options.opacity * 0.62 },
-      reduceRadarGridDetail(gridDetail)
-    ));
+    if (gridDetail.supplementaryLobes) {
+      group.add(buildRadarGrid(
+        lobeShape,
+        { ...options, opacity: options.opacity * 0.62 },
+        reduceRadarGridDetail(gridDetail)
+      ));
+    }
   }
   return group;
 }
@@ -703,17 +708,38 @@ export function resolveRadarGridDetail(
     ? zoom < 9 ? "sparse" : zoom < 12 ? "standard" : "detailed"
     : density;
   if (effectiveDensity === "sparse") {
-    return { rings: 3, meridians: 6, rays: 8, boundaries: 12, groundConnections: 6 };
+    return {
+      rings: 2,
+      meridians: 4,
+      rays: 4,
+      boundaries: 8,
+      groundConnections: 0,
+      supplementaryLobes: false
+    };
   }
   if (effectiveDensity === "standard") {
-    return { rings: 4, meridians: 8, rays: 12, boundaries: 24, groundConnections: 8 };
+    return {
+      rings: 3,
+      meridians: 6,
+      rays: 8,
+      boundaries: 16,
+      groundConnections: 4,
+      supplementaryLobes: true
+    };
   }
-  return { rings: 6, meridians: 12, rays: 18, boundaries: 36, groundConnections: 12 };
+  return {
+    rings: 5,
+    meridians: 10,
+    rays: 12,
+    boundaries: 24,
+    groundConnections: 8,
+    supplementaryLobes: true
+  };
 }
 
 function radarGridDetailKey(density: RadarGridDensity, zoom: number) {
   const detail = resolveRadarGridDetail(density, zoom);
-  return `${detail.rings}-${detail.meridians}-${detail.rays}-${detail.boundaries}-${detail.groundConnections}`;
+  return `${detail.rings}-${detail.meridians}-${detail.rays}-${detail.boundaries}-${detail.groundConnections}-${detail.supplementaryLobes}`;
 }
 
 function reduceRadarGridDetail(detail: RadarGridDetail): RadarGridDetail {
@@ -722,7 +748,8 @@ function reduceRadarGridDetail(detail: RadarGridDetail): RadarGridDetail {
     meridians: Math.max(3, Math.floor(detail.meridians / 2)),
     rays: detail.rays,
     boundaries: detail.boundaries,
-    groundConnections: detail.groundConnections
+    groundConnections: detail.groundConnections,
+    supplementaryLobes: detail.supplementaryLobes
   };
 }
 

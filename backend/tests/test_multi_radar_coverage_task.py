@@ -9,6 +9,7 @@ from app.core.config import settings
 from app.schemas.radar import MultiRadarRequest
 from app.services.multi_radar_task_store import create_multi_task, get_multi_task
 from app.services.coverage_model import PROJECTED_DEM_NODATA
+from app.services.multi_radar_fusion_volume import FusionHeightEnvelope
 from app.workers import multi_radar_coverage_task
 from app.workers.multi_radar_coverage_task import station_masks_to_shared_grid
 
@@ -152,6 +153,48 @@ def test_fusion_terrain_read_preserves_projected_dem_nodata_mask(tmp_path: Path)
     assert sampled.mask.tolist() == [[True, False], [False, False]]
 
 
+def test_station_fusion_envelope_uses_terrain_and_radial_upper_bound(tmp_path: Path) -> None:
+    projected_dem = tmp_path / "projected.tif"
+    with rasterio.open(
+        projected_dem,
+        "w",
+        driver="GTiff",
+        width=3,
+        height=3,
+        count=1,
+        dtype="float32",
+        crs="EPSG:32644",
+        transform=from_origin(0, 3, 1, 1),
+        nodata=-9999,
+    ) as source:
+        source.write(numpy.full((3, 3), 100, dtype=numpy.float32), 1)
+    shared = multi_radar_coverage_task.SharedMultiRadarDem(
+        projected_dem=projected_dem,
+        target_epsg=32644,
+        transform=from_origin(0, 3, 1, 1),
+        analysis_domain=numpy.ones((3, 3), dtype=bool),
+        station_points={"station": (1.5, 1.5)},
+    )
+    request = multi_radar_coverage_task.station_coverage_request(
+        "dem_a", _cooperative_payload().radars[0]
+    )
+
+    envelope = multi_radar_coverage_task._station_fusion_envelope(
+        shared,
+        numpy.zeros((3, 3), dtype=numpy.float32),
+        from_origin(0, 3, 1, 1),
+        numpy.ones((3, 3), dtype=bool),
+        1.5,
+        1.5,
+        request,
+    )
+
+    center = (1, 1)
+    assert envelope.valid[center]
+    assert envelope.lower_m[center] == 120
+    assert envelope.upper_m[center] == 1120
+
+
 def test_cooperative_worker_records_a_complete_scene_task_for_each_station(tmp_path: Path, monkeypatch) -> None:
     settings.data_dir = tmp_path
     settings.ensure_directories()
@@ -172,6 +215,7 @@ def test_cooperative_worker_records_a_complete_scene_task_for_each_station(tmp_p
             visible_mask=numpy.array([[True, False], [False, False]]),
             range_mask=numpy.ones((2, 2), dtype=bool),
             metrics={"visible_area_m2": 1},
+            fusion_masks=numpy.ones((7, 2, 2), dtype=bool),
         )
 
     monkeypatch.setattr(multi_radar_coverage_task, "find_dem_file", lambda _: tmp_path / "source.tif")
@@ -200,6 +244,28 @@ def test_cooperative_worker_records_a_complete_scene_task_for_each_station(tmp_p
         "east": "scene-79.02",
     }
     assert {station.scene_status for station in stored.stations} == {"finished"}
+    assert stored.outputs is not None
+    assert stored.outputs.cooperative_intersection_glb is None
+    assert stored.outputs.fusion_scene_glb is None
+
+
+def test_fusion_grid_spec_aligns_downsampled_centers_with_source_grid() -> None:
+    shared = multi_radar_coverage_task.SharedMultiRadarDem(
+        projected_dem=Path("/tmp/projected.tif"),
+        target_epsg=32644,
+        transform=from_origin(100, 200, 10, 10),
+        analysis_domain=numpy.ones((400, 400), dtype=bool),
+        station_points={},
+    )
+
+    rows, columns, transform = multi_radar_coverage_task.fusion_grid_spec(shared)
+
+    assert rows[0] == 0
+    assert columns[0] == 0
+    assert transform.c + 0.5 * transform.a == 105
+    assert transform.f + 0.5 * transform.e == 195
+    assert transform.a == 30
+    assert transform.e == -30
 
 
 def test_cooperative_worker_writes_only_the_common_detection_glb(tmp_path: Path, monkeypatch) -> None:
@@ -236,7 +302,13 @@ def test_cooperative_worker_writes_only_the_common_detection_glb(tmp_path: Path,
             visible_mask=numpy.ones((2, 2), dtype=bool),
             range_mask=numpy.ones((2, 2), dtype=bool),
             metrics={"visible_area_m2": 4},
-            fusion_masks=numpy.ones((len(multi_radar_coverage_task.FUSION_HEIGHTS_M), 2, 2), dtype=bool),
+            fusion_envelope=FusionHeightEnvelope(
+                target_epsg=32644,
+                transform=from_origin(0, 2, 1, 1),
+                lower_m=numpy.zeros((2, 2), dtype=numpy.float32),
+                upper_m=numpy.full((2, 2), 500, dtype=numpy.float32),
+                valid=numpy.ones((2, 2), dtype=bool),
+            ),
         )
 
     monkeypatch.setattr(multi_radar_coverage_task, "find_dem_file", lambda _: tmp_path / "source.tif")

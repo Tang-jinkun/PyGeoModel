@@ -307,7 +307,7 @@ def build_radar_visibility_envelope(
         & sector
         & (lower_surface <= upper_surface)
     )
-    vertices, faces = _height_field_envelope_mesh(
+    vertices, faces = build_height_field_envelope_mesh(
         x_grid,
         y_grid,
         lower_surface,
@@ -355,7 +355,7 @@ def build_radar_visibility_envelope(
     )
 
 
-def _height_field_envelope_mesh(
+def build_height_field_envelope_mesh(
     x_grid: numpy.ndarray,
     y_grid: numpy.ndarray,
     lower: numpy.ndarray,

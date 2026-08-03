@@ -122,6 +122,28 @@ describe("useMapWorkspace", () => {
       "#0f9f78"
     );
   });
+
+  it("applies radar grid density to loaded and subsequently added scene GLBs", async () => {
+    const sceneGlb = sceneGlbAdapter();
+    const workspace = sceneWorkspace(sceneGlb);
+    const map = {} as never;
+    await workspace.loadTaskOutputs("airCorridor", finishedAirTask);
+
+    workspace.setSceneGlbGridDensity(map, "sparse");
+    await workspace.setSceneGlbVisibility(
+      map,
+      "dem-a",
+      "airCorridor",
+      finishedAirTask,
+      true
+    );
+
+    expect(sceneGlb.setGridDensity).toHaveBeenCalledWith(map, "sparse");
+    expect(sceneGlb.load).toHaveBeenCalledWith(expect.objectContaining({
+      gridDensity: "sparse"
+    }));
+  });
+
   it("provides immutable point and waypoint commands with undo and clear", () => {
     const workspace = useMapWorkspace("point-or-route");
     const first: [number, number] = [79.8, 31.4];
@@ -511,7 +533,8 @@ function sceneGlbAdapter() {
     remove: vi.fn<SceneGlbAdapter["remove"]>(),
     removeAll: vi.fn<SceneGlbAdapter["removeAll"]>(),
     focus: vi.fn<SceneGlbAdapter["focus"]>(() => true),
-    setColor: vi.fn(() => true)
+    setColor: vi.fn(() => true),
+    setGridDensity: vi.fn()
   };
 }
 

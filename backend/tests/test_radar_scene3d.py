@@ -11,10 +11,12 @@ from app.schemas.radar import CoverageRequest
 from app.scene3d.exporter import read_glb_document
 from app.scene3d.radar import (
     BLOCKED_CONTACT_MATERIAL,
+    DETAILED_GRID_MATERIAL,
     DETECTION_FLOOR_MATERIAL,
     DIAGNOSTIC_MAX_MARKERS,
     GRID_MATERIAL,
     RayResult,
+    SPARSE_GRID_MATERIAL,
     _diagnostic_mesh,
     _grid_strides,
     _scan_slice_nodes,
@@ -43,9 +45,24 @@ def test_shell_does_not_bridge_terrain_shadow_to_full_range() -> None:
     assert len(mesh.faces) == 2
 
 
-def test_shell_grid_material_is_opaque_white() -> None:
-    assert GRID_MATERIAL.rgba == (255, 255, 255, 255)
-    assert GRID_MATERIAL.emissive_rgb == (180, 180, 180)
+def test_nonstandard_shell_grid_lod_materials_are_hidden_by_default() -> None:
+    assert SPARSE_GRID_MATERIAL.rgba[3] == 0
+    assert DETAILED_GRID_MATERIAL.rgba[3] == 0
+    assert 0 < GRID_MATERIAL.rgba[3] < 255
+    assert all(
+        sparse < standard
+        for sparse, standard in zip(
+            SPARSE_GRID_MATERIAL.emissive_rgb,
+            GRID_MATERIAL.emissive_rgb,
+        )
+    )
+    assert all(
+        standard < detailed
+        for standard, detailed in zip(
+            GRID_MATERIAL.emissive_rgb,
+            DETAILED_GRID_MATERIAL.emissive_rgb,
+        )
+    )
 
 
 def test_floor_and_terrain_contact_use_distinct_materials() -> None:
@@ -79,7 +96,9 @@ def test_scan_animation_uses_sparse_visibility_keyframes() -> None:
 
 
 def test_shell_grid_decouples_visual_spacing_from_ray_precision() -> None:
-    assert _grid_strides() == (4, 3)
+    assert _grid_strides("sparse") == (12, 8)
+    assert _grid_strides("standard") == (8, 6)
+    assert _grid_strides("detailed") == (4, 3)
 
 
 def test_diagnostic_markers_are_bounded_without_changing_ray_results() -> None:
@@ -229,8 +248,27 @@ def test_target_independent_radar_glb_is_self_contained_and_open_at_nodata(
         "radar_result/terrain_contact",
         "radar_result/unknown_boundary",
         "radar_result/shell_grid",
+        "radar_result/shell_grid_sparse",
+        "radar_result/shell_grid_detailed",
         "radar_result/diagnostics",
     } <= node_names
+    grid_lods = {
+        node["extras"]["lod"]
+        for node in document["nodes"]
+        if node.get("extras", {}).get("kind") == "shell_grid"
+    }
+    assert grid_lods == {"sparse", "standard", "detailed"}
+    grids_by_lod = {
+        node["extras"]["lod"]: node["extras"]
+        for node in document["nodes"]
+        if node.get("extras", {}).get("kind") == "shell_grid"
+    }
+    assert grids_by_lod["sparse"]["default_visible"] is False
+    assert grids_by_lod["standard"]["default_visible"] is True
+    assert grids_by_lod["detailed"]["default_visible"] is False
+    assert 0 < grids_by_lod["sparse"]["grid_opacity"] < 1
+    assert grids_by_lod["sparse"]["grid_opacity"] < grids_by_lod["standard"]["grid_opacity"]
+    assert grids_by_lod["standard"]["grid_opacity"] < grids_by_lod["detailed"]["grid_opacity"]
     assert "radar_result/terrain_blocked_volume" not in node_names
     assert "radar_result/terrain_blocked_ground" not in node_names
     scan_nodes = {

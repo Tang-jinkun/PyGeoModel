@@ -18,8 +18,10 @@ import {
   removeAllSceneGlbLayers,
   removeSceneGlbLayer,
   restoreSceneGlbLayerColors,
+  setAllSceneGlbLayerGridDensity,
   setSceneGlbLayerColor
 } from "../map/sceneGlbLayer";
+import type { RadarGridDensity } from "../map/radarVolumeLayer";
 import {
   createSpatialDraft,
   reduceSpatialDraft,
@@ -64,6 +66,7 @@ export interface SceneGlbLoadRequest {
   assetId: string;
   kind: SceneGlbKind;
   foreground: boolean;
+  gridDensity: RadarGridDensity;
   color?: string;
   colorReference: string;
   modelId: string;
@@ -81,6 +84,7 @@ export interface SceneGlbAdapter {
   focusMany?(map: MapInstance, taskIds: string[]): boolean;
   setColor?(map: MapInstance, taskId: string, color: string, referenceColor: string): boolean;
   restoreColor?(map: MapInstance, taskId: string): boolean;
+  setGridDensity?(map: MapInstance, density: RadarGridDensity): void;
 }
 
 export type RadarTaskSummary = TaskSummary<RadarRequest, RadarMetrics, RadarModelMetadata, RadarDiagnostics>;
@@ -123,6 +127,7 @@ const DEFAULT_SCENE_GLB_ADAPTER: SceneGlbAdapter = {
       if (request.color) applyPreparedSceneColor(asset, request.color, request.colorReference);
       addSceneGlbLayer(request.map, request.assetId, asset, {
         foreground: request.foreground,
+        gridDensity: request.gridDensity,
         onLost: request.onLayerLost
       });
     } catch (error) {
@@ -135,7 +140,8 @@ const DEFAULT_SCENE_GLB_ADAPTER: SceneGlbAdapter = {
   focus: focusSceneGlbLayer,
   focusMany: focusSceneGlbLayers,
   setColor: setSceneGlbLayerColor,
-  restoreColor: restoreSceneGlbLayerColors
+  restoreColor: restoreSceneGlbLayerColors,
+  setGridDensity: setAllSceneGlbLayerGridDensity
 };
 
 const SCENE_GLB_DEFAULT_COLORS: Record<SceneGlbKind, string> = {
@@ -169,6 +175,7 @@ export function useMapWorkspace(kind: SpatialInputKind, initialDraft?: SpatialDr
   const clientFactory = options.clientFactory ?? ((basePath: string) => createTaskClient(basePath));
   const fetchGeoJson = options.fetchGeoJson ?? requestGeoJson;
   const sceneGlb = options.sceneGlb ?? DEFAULT_SCENE_GLB_ADAPTER;
+  let sceneGlbGridDensity: RadarGridDensity = "auto";
   let outputLoadVersion = 0;
 
   function dispatch(action: SpatialDraftAction) {
@@ -388,6 +395,7 @@ export function useMapWorkspace(kind: SpatialInputKind, initialDraft?: SpatialDr
         assetId,
         kind,
         foreground,
+        gridDensity: sceneGlbGridDensity,
         color: sceneGlbStates.value[assetId]?.color,
         colorReference: SCENE_GLB_DEFAULT_COLORS[kind],
         modelId: sceneMetadataModelId(modelId),
@@ -460,6 +468,11 @@ export function useMapWorkspace(kind: SpatialInputKind, initialDraft?: SpatialDr
     const assetId = sceneAssetId(taskId, kind);
     updateSceneGlbState(assetId, { color });
     sceneGlb.setColor?.(map, assetId, color, SCENE_GLB_DEFAULT_COLORS[kind]);
+  }
+
+  function setSceneGlbGridDensity(map: MapInstance, density: RadarGridDensity) {
+    sceneGlbGridDensity = density;
+    sceneGlb.setGridDensity?.(map, density);
   }
 
   function restoreSceneGlbColor(map: MapInstance, taskId: string, kind: SceneGlbKind) {
@@ -584,6 +597,7 @@ export function useMapWorkspace(kind: SpatialInputKind, initialDraft?: SpatialDr
     focusTaskLayer,
     sceneGlbStateFor,
     setSceneGlbVisibility,
+    setSceneGlbGridDensity,
     setSceneGlbColor,
     restoreSceneGlbColor,
     focusSceneGlb,

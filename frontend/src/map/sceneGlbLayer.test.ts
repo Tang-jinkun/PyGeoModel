@@ -12,7 +12,9 @@ import {
   removeAllSceneGlbLayers,
   removeSceneGlbLayer,
   createSceneGlbLights,
-  sceneGlbLayerId
+  resolveSceneGlbGridLod,
+  sceneGlbLayerId,
+  setSceneGlbLayerGridDensity
 } from "./sceneGlbLayer";
 
 const rendererState = vi.hoisted(() => ({
@@ -58,6 +60,60 @@ describe("scene GLB map layer", () => {
     expect(directional.color.getHex()).toBe(0xffffff);
     expect(directional.intensity).toBe(1.6);
     expect(directional.position.toArray()).toEqual([0.6, 1, 0.4]);
+  });
+
+  it("resolves automatic radar grid LODs from map zoom and respects manual overrides", () => {
+    expect(resolveSceneGlbGridLod("auto", 6.9)).toBe("hidden");
+    expect(resolveSceneGlbGridLod("auto", 7)).toBe("sparse");
+    expect(resolveSceneGlbGridLod("auto", 9)).toBe("standard");
+    expect(resolveSceneGlbGridLod("auto", 12)).toBe("detailed");
+    expect(resolveSceneGlbGridLod("sparse", 15)).toBe("sparse");
+  });
+
+  it("switches generated radar grid meshes by zoom without reloading the asset", () => {
+    const map = new FakeMap();
+    const asset = preparedRadarGridAsset("task-a");
+    addSceneGlbLayer(map as never, "task-a", asset, { gridDensity: "auto" });
+    const render = map.layers.get("scene-glb-task-a")?.render as RenderLayer;
+
+    map.zoom = 6;
+    renderLayer(render);
+    expect(gridVisibility(asset)).toEqual([false, false, false]);
+
+    map.zoom = 8;
+    renderLayer(render);
+    expect(gridVisibility(asset)).toEqual([true, false, false]);
+    expect(gridOpacities(asset)).toEqual([0.5, 0.7, 0]);
+    const repaintCount = map.triggerRepaint.mock.calls.length;
+    expect(setSceneGlbLayerGridDensity(map as never, "task-a", "sparse")).toBe(true);
+    expect(map.triggerRepaint).toHaveBeenCalledTimes(repaintCount);
+    expect(setSceneGlbLayerGridDensity(map as never, "task-a", "auto")).toBe(true);
+
+    map.zoom = 10;
+    renderLayer(render);
+    expect(gridVisibility(asset)).toEqual([false, true, false]);
+
+    map.zoom = 13;
+    renderLayer(render);
+    expect(gridVisibility(asset)).toEqual([false, false, true]);
+    expect(gridOpacities(asset)).toEqual([0.5, 0.7, 0.85]);
+    expect(map.addLayer).toHaveBeenCalledOnce();
+  });
+
+  it("updates a loaded grid density manually and falls back for historical GLBs", () => {
+    const map = new FakeMap();
+    map.zoom = 6;
+    const asset = preparedRadarGridAsset("task-a", true);
+    addSceneGlbLayer(map as never, "task-a", asset, { gridDensity: "auto" });
+    const render = map.layers.get("scene-glb-task-a")?.render as RenderLayer;
+
+    renderLayer(render);
+    expect(gridVisibility(asset)).toEqual([false]);
+
+    expect(setSceneGlbLayerGridDensity(map as never, "task-a", "detailed")).toBe(true);
+    renderLayer(render);
+    expect(gridVisibility(asset)).toEqual([true]);
+    expect(map.triggerRepaint).toHaveBeenCalled();
   });
 
   it("keeps terrain at true scale until the final task is removed", () => {
@@ -296,6 +352,48 @@ function preparedAsset(taskId: string, material: THREE.Material = new THREE.Mesh
   };
 }
 
+function preparedRadarGridAsset(taskId: string, legacyOnly = false): PreparedSceneGlb {
+  const asset = preparedAsset(taskId);
+  asset.group.clear();
+  const names = legacyOnly
+    ? ["radar_result/shell_grid"]
+    : [
+        "radar_result/shell_grid_sparse",
+        "radar_result/shell_grid",
+        "radar_result/shell_grid_detailed"
+      ];
+  for (const [index, name] of names.entries()) {
+    const opacity = legacyOnly ? 1 : [0.5, 0.7, 0.85][index];
+    const material = new THREE.MeshBasicMaterial({
+      opacity: legacyOnly || index === 1 ? opacity : 0,
+      transparent: true
+    });
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(), material);
+    mesh.name = name;
+    if (!legacyOnly) mesh.userData.grid_opacity = opacity;
+    asset.group.add(mesh);
+  }
+  return asset;
+}
+
+function gridVisibility(asset: PreparedSceneGlb) {
+  return asset.group.children.map((child) => child.visible);
+}
+
+function gridOpacities(asset: PreparedSceneGlb) {
+  return asset.group.children.map((child) => (
+    child instanceof THREE.Mesh && child.material instanceof THREE.Material
+      ? child.material.opacity
+      : null
+  ));
+}
+
+type RenderLayer = (gl: WebGLRenderingContext, matrix: number[]) => void;
+
+function renderLayer(render: RenderLayer) {
+  render({} as WebGLRenderingContext, new THREE.Matrix4().identity().toArray());
+}
+
 class FakeMap {
   layers = new Map<string, Record<string, unknown>>();
   canvas = document.createElement("canvas");
@@ -303,6 +401,7 @@ class FakeMap {
   fitBounds = vi.fn();
   triggerRepaint = vi.fn();
   hasTerrainSource: boolean;
+  zoom = 10;
 
   constructor(hasTerrainSource = true) {
     this.hasTerrainSource = hasTerrainSource;
@@ -320,6 +419,7 @@ class FakeMap {
   }));
 
   getCanvas = vi.fn(() => this.canvas);
+  getZoom = vi.fn(() => this.zoom);
   getLayer = vi.fn((id: string) => this.layers.get(id));
 
   addLayer = vi.fn((layer: Record<string, unknown>, _before?: string) => {

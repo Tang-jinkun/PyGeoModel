@@ -1,4 +1,5 @@
 import json
+import math
 import os
 import shutil
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -19,8 +20,10 @@ from app.services.dem_store import find_dem_file
 from app.services.multi_radar_coverage import StationMask, accumulate_station_masks
 from app.services.multi_radar_dem import SharedMultiRadarDem, prepare_shared_multi_radar_dem, station_coverage_request
 from app.services.multi_radar_fusion_volume import (
+    FusionHeightEnvelope,
     FusionHeightCounts,
     accumulate_fusion_height_counts,
+    intersect_fusion_envelopes,
     write_cooperative_intersection_glb,
     write_multi_radar_fusion_glb,
 )
@@ -43,6 +46,7 @@ class StationEvaluation:
     metrics: dict
     diagnostics: dict | None = None
     fusion_masks: numpy.ndarray | None = None
+    fusion_envelope: FusionHeightEnvelope | None = None
     scene_task_id: str | None = None
     scene_status: str | None = None
     scene_message: str = ""
@@ -136,9 +140,30 @@ def build_multi_radar_artifacts(
             completed = _generate_cooperative_scene_tasks(task_id, payload, completed, progress)
         progress("Writing aggregate coverage outputs.", 90)
         fusion_masks = [item.fusion_masks for item in completed if item.fusion_masks is not None]
+        fusion_envelopes = [item.fusion_envelope for item in completed if item.fusion_envelope is not None]
         fusion_path = None
         cooperative_intersection_path = None
-        if fusion_masks:
+        if payload.presentation_mode == "cooperative_3d":
+            # A strict cooperative volume is meaningful only when every requested
+            # station contributed an analytic envelope. Never fall back to the
+            # legacy height-count mesh for this presentation mode.
+            all_station_envelopes = (
+                not failures
+                and len(completed) == len(payload.radars)
+                and len(fusion_envelopes) == len(payload.radars)
+            )
+            if all_station_envelopes:
+                intersection = intersect_fusion_envelopes(fusion_envelopes)
+                if intersection is not None:
+                    candidate = staging_dir / "cooperative_intersection.glb"
+                    if write_cooperative_intersection_glb(
+                        candidate,
+                        task_id=task_id,
+                        envelope=intersection,
+                        station_count=len(fusion_envelopes),
+                    ) is not None:
+                        cooperative_intersection_path = candidate
+        elif fusion_masks:
             rows, columns, fusion_transform = fusion_grid_spec(shared)
             terrain = _read_fusion_terrain(shared.projected_dem, rows, columns)
             fusion_counts = FusionHeightCounts(
@@ -148,15 +173,8 @@ def build_multi_radar_artifacts(
                 coverage_count=accumulate_fusion_height_counts(fusion_masks),
                 terrain_m=terrain,
             )
-            if payload.presentation_mode == "cooperative_3d":
-                candidate = staging_dir / "cooperative_intersection.glb"
-                if write_cooperative_intersection_glb(
-                    candidate, task_id=task_id, counts=fusion_counts
-                ) is not None:
-                    cooperative_intersection_path = candidate
-            else:
-                fusion_path = staging_dir / "fusion_scene.glb"
-                write_multi_radar_fusion_glb(fusion_path, task_id=task_id, counts=fusion_counts)
+            fusion_path = staging_dir / "fusion_scene.glb"
+            write_multi_radar_fusion_glb(fusion_path, task_id=task_id, counts=fusion_counts)
 
         _write_aggregate_outputs(
             staging_dir,
@@ -223,10 +241,14 @@ def _evaluate_station(shared: SharedMultiRadarDem, station) -> StationEvaluation
         fusion_masks = _station_fusion_masks(
             shared, data, local_transform, local_domain, radar_x, radar_y, request
         )
+        fusion_envelope = _station_fusion_envelope(
+            shared, data, local_transform, local_domain, radar_x, radar_y, request
+        )
         metrics = _build_coverage_metrics(masks, local_transform, radar_equation_limited_area=0)
         return StationEvaluation(
             radar_id=station.radar_id, name=station.name, visible_mask=visible_mask,
             range_mask=range_mask, metrics=metrics.model_dump(), fusion_masks=fusion_masks,
+            fusion_envelope=fusion_envelope,
         )
     finally:
         output.unlink(missing_ok=True)
@@ -271,11 +293,15 @@ def fusion_grid_spec(shared):
     scale = max(1, int(numpy.ceil(max(height, width) / FUSION_MAX_GRID_DIMENSION)))
     rows = numpy.arange(0, height, scale, dtype=numpy.int32)
     columns = numpy.arange(0, width, scale, dtype=numpy.int32)
+    source_x_size = abs(float(shared.transform.a))
+    source_y_size = abs(float(shared.transform.e))
+    # The downsampled arrays contain source pixels at indices 0, scale, 2*scale,
+    # ...; align their output-cell centers with those source-pixel centers.
     transform = from_origin(
-        shared.transform.c,
-        shared.transform.f,
-        abs(shared.transform.a) * scale,
-        abs(shared.transform.e) * scale,
+        float(shared.transform.c) - 0.5 * (scale - 1) * source_x_size,
+        float(shared.transform.f) + 0.5 * (scale - 1) * source_y_size,
+        source_x_size * scale,
+        source_y_size * scale,
     )
     return rows, columns, transform
 
@@ -305,6 +331,96 @@ def _station_fusion_masks(shared, data, local_transform, local_domain, radar_x, 
         )
         sampled_masks.append(visible[numpy.ix_(rows, columns)])
     return numpy.asarray(sampled_masks, dtype=bool)
+
+
+def _station_fusion_envelope(
+    shared,
+    data,
+    local_transform,
+    local_domain,
+    radar_x,
+    radar_y,
+    request,
+) -> FusionHeightEnvelope:
+    rows, columns, transform = fusion_grid_spec(shared)
+    row, column = shared_grid_offset(shared, local_transform)
+    threshold_shared = numpy.full(shared.analysis_domain.shape, numpy.nan, dtype=numpy.float64)
+    height, width = data.shape
+    threshold_shared[row:row + height, column:column + width] = numpy.asarray(data, dtype=numpy.float64)
+    threshold = threshold_shared[numpy.ix_(rows, columns)]
+    local_domain = numpy.asarray(local_domain, dtype=bool)
+    if local_domain.shape != data.shape:
+        raise ValueError("Station viewshed domain does not match the viewshed raster.")
+    domain_shared = numpy.zeros_like(shared.analysis_domain, dtype=bool)
+    domain_shared[row:row + height, column:column + width] = local_domain
+    domain = domain_shared[numpy.ix_(rows, columns)] & numpy.asarray(
+        shared.analysis_domain[numpy.ix_(rows, columns)], dtype=bool
+    )
+    terrain_masked = _read_fusion_terrain(shared.projected_dem, rows, columns)
+    terrain = numpy.asarray(terrain_masked.data, dtype=numpy.float64)
+    terrain_valid = ~numpy.ma.getmaskarray(terrain_masked) & numpy.isfinite(terrain)
+    threshold_valid = numpy.isfinite(threshold) & (threshold >= 0)
+
+    radar_ground = _sample_shared_terrain(shared, radar_x, radar_y)
+    radar_z = radar_ground + float(request.radar.height_m)
+    effective_range = effective_max_range(request)[0]
+    x = transform.c + (numpy.arange(len(columns), dtype=numpy.float64) + 0.5) * transform.a
+    y = transform.f + (numpy.arange(len(rows), dtype=numpy.float64) + 0.5) * transform.e
+    x_grid, y_grid = numpy.meshgrid(x, y)
+    dx = x_grid - radar_x
+    dy = y_grid - radar_y
+    distance = numpy.hypot(dx, dy)
+    distance_squared = distance * distance
+    sector = _fusion_sector_mask(dx, dy, request)
+
+    lower = terrain + threshold
+    lower = numpy.maximum(
+        lower,
+        radar_z + distance * math.tan(math.radians(request.advanced.min_elevation_deg)),
+    )
+    upper = radar_z + numpy.sqrt(numpy.maximum(0.0, effective_range**2 - distance_squared))
+    if request.advanced.max_elevation_deg < 90:
+        upper = numpy.minimum(
+            upper,
+            radar_z + distance * math.tan(math.radians(request.advanced.max_elevation_deg)),
+        )
+    valid = (
+        domain
+        & terrain_valid
+        & threshold_valid
+        & (distance_squared <= effective_range**2)
+        & sector
+        & numpy.isfinite(lower)
+        & numpy.isfinite(upper)
+        & (lower <= upper)
+    )
+    return FusionHeightEnvelope(
+        target_epsg=shared.target_epsg,
+        transform=transform,
+        lower_m=numpy.where(valid, lower, 0.0),
+        upper_m=numpy.where(valid, upper, 0.0),
+        valid=valid,
+    )
+
+
+def _sample_shared_terrain(shared, x: float, y: float) -> float:
+    import rasterio
+
+    with rasterio.open(shared.projected_dem) as source:
+        row, column = source.index(x, y)
+        sample = source.read(1, window=((row, row + 1), (column, column + 1)), masked=True)
+    value = sample[0, 0]
+    if numpy.ma.is_masked(value) or not numpy.isfinite(float(value)):
+        raise ValueError("Radar point is outside the valid shared DEM.")
+    return float(value)
+
+
+def _fusion_sector_mask(dx, dy, request):
+    if request.coverage.scan_mode != "sector" or request.coverage.beam_width_deg >= 360:
+        return numpy.ones(dx.shape, dtype=bool)
+    azimuth = (numpy.degrees(numpy.arctan2(dx, dy)) + 360) % 360
+    delta = numpy.abs((azimuth - request.coverage.azimuth_deg + 180) % 360 - 180)
+    return delta <= request.coverage.beam_width_deg / 2
 
 
 def _generate_cooperative_scene_tasks(
