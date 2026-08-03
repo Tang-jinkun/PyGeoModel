@@ -30,6 +30,15 @@
         </option>
       </select>
     </label>
+    <label class="radar-height-select">
+      <span>Grid density</span>
+      <select data-grid-density :value="gridDensity" @change="selectGridDensity">
+        <option value="auto">Auto</option>
+        <option value="sparse">Sparse</option>
+        <option value="standard">Standard</option>
+        <option value="detailed">Detailed</option>
+      </select>
+    </label>
   </section>
 </template>
 
@@ -37,6 +46,7 @@
 import { computed } from "vue";
 
 export type RadarControlKind = "volume" | "boundary" | "clipped" | "voxel" | "height";
+export type RadarGridDensity = "auto" | "sparse" | "standard" | "detailed";
 export interface RadarControlLayer {
   kind: RadarControlKind;
   label: string;
@@ -51,10 +61,12 @@ const props = defineProps<{
   layers: RadarControlLayer[];
   heightOptions: RadarHeightOption[];
   selectedHeightM: number | null;
+  gridDensity: RadarGridDensity;
 }>();
 const emit = defineEmits<{
   "update-layer": [kind: RadarControlKind, patch: { visible?: boolean; opacity?: number }];
   "select-height": [heightM: number];
+  "update-grid-density": [density: RadarGridDensity];
 }>();
 const availableLayers = computed(() => props.layers.filter(({ available }) => available));
 
@@ -68,6 +80,10 @@ function updateOpacity(kind: RadarControlKind, event: Event) {
 
 function selectHeight(event: Event) {
   emit("select-height", Number((event.target as HTMLSelectElement).value));
+}
+
+function selectGridDensity(event: Event) {
+  emit("update-grid-density", (event.target as HTMLSelectElement).value as RadarGridDensity);
 }
 </script>
 

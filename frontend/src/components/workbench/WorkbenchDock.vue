@@ -36,6 +36,19 @@
         <p v-if="!resultLayerCount" class="empty-state">尚未加载任务图层</p>
       </details>
 
+      <details v-if="modelValue === 'radar'" open class="tree-group">
+        <summary>雷达预览<span>格网</span></summary>
+        <label class="radar-grid-density">
+          <span>球体格网</span>
+          <select data-radar-grid-density :value="gridDensity" aria-label="球体格网密度" @change="updateGridDensity">
+            <option value="auto">自动</option>
+            <option value="sparse">稀疏</option>
+            <option value="standard">标准</option>
+            <option value="detailed">精细</option>
+          </select>
+        </label>
+      </details>
+
       <details v-if="multiRadarStations.length" open class="tree-group">
         <summary>协同雷达站<span>{{ multiRadarStations.length }}</span></summary>
         <div v-for="station in multiRadarStations" :key="station.radar_id" class="station-row">
@@ -62,19 +75,20 @@ import type { MultiRadarStationSummary } from "../../models/multiRadar/types";
 
 type DockTab = "catalog" | "layers" | "data";
 export type RadarControlKind = "volume" | "boundary" | "clipped" | "voxel" | "height";
+export type RadarGridDensity = "auto" | "sparse" | "standard" | "detailed";
 export interface RadarControlLayer { kind: RadarControlKind; label: string; color: string; visible: boolean; opacity: number; available: boolean }
 export interface RadarHeightOption { heightM: number; label: string }
 export interface WorkbenchSceneEntry { id: string; taskId: string; kind: SceneGlbKind; file: OutputFile; state: SceneGlbOverlayState }
 
 const props = withDefaults(defineProps<{
   modelValue: ModelId; activeTab?: DockTab; modelSearch?: string; layerDefinitions?: readonly OutputLayerDefinition[];
-  layerStates?: readonly TaskOutputLayerState[]; sceneEntries?: readonly WorkbenchSceneEntry[]; multiRadarStations?: MultiRadarStationSummary[];
-}>(), { activeTab: "catalog", modelSearch: "", layerDefinitions: () => [], layerStates: () => [], sceneEntries: () => [], multiRadarStations: () => [] });
+  layerStates?: readonly TaskOutputLayerState[]; sceneEntries?: readonly WorkbenchSceneEntry[]; multiRadarStations?: MultiRadarStationSummary[]; gridDensity?: RadarGridDensity;
+}>(), { activeTab: "catalog", modelSearch: "", layerDefinitions: () => [], layerStates: () => [], sceneEntries: () => [], multiRadarStations: () => [], gridDensity: "auto" });
 
 const emit = defineEmits<{
   "select-model": [modelId: ModelId]; "update:activeTab": [tab: DockTab]; "update:modelSearch": [query: string];
   "update-layer-visibility": [kind: string, visible: boolean]; "update-layer-opacity": [kind: string, opacity: number]; "update-layer-color": [kind: string, color: string]; "focus-layer": [kind: string];
-  "update-scene-glb": [entryId: string, visible: boolean]; "update-scene-glb-color": [entryId: string, color: string]; "reset-scene-glb-color": [entryId: string]; "focus-scene-glb": [entryId: string]; "focus-station": [radarId: string];
+  "update-scene-glb": [entryId: string, visible: boolean]; "update-scene-glb-color": [entryId: string, color: string]; "reset-scene-glb-color": [entryId: string]; "focus-scene-glb": [entryId: string]; "focus-station": [radarId: string]; "update-grid-density": [density: RadarGridDensity];
 }>();
 
 const tabs: Array<{ id: DockTab; label: string }> = [{ id: "catalog", label: "模型库" }, { id: "layers", label: "图层" }, { id: "data", label: "数据" }];
@@ -91,6 +105,7 @@ function updateSearch(event: Event) { search.value = (event.target as HTMLInputE
 function checked(event: Event) { return (event.target as HTMLInputElement).checked; }
 function number(event: Event) { return Number((event.target as HTMLInputElement | HTMLSelectElement).value); }
 function color(event: Event) { return (event.target as HTMLInputElement).value; }
+function updateGridDensity(event: Event) { emit("update-grid-density", (event.target as HTMLSelectElement).value as RadarGridDensity); }
 function layerState(kind: string) { return props.layerStates.find((state) => state.kind === kind); }
 function sceneColor(kind: SceneGlbKind) { return kind === "radar_platform_glb" ? "#d99a24" : "#0f9f78"; }
 function sceneLabel(status: SceneGlbOverlayState["status"]) { return { idle: "待加载", loading: "加载中", visible: "已加载", error: "加载失败" }[status]; }
@@ -109,4 +124,5 @@ function groupModels(query: string) {
 .layer-row input[type="color"].layer-row__color::-webkit-color-swatch{border:0;border-radius:2px}
 .layer-row[data-layer-id]{grid-template-columns:16px 22px minmax(0,1fr) 24px 62px 24px}
 .layer-row__reset{grid-column:4}
+.radar-grid-density{display:grid;grid-template-columns:minmax(0,1fr) 92px;align-items:center;gap:8px;min-height:36px;padding:4px 6px;border-bottom:1px solid var(--wb-border-soft);color:var(--wb-fg-2);font-size:12px}.radar-grid-density select{height:28px;min-width:0;padding:0 6px;border:1px solid var(--wb-border);border-radius:4px;background:var(--wb-surface);color:var(--wb-fg);font:inherit}
 </style>

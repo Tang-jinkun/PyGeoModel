@@ -1,7 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { RadarRequest } from "../models/radar/types";
-import { addOrUpdateRadarVolume, removeRadarVolume } from "./radarVolumeLayer";
+import {
+  addOrUpdateRadarVolume,
+  removeRadarVolume,
+  resolveRadarGridDetail
+} from "./radarVolumeLayer";
 
 const radarRequest: RadarRequest = {
   dem_id: "dem-a",
@@ -50,6 +54,24 @@ describe("radarVolumeLayer", () => {
 
     expect(mountedMap.removeLayer).toHaveBeenCalledWith("radar-volume-layer");
     expect(mountedMap.addLayer).toHaveBeenCalledTimes(2);
+  });
+
+  it("uses sparse structural grids at distant zoom levels and never restores triangle wireframes", () => {
+    expect(resolveRadarGridDetail("auto", 7)).toEqual({
+      rings: 3,
+      meridians: 6,
+      rays: 8,
+      boundaries: 12,
+      groundConnections: 6
+    });
+    expect(resolveRadarGridDetail("auto", 12)).toEqual({
+      rings: 6,
+      meridians: 12,
+      rays: 18,
+      boundaries: 36,
+      groundConnections: 12
+    });
+    expect(resolveRadarGridDetail("sparse", 18).meridians).toBe(6);
   });
 });
 

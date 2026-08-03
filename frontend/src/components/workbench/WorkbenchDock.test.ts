@@ -37,6 +37,17 @@ describe("WorkbenchDock", () => {
     expect(wrapper.text()).toContain("active DEM content");
   });
 
+  it("lets radar users override automatic sphere grid density", async () => {
+    const wrapper = mount(WorkbenchDock, {
+      props: { modelValue: "radar", gridDensity: "auto" }
+    });
+
+    await wrapper.get('[data-dock-tab="layers"]').trigger("click");
+    await wrapper.get('[data-radar-grid-density]').setValue("sparse");
+
+    expect(wrapper.emitted("update-grid-density")?.[0]).toEqual(["sparse"]);
+  });
+
   it("emits independent colour updates for GeoJSON and GLB results", async () => {
     const wrapper = mount(WorkbenchDock, {
       props: {

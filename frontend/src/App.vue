@@ -2,7 +2,7 @@
   <GisWorkbenchShell :tasks-collapsed="presentation.taskCenterCollapsed.value" :inspector-open="presentation.inspectorMode.value === 'result' && Boolean(selectedWorkbenchResultContext)" @update:tasks-collapsed="presentation.toggleTaskCenter">
     <template #topbar><WorkbenchTopbar :dem-label="selectedDem?.filename ?? 'No DEM selected'" :connected="!taskManager.connectionInterrupted.value" :search="modelSearch" @update:search="modelSearch = $event" /></template>
     <template #dock>
-  <WorkbenchDock :model-value="workspace.selectedModel.value" :active-tab="presentation.dockTab.value" :model-search="modelSearch" :layer-definitions="selectedLayerDefinitions" :layer-states="selectedLayerStates" :scene-entries="workbenchSceneEntries" :multi-radar-stations="activeMultiRadarTask?.stations ?? []" @select-model="selectWorkbenchModel" @update:active-tab="presentation.selectDockTab" @update:model-search="modelSearch = $event" @update-layer-visibility="setLayerVisibility" @update-layer-opacity="setLayerOpacity" @update-layer-color="setLayerColor" @focus-layer="focusLayer" @update-scene-glb="setWorkbenchSceneVisibility" @update-scene-glb-color="setWorkbenchSceneColor" @reset-scene-glb-color="resetWorkbenchSceneColor" @focus-scene-glb="focusWorkbenchScene" @focus-station="focusMultiRadarStation">
+  <WorkbenchDock :model-value="workspace.selectedModel.value" :active-tab="presentation.dockTab.value" :model-search="modelSearch" :layer-definitions="selectedLayerDefinitions" :layer-states="selectedLayerStates" :scene-entries="workbenchSceneEntries" :multi-radar-stations="activeMultiRadarTask?.stations ?? []" :grid-density="radarGridDensity" @select-model="selectWorkbenchModel" @update:active-tab="presentation.selectDockTab" @update:model-search="modelSearch = $event" @update-layer-visibility="setLayerVisibility" @update-layer-opacity="setLayerOpacity" @update-layer-color="setLayerColor" @focus-layer="focusLayer" @update-scene-glb="setWorkbenchSceneVisibility" @update-scene-glb-color="setWorkbenchSceneColor" @reset-scene-glb-color="resetWorkbenchSceneColor" @focus-scene-glb="focusWorkbenchScene" @focus-station="focusMultiRadarStation" @update-grid-density="updateRadarGridDensity">
         <template #data><WorkbenchDataPane :dems="demManager.dems.value" :model-value="demManager.selectedDem.value" :loading="demManager.loading.value" :uploading="demManager.uploading.value" @update:model-value="demManager.select" @upload="(file) => runCommand(demManager.upload, file)" @delete="(demId) => runCommand(demManager.remove, demId)" @refresh="runCommand(demManager.load)" /></template>
       </WorkbenchDock>
     </template>
@@ -102,7 +102,9 @@
           :layers="radarControlLayers"
           :height-options="heightOptions"
           :selected-height-m="selectedHeightM"
+          :grid-density="radarGridDensity"
           @update-layer="updateRadarControl"
+          @update-grid-density="updateRadarGridDensity"
           @select-height="selectHeightLayer"
         />
         <ProfilePanel
@@ -204,7 +206,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, shallowR
 
 import GisWorkbenchShell from "./components/workbench/GisWorkbenchShell.vue";
 import WorkbenchDataPane from "./components/workbench/WorkbenchDataPane.vue";
-import WorkbenchDock, { type RadarControlKind, type RadarControlLayer, type RadarHeightOption, type WorkbenchSceneEntry } from "./components/workbench/WorkbenchDock.vue";
+import WorkbenchDock, { type RadarControlKind, type RadarControlLayer, type RadarGridDensity, type RadarHeightOption, type WorkbenchSceneEntry } from "./components/workbench/WorkbenchDock.vue";
 import WorkbenchInspector from "./components/workbench/WorkbenchInspector.vue";
 import ModelRunDialog, { type ModelRunSubmission } from "./components/workbench/ModelRunDialog.vue";
 import WorkbenchTaskCenter from "./components/workbench/WorkbenchTaskCenter.vue";
@@ -287,6 +289,7 @@ const renderedHeightLayers = new Map<string, string>();
 const radarLayerErrors = ref<string[]>([]);
 const heightOptions = ref<RadarHeightOption[]>([]);
 const selectedHeightM = ref<number | null>(null);
+const radarGridDensity = ref<RadarGridDensity>("auto");
 const activeHeightData = shallowRef<HeightLayerData[]>([]);
 const activeMultiRadarTask = shallowRef<MultiRadarTask | null>(null);
 const selectedMultiRadarResultTask = shallowRef<MultiRadarTask | null>(null);
@@ -394,7 +397,8 @@ const radarLayers = createRadarLayerAdapter({
       clipProfile: plan.clipProfile,
       showScanPlane: control.visible,
       showFullRequestOutline: boundary.visible,
-      referenceOpacity: boundary.opacity
+      referenceOpacity: boundary.opacity,
+      gridDensity: radarGridDensity.value
     });
   },
   removeVolume() {
@@ -1192,7 +1196,8 @@ function syncRadarPreview() {
     showScanPlane: volumeControl.visible,
     clipProfile: clipProfileFromBounds(dem.bounds, request.radar, request.coverage.max_range_m),
     showFullRequestOutline: boundaryControl.visible,
-    referenceOpacity: boundaryControl.opacity
+    referenceOpacity: boundaryControl.opacity,
+    gridDensity: radarGridDensity.value
   });
 }
 
@@ -1334,6 +1339,11 @@ function updateRadarControl(kind: RadarControlKind, patch: { visible?: boolean; 
     void renderSelectedHeightLayer();
     return;
   }
+  refreshRadarLayerRendering();
+}
+
+function updateRadarGridDensity(density: RadarGridDensity) {
+  radarGridDensity.value = density;
   refreshRadarLayerRendering();
 }
 
