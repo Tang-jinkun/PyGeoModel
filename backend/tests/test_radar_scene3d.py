@@ -244,7 +244,6 @@ def test_target_independent_radar_glb_is_self_contained_and_open_at_nodata(
         "radar_result/detectable_shell",
         "radar_result/detection_floor",
         "radar_result/terrain_blocked_contact",
-        "radar_result/detection_floor_boundary",
         "radar_result/terrain_contact",
         "radar_result/unknown_boundary",
         "radar_result/shell_grid",
@@ -252,6 +251,7 @@ def test_target_independent_radar_glb_is_self_contained_and_open_at_nodata(
         "radar_result/shell_grid_detailed",
         "radar_result/diagnostics",
     } <= node_names
+    assert "radar_result/detection_floor_boundary" not in node_names
     grid_lods = {
         node["extras"]["lod"]
         for node in document["nodes"]

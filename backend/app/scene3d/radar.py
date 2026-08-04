@@ -71,12 +71,6 @@ DETAILED_GRID_MATERIAL = MaterialSpec(
     shading="unlit",
     emissive_rgb=(120, 120, 120),
 )
-FLOOR_BOUNDARY_MATERIAL = MaterialSpec(
-    "radar_detection_floor_boundary",
-    (255, 176, 32, 255),
-    shading="unlit",
-    emissive_rgb=(180, 96, 0),
-)
 SCAN_MATERIAL = MaterialSpec(
     "radar_active_scan",
     (69, 166, 107, 104),
@@ -263,15 +257,6 @@ def write_radar_coverage_glb(
         )
         for lod in ("sparse", "standard", "detailed")
     }
-    floor_boundary = (
-        _lower_surface_boundary_mesh(
-            visibility_volume,
-            frame,
-            radius_m=max(10.0, min(120.0, effective_range_m * 0.002)),
-        )
-        if visibility_volume is not None
-        else None
-    )
     contact_radius_m = max(10.0, min(40.0, effective_range_m * 0.0007))
     blocked_contact = (
         _visibility_segment_mesh(
@@ -397,18 +382,6 @@ def write_radar_coverage_glb(
                     "default_visible": False,
                     "grid_opacity": 220 / 255,
                 },
-            ),
-            *(
-                [
-                    SceneNode(
-                        name="radar_result/detection_floor_boundary",
-                        mesh=floor_boundary,
-                        material=FLOOR_BOUNDARY_MATERIAL,
-                        extras={"kind": "detection_floor_boundary"},
-                    )
-                ]
-                if floor_boundary is not None
-                else []
             ),
             *(
                 [
@@ -774,61 +747,6 @@ def _lower_face_mask(faces: numpy.ndarray) -> numpy.ndarray:
     if len(faces) == 0:
         return numpy.empty(0, dtype=bool)
     return numpy.all(numpy.asarray(faces) % 2 == 0, axis=1)
-
-
-def _lower_surface_boundary_mesh(
-    volume: RadarVisibilityVolume,
-    frame: SceneFrame,
-    *,
-    radius_m: float,
-) -> trimesh.Trimesh | None:
-    return _lower_face_boundary_mesh(
-        volume.vertices,
-        volume.faces,
-        frame,
-        radius_m=radius_m,
-    )
-
-
-def _lower_face_boundary_mesh(
-    vertices: numpy.ndarray,
-    faces: numpy.ndarray,
-    frame: SceneFrame,
-    *,
-    radius_m: float,
-    altitude_offset_m: float = 0.0,
-) -> trimesh.Trimesh | None:
-    edge_counts: dict[tuple[int, int], int] = {}
-    for face in faces:
-        indices = [int(index) for index in face]
-        if any(index % 2 for index in indices):
-            continue
-        for first, second in ((indices[0], indices[1]), (indices[1], indices[2]), (indices[2], indices[0])):
-            edge = tuple(sorted((first, second)))
-            edge_counts[edge] = edge_counts.get(edge, 0) + 1
-
-    meshes = []
-    for (first, second), count in edge_counts.items():
-        if count != 1:
-            continue
-        path = numpy.asarray(
-            [
-                frame.to_gltf(
-                    tuple(vertices[first] + (0.0, 0.0, altitude_offset_m))
-                ),
-                frame.to_gltf(
-                    tuple(vertices[second] + (0.0, 0.0, altitude_offset_m))
-                ),
-            ],
-            dtype=numpy.float64,
-        )
-        if numpy.linalg.norm(path[1] - path[0]) > 0:
-            meshes.append(
-                continuous_tube_mesh(path, radius_m=radius_m, sections=6)
-            )
-    if not meshes:
-        return None
-    return trimesh.util.concatenate(meshes)
 
 
 def _visibility_segment_mesh(
