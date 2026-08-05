@@ -44,7 +44,7 @@ import ModelInputSlots from "./ModelInputSlots.vue";
 import ModelParameterFields from "./ModelParameterFields.vue";
 import MultiRadarStationEditor from "./MultiRadarStationEditor.vue";
 
-type MapTool = "point" | "route" | "start" | "end" | "threat";
+type MapTool = "point" | "target" | "route" | "start" | "end" | "threat";
 type MultiRadarPresentationMode = "aggregate" | "cooperative_3d";
 export type ModelRunSubmission =
   | { request: BaseModelRequest; inputs: ModelInputSelections; multiRadar?: never }

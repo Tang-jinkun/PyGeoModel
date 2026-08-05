@@ -26,7 +26,7 @@ import type { Map, MapMouseEvent, StyleSpecification } from "../../map/mapEngine
 import { createTiandituStyle } from "../../map/tiandituStyle";
 import { isCoordinateInDemBounds } from "../../map/mapPickPolicy";
 
-type EditTarget = "auto" | "point" | "route" | "start" | "end" | "threat";
+type EditTarget = "auto" | "point" | "target" | "route" | "start" | "end" | "threat";
 
 const props = withDefaults(defineProps<{
   kind: SpatialInputKind;
@@ -140,6 +140,7 @@ function handleMapClick(event: MapMouseEvent) {
 function actionForCoordinate(coordinate: SpatialCoordinate): SpatialDraftAction | null {
   const target = props.editTarget;
   if (target === "point") return { type: "set-point", coordinate };
+  if (target === "target") return { type: "set-target", coordinate };
   if (target === "route") return { type: "append", coordinate };
   if (target === "start") return { type: "set-start", coordinate };
   if (target === "end") return { type: "set-end", coordinate };
@@ -149,6 +150,9 @@ function actionForCoordinate(coordinate: SpatialCoordinate): SpatialDraftAction 
       : { type: "add-threat", threat: { id: crypto.randomUUID(), coordinate } };
   }
   if (props.kind === "point") return { type: "set-point", coordinate };
+  if (props.kind === "point-target") return props.draft.points.length
+    ? { type: "set-target", coordinate }
+    : { type: "set-point", coordinate };
   if (props.kind === "point-or-route") return { type: "append", coordinate };
   return props.draft.start
     ? { type: "set-end", coordinate }

@@ -261,7 +261,7 @@ import { requestGeoJson } from "./api/http";
 import { createTaskClient } from "./api/tasks";
 import { createMultiRadarLayerAdapter, MULTI_RADAR_LAYER_DEFINITIONS } from "./map/multiRadarLayerAdapter";
 
-type MapEditTarget = "auto" | "point" | "route" | "start" | "end" | "threat";
+type MapEditTarget = "auto" | "point" | "target" | "route" | "start" | "end" | "threat";
 type GenericTask = TaskSummary<BaseModelRequest, unknown, unknown, unknown>;
 interface SelectedTaskContext { modelId: ModelId; task: GenericTask }
 interface HeightLayerData extends RadarHeightOption { visibleUrl: string; blockedUrl: string | null }
@@ -492,7 +492,11 @@ onBeforeUnmount(() => {
   if (map.value) multiRadarAdapter.clear(map.value);
 });
 
-watch(selectedTaskContext, async (context) => {
+watch(selectedTaskContext, async (context, previousContext) => {
+  if (map.value && previousContext
+    && previousContext.task.task_id !== context?.task.task_id) {
+    mapWorkspace.removeSceneGlb(map.value, previousContext.task.task_id);
+  }
   const nextRadarTaskId = context?.modelId === "radar" ? context.task.task_id : null;
   if (nextRadarTaskId !== lastRadarTaskId) {
     radarLayers.clear();
@@ -518,6 +522,7 @@ watch(selectedTaskContext, async (context) => {
     || current.task.task_id !== context.task.task_id) return;
   renderTaskLayers();
   await syncRadarLayers(context);
+  await syncArtilleryScene(context);
 }, { immediate: true });
 
 watch(() => mapWorkspace.layerStates.value, renderTaskLayers, { deep: true });
@@ -531,6 +536,9 @@ watch(() => workspace.drafts.radar, () => {
 }, { deep: true });
 
 function selectModel(modelId: ModelId) {
+  if (map.value && modelId !== "artillery" && selectedTaskContext.value?.modelId === "artillery") {
+    mapWorkspace.removeSceneGlb(map.value, selectedTaskContext.value.task.task_id);
+  }
   workspace.selectModel(modelId);
   taskManager.setVisibleModel(modelId);
   radarLayers.setRadarVisible(modelId === "radar");
@@ -954,6 +962,7 @@ function handleMapLoad() {
   renderTaskLayers();
   radarLayers.clear();
   if (selectedTaskContext.value) void syncRadarLayers(selectedTaskContext.value);
+  if (selectedTaskContext.value) void syncArtilleryScene(selectedTaskContext.value);
   else syncRadarPreview();
   renderRadarAnalysisLayers();
 }
@@ -1163,6 +1172,27 @@ async function syncRadarLayers(context: SelectedTaskContext) {
   if (workspace.selectedModel.value !== "radar"
     || current?.modelId !== "radar"
     || current.task.task_id !== radarTask.task_id) return;
+}
+
+async function syncArtilleryScene(context: SelectedTaskContext) {
+  const instance = map.value;
+  const selectedDemId = demManager.selectedDem.value;
+  if (!instance || !mapReady(instance) || context.modelId !== "artillery"
+    || context.task.status !== "finished" || !selectedDemId) return;
+  const file = mapWorkspace.outputFiles.value.find((candidate) => (
+    candidate.kind === "scene_glb" && candidate.exists
+  ));
+  if (!file) return;
+  await mapWorkspace.setSceneGlbVisibility(
+    instance,
+    selectedDemId,
+    "artillery",
+    context.task as never,
+    true,
+    "scene_glb",
+    [file],
+    false,
+  );
 }
 
 function syncCurrentRadarView() {

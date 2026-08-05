@@ -22,6 +22,7 @@ export interface SpatialDraft extends SpatialSnapshot {
 
 export type SpatialDraftAction =
   | { type: "set-point"; coordinate: SpatialCoordinate }
+  | { type: "set-target"; coordinate: SpatialCoordinate }
   | { type: "append"; coordinate: SpatialCoordinate }
   | { type: "move"; index: number; coordinate: SpatialCoordinate }
   | { type: "remove"; index: number }
@@ -61,6 +62,15 @@ export function reduceSpatialDraft(state: SpatialDraft, action: SpatialDraftActi
   switch (action.type) {
     case "set-point":
       next = { ...current, points: [normalizeCoordinate(action.coordinate)] };
+      break;
+    case "set-target":
+      next = {
+        ...current,
+        points: [
+          ...current.points.slice(0, 1),
+          normalizeCoordinate(action.coordinate)
+        ]
+      };
       break;
     case "append":
       next = { ...current, points: [...current.points, normalizeCoordinate(action.coordinate)] };
@@ -121,7 +131,10 @@ export function reduceSpatialDraft(state: SpatialDraft, action: SpatialDraftActi
 export function spatialDraftToGeoJson(state: SpatialDraft): GeoJSON.FeatureCollection {
   const features: GeoJSON.Feature[] = [];
 
-  if (state.kind === "point" || state.kind === "point-or-route") {
+  if (state.kind === "point-target") {
+    if (state.points[0]) features.push(pointFeature(state.points[0], { kind: "battery" }));
+    if (state.points[1]) features.push(pointFeature(state.points[1], { kind: "target" }));
+  } else if (state.kind === "point" || state.kind === "point-or-route") {
     if (state.points.length === 1) {
       features.push(pointFeature(state.points[0], { kind: "point", index: 0 }));
     } else if (state.points.length > 1) {
