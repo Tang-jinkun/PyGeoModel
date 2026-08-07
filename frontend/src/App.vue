@@ -223,11 +223,6 @@ import { useWorkbenchPresentation } from "./workbench/useWorkbenchPresentation";
 import { shouldShowRadarPreview } from "./workbench/radarPreviewPolicy";
 import type { SpatialDraftAction } from "./map/spatialInput";
 import { clipProfileFromBounds } from "./map/beamClipProfile";
-import {
-  addOrUpdateClippedVolumeLayer,
-  loadClippedVolumeData,
-  removeClippedVolumeLayer
-} from "./map/clippedVolumeLayer";
 import { addOrUpdateRadarVolume, removeRadarVolume } from "./map/radarVolumeLayer";
 import { addOrUpdateVoxelLayer, loadVoxelData, removeVoxelLayer } from "./map/voxelLayer";
 import {
@@ -314,7 +309,6 @@ let multiRadarPollFailures = 0;
 const radarControlLayers = reactive<RadarControlLayer[]>([
   { kind: "volume", label: "Radar volume", color: "#22c55e", visible: true, opacity: 0.62, available: true },
   { kind: "boundary", label: "Request boundary", color: "#94a3b8", visible: false, opacity: 0.45, available: true },
-  { kind: "clipped", label: "Terrain-clipped beam", color: "#ef4444", visible: true, opacity: 0.66, available: false },
   { kind: "voxel", label: "Voxel cloud", color: "#06b6d4", visible: false, opacity: 0.8, available: false },
   { kind: "height", label: "Height coverage", color: "#f59e0b", visible: true, opacity: 0.24, available: false }
 ]);
@@ -416,29 +410,6 @@ const radarLayers = createRadarLayerAdapter({
   },
   removeVoxel() {
     if (map.value) removeVoxelLayer(map.value);
-  },
-  loadClipped(plan) {
-    return loadClippedVolumeData(
-      plan.outputUrls.clipped_volume_cells_bin,
-      plan.outputUrls.clipped_volume_manifest_json
-    );
-  },
-  renderClipped(data, plan) {
-    if (!map.value || !mapReady(map.value)) return;
-    const control = radarControl("clipped");
-    control.available = true;
-    if (!control.visible) return;
-    addOrUpdateClippedVolumeLayer(map.value, data.cells, data.manifest, {
-      opacity: control.opacity,
-      scanMode: plan.request.coverage.scan_mode,
-      azimuthDeg: plan.request.coverage.azimuth_deg,
-      beamWidthDeg: plan.request.coverage.beam_width_deg,
-      radarLon: plan.request.radar.lon,
-      radarLat: plan.request.radar.lat
-    });
-  },
-  removeClipped() {
-    if (map.value) removeClippedVolumeLayer(map.value);
   },
   loadHeightLayers: loadHeightLayers,
   renderHeightLayers(data) {
@@ -1399,7 +1370,7 @@ function radarControl(kind: RadarControlKind) {
 }
 
 function resetRadarOutputControls() {
-  for (const kind of ["clipped", "voxel", "height"] as const) radarControl(kind).available = false;
+  for (const kind of ["voxel", "height"] as const) radarControl(kind).available = false;
   heightOptions.value = [];
   activeHeightData.value = [];
   selectedHeightM.value = null;
