@@ -7,9 +7,8 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, shallowRef, toRaw, watch } from "vue";
 
-import { demTerrainUrlTemplate, demTileUrlTemplate, type DemMetadata } from "../../api/dem";
+import { demTerrainUrlTemplate, type DemMetadata } from "../../api/dem";
 import {
-  addOrUpdateDemRasterLayer,
   addOrUpdateDemTerrain,
   fitGeoJsonBounds,
   removeDemRasterLayer,
@@ -119,7 +118,6 @@ function syncDem(instance: Map, dem: DemMetadata | null) {
   }
   const terrainUrl = demTerrainUrlTemplate(dem.dem_id);
   if (lastSyncedDemId === dem.dem_id && lastSyncedTerrainUrl === terrainUrl) return;
-  addOrUpdateDemRasterLayer(instance, demTileUrlTemplate(dem.dem_id), dem.bounds);
   addOrUpdateDemTerrain(instance, terrainUrl, dem.bounds);
   lastSyncedDemId = dem.dem_id;
   lastSyncedTerrainUrl = terrainUrl;
