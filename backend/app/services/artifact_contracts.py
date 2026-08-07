@@ -134,6 +134,7 @@ OUTPUT_CONTRACTS: dict[str, OutputContract] = {
             _artifact("reachable_geojson", "reachable.geojson", "application/geo+json", "Artillery Terrain-Cleared Coverage GeoJSON"),
             _artifact("terrain_masked_geojson", "terrain_masked.geojson", "application/geo+json", "Artillery Terrain-Masked Area GeoJSON"),
             _artifact("sample_points_geojson", "sample_points.geojson", "application/geo+json", "Artillery Trajectory Sample Points GeoJSON"),
+            _artifact("scene_glb", "artillery_trajectory.glb", "model/gltf-binary", "Artillery Trajectory 3D GLB", required=False),
             _artifact("model_metadata_json", "model_metadata.json", "application/json", "Artillery Model Metadata JSON"),
             _artifact("output_manifest_json", "output_manifest.json", "application/json", "Artillery Output Manifest JSON"),
         ),

@@ -74,7 +74,7 @@ import type { OutputFile, OutputLayerDefinition } from "../../models/shared";
 import type { MultiRadarStationSummary } from "../../models/multiRadar/types";
 
 type DockTab = "catalog" | "layers" | "data";
-export type RadarControlKind = "volume" | "boundary" | "clipped" | "voxel" | "height";
+export type RadarControlKind = "volume" | "boundary" | "voxel" | "height";
 export type RadarGridDensity = "auto" | "sparse" | "standard" | "detailed";
 export interface RadarControlLayer { kind: RadarControlKind; label: string; color: string; visible: boolean; opacity: number; available: boolean }
 export interface RadarHeightOption { heightM: number; label: string }

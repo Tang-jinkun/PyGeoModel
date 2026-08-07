@@ -230,6 +230,25 @@ describe("MapWorkspace", () => {
     await wrapper.setProps({ dem: { ...demA, dem_id: "dem-b", filename: "b.tif" } });
     expect(map.setTerrain).toHaveBeenCalledTimes(4);
   });
+
+  it("uses the base map tiles for the 3D surface instead of the DEM pseudocolor raster", () => {
+    const wrapper = mount(MapWorkspace, {
+      props: {
+        kind: "point",
+        draft: createSpatialDraft("point"),
+        dem: demA
+      }
+    });
+    const map = mapHarness.instances[0];
+    map.emit("load", undefined);
+
+    expect(map.setTerrain).toHaveBeenCalledTimes(2);
+    expect(map.addSource).toHaveBeenCalledWith("dem-terrain-source", expect.anything());
+    expect(map.addSource).not.toHaveBeenCalledWith("dem-raster-source", expect.anything());
+    expect(map.addLayer).not.toHaveBeenCalled();
+
+    wrapper.unmount();
+  });
 });
 
 class FakeMap {

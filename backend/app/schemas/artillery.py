@@ -10,6 +10,7 @@ ArtilleryOutputKind = Literal[
     "reachable_geojson",
     "terrain_masked_geojson",
     "sample_points_geojson",
+    "scene_glb",
     "model_metadata_json",
     "output_manifest_json",
 ]
@@ -23,7 +24,15 @@ class ArtilleryPositionInput(BaseModel):
 
 
 class ArtilleryTargetInput(BaseModel):
+    lon: float | None = Field(default=None, ge=-180, le=180)
+    lat: float | None = Field(default=None, ge=-90, le=90)
     target_height_m: float = Field(default=0, ge=0, le=200)
+
+    @model_validator(mode="after")
+    def validate_coordinates(self) -> "ArtilleryTargetInput":
+        if (self.lon is None) != (self.lat is None):
+            raise ValueError("target lon and lat must be provided together")
+        return self
 
 
 class ArtilleryWeaponInput(BaseModel):
@@ -84,6 +93,12 @@ class ArtilleryCoverageMetrics(BaseModel):
     mean_clearance_m: float | None = None
     battery_ground_elevation_m: float = 0
     battery_altitude_m: float = 0
+    target_reachable: bool | None = None
+    target_range_m: float | None = None
+    target_min_clearance_m: float | None = None
+    target_masking_distance_m: float | None = None
+    target_trajectory_peak_m: float | None = None
+    target_time_of_flight_s: float | None = None
 
 
 class ArtilleryCoverageOutputs(BaseModel):
@@ -91,6 +106,7 @@ class ArtilleryCoverageOutputs(BaseModel):
     reachable_geojson: str | None = None
     terrain_masked_geojson: str | None = None
     sample_points_geojson: str | None = None
+    scene_glb: str | None = None
     model_metadata_json: str | None = None
     output_manifest_json: str | None = None
 

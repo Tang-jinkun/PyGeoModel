@@ -38,6 +38,13 @@ def test_multi_radar_contract_marks_internal_and_conditional_files() -> None:
     assert contract.spec("cooperative_intersection_glb").required is False
 
 
+def test_artillery_trajectory_scene_is_optional() -> None:
+    contract = get_output_contract("artillery")
+
+    assert contract.spec("scene_glb").filename == "artillery_trajectory.glb"
+    assert contract.spec("scene_glb").required is False
+
+
 def test_unknown_model_contract_returns_not_found() -> None:
     with pytest.raises(AppError) as raised:
         get_output_contract("unknown")

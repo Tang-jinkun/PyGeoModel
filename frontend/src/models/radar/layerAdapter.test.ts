@@ -197,20 +197,20 @@ describe("createRadarLayerAdapter", () => {
 
     expect(deps.renderVolume).toHaveBeenCalledTimes(1);
     expect(deps.renderVoxel).toHaveBeenCalledWith("voxel", expect.objectContaining({ taskId: "radar-1" }));
-    expect(deps.renderClipped).toHaveBeenCalledTimes(1);
+    expect(deps.renderClipped).not.toHaveBeenCalled();
     expect(deps.renderHeightLayers).toHaveBeenCalledTimes(1);
 
     adapter.setRadarVisible(false);
     expect(deps.removeVolume).toHaveBeenCalled();
     expect(deps.removeVoxel).toHaveBeenCalled();
-    expect(deps.removeClipped).toHaveBeenCalled();
+    expect(deps.removeClipped).not.toHaveBeenCalled();
     expect(deps.removeHeightLayers).toHaveBeenCalled();
 
     adapter.setRadarVisible(true);
     expect(deps.renderVolume).toHaveBeenCalledTimes(2);
     expect(deps.renderVoxel).toHaveBeenCalledTimes(2);
     expect(deps.loadVoxel).toHaveBeenCalledTimes(1);
-    expect(deps.loadClipped).toHaveBeenCalledTimes(1);
+    expect(deps.loadClipped).not.toHaveBeenCalled();
     expect(deps.loadHeightLayers).toHaveBeenCalledTimes(1);
   });
 
@@ -295,7 +295,7 @@ describe("createRadarLayerAdapter", () => {
 
     expect(deps.renderVolume).toHaveBeenCalledTimes(1);
     expect(deps.renderVoxel).toHaveBeenCalledTimes(1);
-    expect(deps.renderClipped).toHaveBeenCalledTimes(1);
+    expect(deps.renderClipped).not.toHaveBeenCalled();
     expect(deps.renderHeightLayers).toHaveBeenCalledTimes(1);
   });
 
@@ -309,7 +309,7 @@ describe("createRadarLayerAdapter", () => {
 
     expect(deps.renderVolume).toHaveBeenCalledTimes(2);
     expect(deps.loadVoxel).toHaveBeenCalledTimes(1);
-    expect(deps.loadClipped).toHaveBeenCalledTimes(1);
+    expect(deps.loadClipped).not.toHaveBeenCalled();
     expect(deps.loadHeightLayers).toHaveBeenCalledTimes(1);
   });
 
@@ -325,7 +325,7 @@ describe("createRadarLayerAdapter", () => {
 
     expect(deps.renderVolume).toHaveBeenCalledTimes(1);
     expect(deps.loadVoxel).toHaveBeenCalledTimes(1);
-    expect(deps.loadClipped).toHaveBeenCalledTimes(1);
+    expect(deps.loadClipped).not.toHaveBeenCalled();
     expect(deps.loadHeightLayers).toHaveBeenCalledTimes(1);
   });
 
@@ -339,7 +339,7 @@ describe("createRadarLayerAdapter", () => {
 
     expect(adapter.errors.voxel).toBe(voxelError);
     expect(deps.renderVoxel).not.toHaveBeenCalled();
-    expect(deps.renderClipped).toHaveBeenCalledTimes(1);
+    expect(deps.renderClipped).not.toHaveBeenCalled();
     expect(deps.renderHeightLayers).toHaveBeenCalledTimes(1);
   });
 

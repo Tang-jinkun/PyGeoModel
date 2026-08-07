@@ -11,6 +11,7 @@ ARTILLERY_OUTPUT_FILENAMES: dict[ArtilleryOutputKind, str] = {
     "reachable_geojson": "reachable.geojson",
     "terrain_masked_geojson": "terrain_masked.geojson",
     "sample_points_geojson": "sample_points.geojson",
+    "scene_glb": "artillery_trajectory.glb",
     "model_metadata_json": "model_metadata.json",
     "output_manifest_json": "output_manifest.json",
 }
@@ -20,6 +21,7 @@ ARTILLERY_OUTPUT_MEDIA_TYPES: dict[ArtilleryOutputKind, str] = {
     "reachable_geojson": "application/geo+json",
     "terrain_masked_geojson": "application/geo+json",
     "sample_points_geojson": "application/geo+json",
+    "scene_glb": "model/gltf-binary",
     "model_metadata_json": "application/json",
     "output_manifest_json": "application/json",
 }
@@ -29,6 +31,7 @@ ARTILLERY_OUTPUT_LABELS: dict[ArtilleryOutputKind, str] = {
     "reachable_geojson": "Artillery Terrain-Cleared Coverage GeoJSON",
     "terrain_masked_geojson": "Artillery Terrain-Masked Area GeoJSON",
     "sample_points_geojson": "Artillery Trajectory Sample Points GeoJSON",
+    "scene_glb": "Artillery Trajectory 3D GLB",
     "model_metadata_json": "Artillery Model Metadata JSON",
     "output_manifest_json": "Artillery Output Manifest JSON",
 }

@@ -1,4 +1,4 @@
-export type MapPickTarget = "point" | "route" | "start" | "end" | "threat";
+export type MapPickTarget = "point" | "target" | "route" | "start" | "end" | "threat";
 
 export function isCoordinateInDemBounds(
   [longitude, latitude]: [number, number],

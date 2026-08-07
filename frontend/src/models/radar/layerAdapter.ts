@@ -24,17 +24,14 @@ export interface RadarLayerPlan {
   outputUrls: Record<string, string>;
 }
 
-export type RadarLayerKind = "voxel" | "clipped" | "height";
+export type RadarLayerKind = "voxel" | "height";
 
-export interface RadarLayerAdapterDependencies<VoxelData, ClippedData, HeightData> {
+export interface RadarLayerAdapterDependencies<VoxelData, HeightData> {
   renderVolume(plan: RadarLayerPlan): void;
   removeVolume(): void;
   loadVoxel(plan: RadarLayerPlan): Promise<VoxelData>;
   renderVoxel(data: VoxelData, plan: RadarLayerPlan): void;
   removeVoxel(): void;
-  loadClipped(plan: RadarLayerPlan): Promise<ClippedData>;
-  renderClipped(data: ClippedData, plan: RadarLayerPlan): void;
-  removeClipped(): void;
   loadHeightLayers(plan: RadarLayerPlan): Promise<HeightData>;
   renderHeightLayers(data: HeightData, plan: RadarLayerPlan): void;
   removeHeightLayers(): void;
@@ -50,12 +47,10 @@ export interface RadarLayerAdapter {
   dispose(): void;
 }
 
-interface LayerCache<VoxelData, ClippedData, HeightData> {
+interface LayerCache<VoxelData, HeightData> {
   voxel?: VoxelData;
-  clipped?: ClippedData;
   height?: HeightData;
   voxelPending?: PendingLoad;
-  clippedPending?: PendingLoad;
   heightPending?: PendingLoad;
 }
 
@@ -87,11 +82,11 @@ export function resolveRadarLayerPlan(
   };
 }
 
-export function createRadarLayerAdapter<VoxelData, ClippedData, HeightData>(
-  dependencies: RadarLayerAdapterDependencies<VoxelData, ClippedData, HeightData>
+export function createRadarLayerAdapter<VoxelData, HeightData>(
+  dependencies: RadarLayerAdapterDependencies<VoxelData, HeightData>
 ): RadarLayerAdapter {
-  const cache = new Map<string, LayerCache<VoxelData, ClippedData, HeightData>>();
-  const versions: Record<RadarLayerKind, number> = { voxel: 0, clipped: 0, height: 0 };
+  const cache = new Map<string, LayerCache<VoxelData, HeightData>>();
+  const versions: Record<RadarLayerKind, number> = { voxel: 0, height: 0 };
   let activePlan: RadarLayerPlan | null = null;
   let visible = true;
   let disposed = false;
@@ -99,14 +94,12 @@ export function createRadarLayerAdapter<VoxelData, ClippedData, HeightData>(
 
   function invalidateLoads() {
     versions.voxel++;
-    versions.clipped++;
     versions.height++;
   }
 
   function removeVisibleLayers() {
     dependencies.removeVolume();
     dependencies.removeVoxel();
-    dependencies.removeClipped();
     dependencies.removeHeightLayers();
   }
 
@@ -114,7 +107,6 @@ export function createRadarLayerAdapter<VoxelData, ClippedData, HeightData>(
     const entry = cache.get(plan.taskId);
     dependencies.renderVolume(plan);
     if (entry?.voxel !== undefined) dependencies.renderVoxel(entry.voxel, plan);
-    if (entry?.clipped !== undefined) dependencies.renderClipped(entry.clipped, plan);
     if (entry?.height !== undefined) dependencies.renderHeightLayers(entry.height, plan);
   }
 
@@ -122,7 +114,7 @@ export function createRadarLayerAdapter<VoxelData, ClippedData, HeightData>(
     return !disposed && versions[kind] === version && activePlan?.taskId === taskId;
   }
 
-  function loadVoxel(plan: RadarLayerPlan, entry: LayerCache<VoxelData, ClippedData, HeightData>) {
+  function loadVoxel(plan: RadarLayerPlan, entry: LayerCache<VoxelData, HeightData>) {
     if (entry.voxel !== undefined) return undefined;
     const version = versions.voxel;
     if (entry.voxelPending?.version === version) return entry.voxelPending.promise;
@@ -145,30 +137,7 @@ export function createRadarLayerAdapter<VoxelData, ClippedData, HeightData>(
     return pending;
   }
 
-  function loadClipped(plan: RadarLayerPlan, entry: LayerCache<VoxelData, ClippedData, HeightData>) {
-    if (entry.clipped !== undefined) return undefined;
-    const version = versions.clipped;
-    if (entry.clippedPending?.version === version) return entry.clippedPending.promise;
-    if (!plan.outputUrls.clipped_volume_manifest_json || !plan.outputUrls.clipped_volume_cells_bin) return undefined;
-    delete layerErrors.clipped;
-    let pending!: Promise<void>;
-    pending = (async () => {
-      try {
-        const data = await dependencies.loadClipped(plan);
-        if (!isCurrent("clipped", version, plan.taskId)) return;
-        entry.clipped = data;
-        if (visible && activePlan) dependencies.renderClipped(data, activePlan);
-      } catch (error) {
-        if (isCurrent("clipped", version, plan.taskId)) layerErrors.clipped = asError(error);
-      } finally {
-        if (entry.clippedPending?.promise === pending) delete entry.clippedPending;
-      }
-    })();
-    entry.clippedPending = { version, promise: pending };
-    return pending;
-  }
-
-  function loadHeight(plan: RadarLayerPlan, entry: LayerCache<VoxelData, ClippedData, HeightData>) {
+  function loadHeight(plan: RadarLayerPlan, entry: LayerCache<VoxelData, HeightData>) {
     if (entry.height !== undefined) return undefined;
     const version = versions.height;
     if (entry.heightPending?.version === version) return entry.heightPending.promise;
@@ -220,7 +189,6 @@ export function createRadarLayerAdapter<VoxelData, ClippedData, HeightData>(
     if (visible && planChanged) renderCached(plan);
     await Promise.all([
       loadVoxel(plan, entry),
-      loadClipped(plan, entry),
       loadHeight(plan, entry)
     ]);
   }
