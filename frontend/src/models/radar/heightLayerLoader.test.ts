@@ -13,12 +13,12 @@ describe("createHeightLayerLoader", () => {
     expect(resolveHeightLayerDescriptors({
       height_layers: [{ height_m: 100, visible_kind: "height_visible_100", blocked_kind: "height_blocked_100" }]
     }, {
-      height_visible_100: "/api/radar/coverage/radar-1/outputs/height_visible_100",
-      height_blocked_100: "/api/radar/coverage/radar-1/outputs/height_blocked_100"
+       height_visible_100: "/api/radar/tasks/radar-1/outputs/height_visible_100",
+       height_blocked_100: "/api/radar/tasks/radar-1/outputs/height_blocked_100"
     })).toEqual([{
       heightM: 100,
-      visibleUrl: "/api/radar/coverage/radar-1/outputs/height_visible_100",
-      blockedUrl: "/api/radar/coverage/radar-1/outputs/height_blocked_100"
+       visibleUrl: "/api/radar/tasks/radar-1/outputs/height_visible_100",
+       blockedUrl: "/api/radar/tasks/radar-1/outputs/height_blocked_100"
     }]);
   });
 

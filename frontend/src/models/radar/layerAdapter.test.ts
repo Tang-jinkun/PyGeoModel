@@ -81,7 +81,7 @@ function outputFile(kind: string) {
     media_type: "application/octet-stream",
     required: true,
     exists: true,
-    download_path: `/api/radar/coverage/radar-1/outputs/${kind}`
+     download_path: `/api/radar/tasks/radar-1/outputs/${kind}`
   };
 }
 
@@ -145,7 +145,7 @@ describe("resolveRadarLayerPlan", () => {
           media_type: "application/octet-stream",
           required: true,
           exists: true,
-          download_path: "/api/radar/coverage/radar-1/outputs/voxel_points_bin"
+           download_path: "/api/radar/tasks/radar-1/outputs/voxel_points_bin"
         },
         {
           kind: "height_layers_manifest_json",
@@ -154,7 +154,7 @@ describe("resolveRadarLayerPlan", () => {
           media_type: "application/json",
           required: true,
           exists: true,
-          download_path: "/api/radar/coverage/radar-1/outputs/height_layers_manifest_json"
+           download_path: "/api/radar/tasks/radar-1/outputs/height_layers_manifest_json"
         },
         {
           kind: "clipped_volume_cells_bin",
@@ -163,7 +163,7 @@ describe("resolveRadarLayerPlan", () => {
           media_type: "application/octet-stream",
           required: true,
           exists: false,
-          download_path: "/api/radar/coverage/radar-1/outputs/clipped_volume_cells_bin"
+           download_path: "/api/radar/tasks/radar-1/outputs/clipped_volume_cells_bin"
         }
       ]
     });
@@ -171,8 +171,8 @@ describe("resolveRadarLayerPlan", () => {
     const plan = resolveRadarLayerPlan(task, []);
 
     expect(plan?.outputUrls).toEqual({
-      voxel_points_bin: "/api/radar/coverage/radar-1/outputs/voxel_points_bin",
-      height_layers_manifest_json: "/api/radar/coverage/radar-1/outputs/height_layers_manifest_json"
+       voxel_points_bin: "/api/radar/tasks/radar-1/outputs/voxel_points_bin",
+       height_layers_manifest_json: "/api/radar/tasks/radar-1/outputs/height_layers_manifest_json"
     });
   });
 
@@ -183,7 +183,7 @@ describe("resolveRadarLayerPlan", () => {
 
   it("does not expose artifact URLs until result_state is ready", () => {
     const plan = resolveRadarLayerPlan(makeLayerTask(), []);
-    expect(plan?.outputUrls.voxel_manifest_json).toContain("/api/radar/coverage/");
+     expect(plan?.outputUrls.voxel_manifest_json).toContain("/api/radar/tasks/");
     expect(resolveRadarLayerPlan({ ...makeLayerTask(), result_state: "unavailable" }, [])).toBeNull();
   });
 });

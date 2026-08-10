@@ -305,7 +305,7 @@ def test_target_independent_radar_glb_is_self_contained_and_open_at_nodata(
     assert metadata["reference_rcs_m2"] == 1
     assert metadata["stage2_target_evaluation"] == {
         "status": "available",
-        "endpoint": "/api/radar/coverage/radar_task_demo/evaluate-target",
+         "endpoint": "/api/radar/tasks/radar_task_demo/evaluate-target",
         "coordinates": {
             "x": "longitude_deg_wgs84",
             "y": "latitude_deg_wgs84",

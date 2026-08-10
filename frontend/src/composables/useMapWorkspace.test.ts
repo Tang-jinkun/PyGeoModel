@@ -51,7 +51,7 @@ const radarPlatformFile: OutputFile = {
   required: false,
   size_bytes: 420_000,
   exists: true,
-  download_path: "/api/radar/coverage/air_corridor_task_demo/outputs/radar_platform_glb"
+   download_path: "/api/radar/tasks/air_corridor_task_demo/outputs/radar_platform_glb"
 };
 
 const finishedAirTask = {
@@ -77,12 +77,12 @@ describe("useMapWorkspace", () => {
           {
             kind: "visible_geojson", label: "Visible", filename: "visible.geojson",
             media_type: "application/geo+json", required: true, exists: true,
-            download_path: "/api/radar/coverage/task-1/outputs/visible_geojson"
+             download_path: "/api/radar/tasks/task-1/outputs/visible_geojson"
           },
           {
             kind: "blocked_geojson", label: "Blocked", filename: "blocked.geojson",
             media_type: "application/geo+json", required: true, exists: true,
-            download_path: "/api/radar/coverage/task-1/outputs/blocked_geojson"
+             download_path: "/api/radar/tasks/task-1/outputs/blocked_geojson"
           }
         ]),
       }),
@@ -96,12 +96,12 @@ describe("useMapWorkspace", () => {
     } as never);
 
     expect(fetchGeoJson).toHaveBeenCalledTimes(1);
-    expect(fetchGeoJson).toHaveBeenCalledWith("/api/radar/coverage/task-1/outputs/visible_geojson");
+     expect(fetchGeoJson).toHaveBeenCalledWith("/api/radar/tasks/task-1/outputs/visible_geojson");
 
     await workspace.setTaskLayerVisibility("blocked_geojson", true);
 
     expect(fetchGeoJson).toHaveBeenCalledTimes(2);
-    expect(fetchGeoJson).toHaveBeenLastCalledWith("/api/radar/coverage/task-1/outputs/blocked_geojson");
+     expect(fetchGeoJson).toHaveBeenLastCalledWith("/api/radar/tasks/task-1/outputs/blocked_geojson");
   });
 
   it("keeps result colours as frontend presentation state", async () => {

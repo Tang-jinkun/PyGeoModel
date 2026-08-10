@@ -59,7 +59,7 @@ def test_read_coverage_profile_reports_terrain_obstruction(tmp_path: Path) -> No
     (tmp_path / "dem" / "dem_a" / "metadata.json").write_text(metadata.model_dump_json(indent=2), encoding="utf-8")
     write_finished_task(tmp_path, "task_a")
 
-    response = TestClient(app).get("/api/radar/coverage/task_a/profile?lon=105.010&lat=35.000&samples=80")
+    response = TestClient(app).get("/api/radar/tasks/task_a/profile?lon=105.010&lat=35.000&samples=80")
 
     assert response.status_code == 200
     payload = response.json()
@@ -190,7 +190,7 @@ def test_read_coverage_profiles_batch_returns_partial_results(tmp_path: Path) ->
     write_finished_task(tmp_path, "task_a")
 
     response = TestClient(app).post(
-        "/api/radar/coverage/task_a/profiles",
+        "/api/radar/tasks/task_a/profiles",
         json={
             "targets": [
                 {"id": "valid", "lon": 105.010, "lat": 35.000},
@@ -216,7 +216,7 @@ def test_read_coverage_profiles_batch_rejects_empty_targets(tmp_path: Path) -> N
     settings.data_dir = tmp_path
     settings.ensure_directories()
 
-    response = TestClient(app).post("/api/radar/coverage/task_a/profiles", json={"targets": []})
+    response = TestClient(app).post("/api/radar/tasks/task_a/profiles", json={"targets": []})
 
     assert response.status_code == 422
 

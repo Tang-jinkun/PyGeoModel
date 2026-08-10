@@ -88,7 +88,7 @@ function sceneFile(): OutputFile {
     media_type: "model/gltf-binary",
     required: false,
     exists: true,
-    download_path: "/api/radar/coverage/task-1/outputs/scene_glb"
+     download_path: "/api/radar/tasks/task-1/outputs/scene_glb"
   };
 }
 

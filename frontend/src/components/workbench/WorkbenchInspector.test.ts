@@ -18,7 +18,7 @@ describe("WorkbenchInspector", () => {
     expect(wrapper.get("[data-result-metrics]").text()).toContain("Visible area");
     expect(wrapper.get("[data-result-metrics]").text()).toContain("2.50 km²");
     expect(wrapper.get("[data-result-files] a").attributes("href"))
-      .toBe("/api/radar/coverage/task-1/outputs/visible_geojson");
+       .toBe("/api/radar/tasks/task-1/outputs/visible_geojson");
     expect(wrapper.find('[data-tab="layers"]').exists()).toBe(false);
     expect(wrapper.find(".task-result-panel").exists()).toBe(false);
   });
@@ -47,7 +47,7 @@ describe("WorkbenchInspector", () => {
             label: "Overlap GeoJSON",
             required: true,
             exists: true,
-            download_path: "/api/radar/multi-coverage/multi-1/outputs/overlap_geojson"
+             download_path: "/api/radar/tasks/multi-1/outputs/overlap_geojson"
           }
         ]
       }
@@ -77,7 +77,7 @@ function outputFile() {
     label: "Visible Area GeoJSON",
     required: true,
     exists: true,
-    download_path: "/api/radar/coverage/task-1/outputs/visible_geojson"
+     download_path: "/api/radar/tasks/task-1/outputs/visible_geojson"
   };
 }
 

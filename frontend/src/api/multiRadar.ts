@@ -1,5 +1,5 @@
 import { requestJson } from "./http";
-import type { CoverageTaskStatus } from "./radar";
+import { evaluateRadarTaskTarget, type CoverageTaskStatus } from "./radar";
 import type {
   MultiRadarRequest,
   MultiRadarStationSummary,
@@ -10,32 +10,32 @@ import type { OutputFile } from "../models/shared";
 import type { TaskExecutionSnapshot } from "./tasks";
 
 export async function createMultiRadarTask(payload: MultiRadarRequest): Promise<MultiRadarTask> {
-  return requestJson<MultiRadarTask>("/api/radar/multi-coverage", {
+  return requestJson<MultiRadarTask>("/api/radar/tasks", {
     method: "POST",
-    body: JSON.stringify(payload)
+    body: JSON.stringify({ task_type: "multi", ...payload })
   });
 }
 
 export function listMultiRadarTasks(): Promise<MultiRadarTask[]> {
-  return requestJson<MultiRadarTask[]>("/api/radar/multi-coverage");
+  return requestJson<MultiRadarTask[]>("/api/radar/tasks?task_type=multi");
 }
 
 export function getMultiRadarTask(taskId: string): Promise<MultiRadarTask> {
-  return requestJson<MultiRadarTask>(`/api/radar/multi-coverage/${taskId}`);
+  return requestJson<MultiRadarTask>(`/api/radar/tasks/${taskId}`);
 }
 
 export function rerunMultiRadarTask(taskId: string, idempotencyKey = crypto.randomUUID()): Promise<MultiRadarTask> {
-  return requestJson<MultiRadarTask>(`/api/radar/multi-coverage/${taskId}/rerun`, {
+  return requestJson<MultiRadarTask>(`/api/radar/tasks/${taskId}/rerun`, {
     method: "POST", headers: { "Idempotency-Key": idempotencyKey }
   });
 }
 
 export function cancelMultiRadarTask(taskId: string): Promise<TaskExecutionSnapshot> {
-  return requestJson<TaskExecutionSnapshot>(`/api/radar/multi-coverage/${taskId}/cancel`, { method: "POST" });
+  return requestJson<TaskExecutionSnapshot>(`/api/radar/tasks/${taskId}/cancel`, { method: "POST" });
 }
 
 export function getMultiRadarOutputs(taskId: string): Promise<OutputFile[]> {
-  return requestJson<OutputFile[]>(`/api/radar/multi-coverage/${taskId}/outputs`);
+  return requestJson<OutputFile[]>(`/api/radar/tasks/${taskId}/outputs`);
 }
 
 export function findMultiRadarOutputPath(files: readonly OutputFile[], kind: string): string | null {
@@ -44,11 +44,11 @@ export function findMultiRadarOutputPath(files: readonly OutputFile[], kind: str
 }
 
 export function getMultiRadarStations(taskId: string): Promise<MultiRadarStationSummary[]> {
-  return requestJson<MultiRadarStationSummary[]>(`/api/radar/multi-coverage/${taskId}/radars`);
+  return requestJson<MultiRadarStationSummary[]>(`/api/radar/tasks/${taskId}/radars`);
 }
 
 export function requestMultiRadarDetail(taskId: string, radarId: string): Promise<CoverageTaskStatus> {
-  return requestJson<CoverageTaskStatus>(`/api/radar/multi-coverage/${taskId}/radars/${radarId}/detail`, {
+  return requestJson<CoverageTaskStatus>(`/api/radar/tasks/${taskId}/radars/${radarId}/detail`, {
     method: "POST"
   });
 }
@@ -57,8 +57,9 @@ export function evaluateMultiRadarTarget(
   taskId: string,
   target: { x: number; y: number; z: number; target_type?: string }
 ): Promise<MultiRadarTargetEvaluation> {
-  return requestJson<MultiRadarTargetEvaluation>(`/api/radar/multi-coverage/${taskId}/evaluate-target`, {
-    method: "POST",
-    body: JSON.stringify(target)
-  });
+  return evaluateRadarTaskTarget(taskId, target).then(({ task_id, detected, contributors }) => ({
+    task_id,
+    detected,
+    contributors
+  }));
 }

@@ -109,7 +109,7 @@ def test_multi_task_exposes_station_scene_assets(tmp_path: Path, monkeypatch) ->
                 filename="radar_detection_domain.glb",
                 media_type="model/gltf-binary",
                 exists=True,
-                download_path="/api/radar/coverage/coverage_north/outputs/scene_glb",
+                 download_path="/api/radar/tasks/coverage_north/outputs/scene_glb",
             ),
             ArtifactDescriptor(
                 kind="radar_platform_glb",
@@ -117,7 +117,7 @@ def test_multi_task_exposes_station_scene_assets(tmp_path: Path, monkeypatch) ->
                 filename="radar_platform.glb",
                 media_type="model/gltf-binary",
                 exists=True,
-                download_path="/api/radar/coverage/coverage_north/outputs/radar_platform_glb",
+                 download_path="/api/radar/tasks/coverage_north/outputs/radar_platform_glb",
             ),
         ],
     )
@@ -139,6 +139,6 @@ def test_multi_task_exposes_station_scene_assets(tmp_path: Path, monkeypatch) ->
         (asset.asset_id, asset.task_id, asset.radar_id, asset.kind, asset.render_tier, asset.file.download_path)
         for asset in stored.scene_assets
     ] == [
-        ("coverage_north:scene_glb", "coverage_north", "north", "scene_glb", "world", "/api/radar/coverage/coverage_north/outputs/scene_glb"),
-        ("coverage_north:radar_platform_glb", "coverage_north", "north", "radar_platform_glb", "equipment", "/api/radar/coverage/coverage_north/outputs/radar_platform_glb"),
+         ("coverage_north:scene_glb", "coverage_north", "north", "scene_glb", "world", "/api/radar/tasks/coverage_north/outputs/scene_glb"),
+         ("coverage_north:radar_platform_glb", "coverage_north", "north", "radar_platform_glb", "equipment", "/api/radar/tasks/coverage_north/outputs/radar_platform_glb"),
     ]

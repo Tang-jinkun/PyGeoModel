@@ -1,5 +1,5 @@
 import math
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -123,6 +123,20 @@ class MultiRadarRequest(BaseModel):
         if self.presentation_mode == "cooperative_3d" and not 2 <= len(self.radars) <= 5:
             raise ValueError("Cooperative 3D presentation requires two to five radar stations.")
         return self
+
+
+class SingleRadarTaskRequest(CoverageRequest):
+    task_type: Literal["single"] = "single"
+
+
+class MultiRadarTaskRequest(MultiRadarRequest):
+    task_type: Literal["multi"] = "multi"
+
+
+RadarTaskCreateRequest = Annotated[
+    SingleRadarTaskRequest | MultiRadarTaskRequest,
+    Field(discriminator="task_type"),
+]
 
 
 class MultiRadarMetrics(BaseModel):
@@ -306,6 +320,36 @@ class CoverageTaskDeleteResult(BaseModel):
     errors: list[str] = Field(default_factory=list)
 
 
+class RadarTaskSummary(TaskResultFields):
+    task_type: Literal["single", "multi"]
+    task_id: str
+    dem_id: str | None = None
+    status: Literal["pending", "running", "finished", "partial", "failed"]
+    progress: int = Field(default=0, ge=0, le=100)
+    message: str = ""
+    created_at: str | None = None
+    updated_at: str | None = None
+    metrics: dict[str, Any] | None = None
+    outputs: dict[str, Any] | None = None
+    output_files: list[ArtifactDescriptor] = Field(default_factory=list)
+    model: CoverageModelMetadata | None = None
+    diagnostics: CoverageDiagnostics | None = None
+    warnings: list[str] = Field(default_factory=list)
+    stations: list[MultiRadarStationSummary] = Field(default_factory=list)
+    scene_assets: list[MultiRadarSceneAsset] = Field(default_factory=list)
+
+
+class RadarTaskStatus(RadarTaskSummary):
+    request: CoverageRequest | MultiRadarRequest | None = None
+
+
+class RadarTaskDeleteResult(BaseModel):
+    task_id: str
+    deleted_task_record: bool = False
+    deleted_output_dir: bool = False
+    errors: list[str] = Field(default_factory=list)
+
+
 class CoverageProfileSample(BaseModel):
     distance_m: float
     lon: float
@@ -406,6 +450,19 @@ class TargetEvaluationResult(BaseModel):
     within_elevation: bool
     within_dem: bool
     terrain_blocked: bool
+
+
+class RadarTargetContributor(BaseModel):
+    radar_id: str
+    detected: bool
+
+
+class RadarTaskTargetEvaluation(BaseModel):
+    task_id: str
+    task_type: Literal["single", "multi"]
+    detected: bool
+    detail: TargetEvaluationResult | None = None
+    contributors: list[RadarTargetContributor] = Field(default_factory=list)
 
 
 class FusionRequest(BaseModel):

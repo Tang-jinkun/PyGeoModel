@@ -89,7 +89,7 @@ describe("radar task normalization", () => {
         required: true,
         exists: true,
         size_bytes: 42,
-        download_path: "/api/radar/coverage/task_ready/outputs/visible_geojson",
+        download_path: "/api/radar/tasks/task_ready/outputs/visible_geojson",
         url: null,
         download_url: null
       }]
@@ -103,7 +103,7 @@ describe("radar task normalization", () => {
     expect(task.output_files).toEqual([
       expect.objectContaining({
         required: true,
-        download_path: "/api/radar/coverage/task_ready/outputs/visible_geojson"
+        download_path: "/api/radar/tasks/task_ready/outputs/visible_geojson"
       })
     ]);
   });
@@ -151,7 +151,7 @@ describe("radar batch profile client", () => {
 
       expect(result.requested_count).toBe(2);
       expect(calls).toHaveLength(1);
-      expect(calls[0].url).toBe("/api/radar/coverage/task_a/profiles");
+      expect(calls[0].url).toBe("/api/radar/tasks/task_a/profiles");
       expect(calls[0].init?.method).toBe("POST");
       expect(JSON.parse(String(calls[0].init?.body))).toEqual({
         targets: [

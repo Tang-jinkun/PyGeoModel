@@ -31,4 +31,20 @@ describe("createTaskClient", () => {
     const headers = fetchMock.mock.calls[0][1].headers as Headers;
     expect(headers.get("Idempotency-Key")).toBe("00000000-0000-4000-8000-000000000001");
   });
+
+  it("uses the unified radar endpoint with the single-task discriminator", async () => {
+    const fetchMock = vi.fn().mockImplementation(() => new Response(JSON.stringify({}), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = createTaskClient<{ dem_id: string }>('/api/radar/tasks');
+
+    await client.list();
+    await client.create({ dem_id: "dem-a" });
+
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/radar/tasks?task_type=single");
+    expect(fetchMock.mock.calls[1][0]).toBe("/api/radar/tasks");
+    expect(JSON.parse(String(fetchMock.mock.calls[1][1].body))).toEqual({
+      task_type: "single",
+      dem_id: "dem-a"
+    });
+  });
 });

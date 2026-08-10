@@ -18,7 +18,7 @@ describe("multi-radar scene assets", () => {
         media_type: "model/gltf-binary",
         required: false,
         exists: true,
-        download_path: "/api/radar/coverage/coverage-r1/outputs/scene_glb"
+         download_path: "/api/radar/tasks/coverage-r1/outputs/scene_glb"
       }
     });
 
