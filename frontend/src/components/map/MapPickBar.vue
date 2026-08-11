@@ -18,7 +18,7 @@ import type { MapPickTarget } from "../../map/mapPickPolicy";
 
 const props = defineProps<{ target: MapPickTarget }>();
 const emit = defineEmits<{ cancel: []; undo: []; finish: [] }>();
-const targetLabel = computed(() => ({ point: "location", route: "route", start: "start", end: "end", threat: "threat" }[props.target]));
+const targetLabel = computed(() => ({ point: "location", target: "target", route: "route", start: "start", end: "end", threat: "threat" }[props.target]));
 </script>
 
 <style scoped>

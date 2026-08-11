@@ -11,7 +11,7 @@ describe("multi-radar fusion scene", () => {
       media_type: "model/gltf-binary",
       required: false,
       exists: true,
-      download_path: "/api/radar/multi-coverage/multi_task_a/outputs/fusion_scene_glb"
+       download_path: "/api/radar/tasks/multi_task_a/outputs/fusion_scene_glb"
     };
     const task = createFusionSceneTask("multi_task_a", "dem_a", file);
 

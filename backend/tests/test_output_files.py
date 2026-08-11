@@ -15,8 +15,8 @@ def test_describe_output_file_existing_file(tmp_path: Path) -> None:
     assert info.kind == "visible_geojson"
     assert info.label == "Visible Area GeoJSON"
     assert info.url is None
-    assert info.download_path == "/api/radar/coverage/task_a/outputs/visible_geojson"
-    assert info.download_url == "/api/radar/coverage/task_a/outputs/visible_geojson"
+    assert info.download_path == "/api/radar/tasks/task_a/outputs/visible_geojson"
+    assert info.download_url == "/api/radar/tasks/task_a/outputs/visible_geojson"
     assert info.filename == "visible.geojson"
     assert info.media_type == "application/geo+json"
     assert info.size_bytes == 2
@@ -72,4 +72,4 @@ def test_list_task_output_files_reads_published_manifest(tmp_path: Path) -> None
 
     assert viewshed.exists is True
     assert viewshed.size_bytes == 3
-    assert viewshed.download_path == "/api/radar/coverage/task_a/outputs/viewshed_tif"
+    assert viewshed.download_path == "/api/radar/tasks/task_a/outputs/viewshed_tif"

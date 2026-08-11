@@ -17,9 +17,14 @@ export interface TaskExecutionSnapshot {
 }
 
 export function createTaskClient<Request extends BaseModelRequest = BaseModelRequest, Metrics = Record<string, unknown>>(basePath: string) {
+  const isUnifiedRadarClient = basePath === "/api/radar/tasks";
+  const listPath = isUnifiedRadarClient ? `${basePath}?task_type=single` : basePath;
   return {
-    list: () => requestJson<TaskSummary<Request, Metrics>[]>(basePath),
-    create: (payload: Request) => requestJson<TaskSummary<Request, Metrics>>(basePath, { method: "POST", body: JSON.stringify(payload) }),
+    list: () => requestJson<TaskSummary<Request, Metrics>[]>(listPath),
+    create: (payload: Request) => requestJson<TaskSummary<Request, Metrics>>(basePath, {
+      method: "POST",
+      body: JSON.stringify(isUnifiedRadarClient ? { task_type: "single", ...payload } : payload)
+    }),
     get: (taskId: string) => requestJson<TaskSummary<Request, Metrics>>(`${basePath}/${taskId}`),
     metrics: (taskId: string) => requestJson<Metrics>(`${basePath}/${taskId}/metrics`),
     outputs: (taskId: string) => requestJson<OutputFile[]>(`${basePath}/${taskId}/outputs`),

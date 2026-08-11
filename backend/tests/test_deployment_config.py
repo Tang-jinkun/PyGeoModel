@@ -47,12 +47,12 @@ def test_verifier_checks_runtime_health_artifact_and_tile_without_exposing_query
             return httpx.Response(200, text='window.__PYGEOMODEL_RUNTIME_CONFIG__ = {"apiBaseUrl":"/PyGeoModel"};')
         if path == "/PyGeoModel/api/health":
             return httpx.Response(200, json={"status": "ok"})
-        if path == "/PyGeoModel/api/radar/coverage/task_a":
+        if path == "/PyGeoModel/api/radar/tasks/task_a":
             return httpx.Response(200, json={"task_id": "task_a", "result_state": "ready"})
-        if path == "/PyGeoModel/api/radar/coverage/task_a/outputs":
+        if path == "/PyGeoModel/api/radar/tasks/task_a/outputs":
             return httpx.Response(200, json=[{
                 "kind": "visible_geojson", "exists": True,
-                "download_path": "/api/radar/coverage/task_a/outputs/visible_geojson"
+                "download_path": "/api/radar/tasks/task_a/outputs/visible_geojson"
             }])
         if path.endswith("/outputs/visible_geojson"):
             return httpx.Response(200, content=b"{}", headers={"Content-Type": "application/geo+json"})

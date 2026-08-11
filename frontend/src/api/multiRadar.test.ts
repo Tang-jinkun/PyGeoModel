@@ -6,7 +6,7 @@ vi.mock("./http", () => ({ requestJson }));
 import { createMultiRadarTask, findMultiRadarOutputPath, getMultiRadarOutputs } from "./multiRadar";
 
 describe("multi-radar API client", () => {
-  it("posts a batch request to the multi-coverage endpoint", async () => {
+  it("posts a batch request to the unified radar tasks endpoint", async () => {
     requestJson.mockResolvedValueOnce({ task_id: "multi_task_a", status: "pending", dem_id: "dem_a", radars: [] });
 
     await createMultiRadarTask({
@@ -18,8 +18,11 @@ describe("multi-radar API client", () => {
     });
 
     expect(requestJson).toHaveBeenCalledWith(
-      "/api/radar/multi-coverage",
-      expect.objectContaining({ method: "POST" })
+      "/api/radar/tasks",
+      expect.objectContaining({
+        method: "POST",
+        body: expect.stringContaining('"task_type":"multi"')
+      })
     );
   });
 
@@ -37,10 +40,10 @@ describe("multi-radar API client", () => {
     });
 
     expect(requestJson).toHaveBeenCalledWith(
-      "/api/radar/multi-coverage",
+      "/api/radar/tasks",
       expect.objectContaining({
         method: "POST",
-        body: expect.stringContaining('"presentation_mode":"cooperative_3d"')
+        body: expect.stringContaining('"task_type":"multi"')
       })
     );
   });
@@ -50,7 +53,7 @@ describe("multi-radar API client", () => {
 
     await getMultiRadarOutputs("multi_task_a");
 
-    expect(requestJson).toHaveBeenCalledWith("/api/radar/multi-coverage/multi_task_a/outputs");
+    expect(requestJson).toHaveBeenCalledWith("/api/radar/tasks/multi_task_a/outputs");
   });
 
   it("keeps a canonical output path unresolved for the HTTP client", () => {
@@ -61,9 +64,9 @@ describe("multi-radar API client", () => {
       media_type: "application/geo+json",
       required: true,
       exists: true,
-      download_path: "/api/radar/multi-coverage/multi_task_a/outputs/visible_union_geojson"
+      download_path: "/api/radar/tasks/multi_task_a/outputs/visible_union_geojson"
     }], "visible_union_geojson")).toBe(
-      "/api/radar/multi-coverage/multi_task_a/outputs/visible_union_geojson"
+      "/api/radar/tasks/multi_task_a/outputs/visible_union_geojson"
     );
   });
 });

@@ -13,6 +13,7 @@ from app.services.multi_radar_task_store import create_multi_task, mark_multi_co
 
 def _payload() -> dict:
     return {
+        "task_type": "multi",
         "dem_id": "dem_a",
         "radars": [
             {"radar_id": "north", "radar": {"lon": 79, "lat": 31.5, "height_m": 20}, "coverage": {"max_range_m": 1_000}},
@@ -48,7 +49,7 @@ def test_create_multi_radar_task_returns_accepted(tmp_path, monkeypatch) -> None
     monkeypatch.setattr(radar, "validate_coverage_extent", lambda *_: 1.0)
     monkeypatch.setattr(radar, "run_multi_radar_coverage_task", lambda *_: None)
 
-    response = TestClient(create_app()).post("/api/radar/multi-coverage", json=_payload())
+    response = TestClient(create_app()).post("/api/radar/tasks", json=_payload())
 
     assert response.status_code == 202
     assert response.json()["status"] == "pending"
@@ -63,7 +64,7 @@ def test_cooperative_task_requires_two_to_five_stations(tmp_path, monkeypatch) -
     monkeypatch.setattr(radar, "validate_coverage_extent", lambda *_: 1.0)
 
     response = TestClient(create_app()).post(
-        "/api/radar/multi-coverage", json=_cooperative_payload(6)
+        "/api/radar/tasks", json={"task_type": "multi", **_cooperative_payload(6)}
     )
 
     assert response.status_code == 422
@@ -79,7 +80,7 @@ def test_cooperative_task_returns_presentation_mode(tmp_path, monkeypatch) -> No
     monkeypatch.setattr(radar, "run_multi_radar_coverage_task", lambda *_: None)
 
     response = TestClient(create_app()).post(
-        "/api/radar/multi-coverage", json=_cooperative_payload(2)
+        "/api/radar/tasks", json={"task_type": "multi", **_cooperative_payload(2)}
     )
 
     assert response.status_code == 202
@@ -113,7 +114,7 @@ def test_multi_target_evaluation_reports_any_detecting_contributor(tmp_path) -> 
     )
 
     response = TestClient(create_app()).post(
-        f"/api/radar/multi-coverage/{task.task_id}/evaluate-target",
+        f"/api/radar/tasks/{task.task_id}/evaluate-target",
         json={"x": 0.5, "y": 1.5, "z": 100},
     )
 
@@ -132,11 +133,11 @@ def test_completed_multi_task_without_artifacts_is_unavailable(tmp_path) -> None
     mark_multi_completed(task.task_id, status="finished", metrics={}, outputs={}, stations=[])
     client = TestClient(create_app())
 
-    detail = client.get(f"/api/radar/multi-coverage/{task.task_id}")
+    detail = client.get(f"/api/radar/tasks/{task.task_id}")
     download = client.get(
-        f"/api/radar/multi-coverage/{task.task_id}/outputs/visible_union_geojson"
+        f"/api/radar/tasks/{task.task_id}/outputs/visible_union_geojson"
     )
-    rerun = client.post(f"/api/radar/multi-coverage/{task.task_id}/rerun")
+    rerun = client.post(f"/api/radar/tasks/{task.task_id}/rerun")
 
     assert detail.status_code == 200
     assert detail.json()["result_state"] == "unavailable"
@@ -157,8 +158,8 @@ def test_multi_rerun_reuses_child_and_schedules_once(tmp_path, monkeypatch) -> N
     client = TestClient(create_app())
     headers = {"Idempotency-Key": "multi-rerun-key"}
 
-    first = client.post(f"/api/radar/multi-coverage/{task.task_id}/rerun", headers=headers)
-    second = client.post(f"/api/radar/multi-coverage/{task.task_id}/rerun", headers=headers)
+    first = client.post(f"/api/radar/tasks/{task.task_id}/rerun", headers=headers)
+    second = client.post(f"/api/radar/tasks/{task.task_id}/rerun", headers=headers)
 
     assert first.status_code == 202
     assert second.status_code == 202

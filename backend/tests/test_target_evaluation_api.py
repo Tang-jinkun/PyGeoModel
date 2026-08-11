@@ -34,11 +34,11 @@ def test_evaluate_target_uses_3d_detection_domain_and_optional_type(
     client = TestClient(app)
 
     detectable = client.post(
-        "/api/radar/coverage/task_target/evaluate-target",
+        "/api/radar/tasks/task_target/evaluate-target",
         json={"x": target_lon, "y": target_lat, "z": 200},
     )
     blocked = client.post(
-        "/api/radar/coverage/task_target/evaluate-target",
+        "/api/radar/tasks/task_target/evaluate-target",
         json={
             "x": target_lon,
             "y": target_lat,
@@ -49,23 +49,24 @@ def test_evaluate_target_uses_3d_detection_domain_and_optional_type(
 
     assert detectable.status_code == 200
     result = detectable.json()
-    assert result["detectable"] is True
-    assert result["reason"] == "detectable"
-    assert result["target_type"] is None
-    assert result["target_crs"] == "EPSG:4326"
-    assert result["within_range"] is True
-    assert result["within_beam"] is True
-    assert result["within_elevation"] is True
-    assert result["within_dem"] is True
-    assert result["terrain_blocked"] is False
-    assert result["minimum_detectable_altitude_m"] == 150
+    assert result["detected"] is True
+    assert result["detail"]["detectable"] is True
+    assert result["detail"]["reason"] == "detectable"
+    assert result["detail"]["target_type"] is None
+    assert result["detail"]["target_crs"] == "EPSG:4326"
+    assert result["detail"]["within_range"] is True
+    assert result["detail"]["within_beam"] is True
+    assert result["detail"]["within_elevation"] is True
+    assert result["detail"]["within_dem"] is True
+    assert result["detail"]["terrain_blocked"] is False
+    assert result["detail"]["minimum_detectable_altitude_m"] == 150
 
     assert blocked.status_code == 200
     blocked_result = blocked.json()
-    assert blocked_result["detectable"] is False
-    assert blocked_result["reason"] == "terrain_blocked"
-    assert blocked_result["target_type"] == "aircraft"
-    assert blocked_result["terrain_blocked"] is True
+    assert blocked_result["detected"] is False
+    assert blocked_result["detail"]["reason"] == "terrain_blocked"
+    assert blocked_result["detail"]["target_type"] == "aircraft"
+    assert blocked_result["detail"]["terrain_blocked"] is True
 
 
 def _write_dem(root: Path) -> Path:

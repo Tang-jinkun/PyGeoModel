@@ -34,6 +34,17 @@ describe("spatialAdapter", () => {
     expect(updated[field]).toMatchObject({ lon: 88.1, lat: 32.2 });
   });
 
+  it("writes a picked artillery target separately from the battery", () => {
+    const request = getModelDefinition("artillery").createDefaultRequest();
+    request.target = { lon: null, lat: null, target_height_m: 0 };
+    let draft = spatialDraftFromRequest("artillery", request);
+    draft = reduceSpatialDraft(draft, { type: "set-target", coordinate: [80.1, 31.6] });
+
+    const updated = applySpatialDraftToRequest("artillery", request, draft);
+
+    expect(updated.target).toMatchObject({ lon: 80.1, lat: 31.6 });
+  });
+
   it.each(["uav", "reconVehicle"] as const)("preserves platform fields while writing a %s route", (modelId) => {
     const request = getModelDefinition(modelId).createDefaultRequest();
     let draft = spatialDraftFromRequest(modelId, request);

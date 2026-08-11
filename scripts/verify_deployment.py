@@ -29,7 +29,7 @@ def verify_deployment(
         print("health: ok")
 
         if task_id:
-            task_path = f"/api/radar/coverage/{task_id}"
+            task_path = f"/api/radar/tasks/{task_id}"
             task = _request_json(http, _api_url(api_base_url, task_path))
             if task.get("result_state") != "ready":
                 raise RuntimeError("selected task result is not ready")

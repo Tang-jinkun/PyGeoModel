@@ -14,7 +14,7 @@ describe("cooperative radar scene", () => {
       task_id: "multi-1",
       dem_id: "dem-1",
       request: { dem_id: "dem-1", presentation_mode: "cooperative_3d", radars: [] },
-      output_files: [{ kind: "cooperative_intersection_glb", label: "Intersection", filename: "cooperative_intersection.glb", media_type: "model/gltf-binary", required: false, exists: true, download_path: "/api/radar/multi-coverage/multi-1/outputs/cooperative_intersection_glb" }],
+       output_files: [{ kind: "cooperative_intersection_glb", label: "Intersection", filename: "cooperative_intersection.glb", media_type: "model/gltf-binary", required: false, exists: true, download_path: "/api/radar/tasks/multi-1/outputs/cooperative_intersection_glb" }],
       stations: [
         { radar_id: "a", status: "finished", message: "", scene_task_id: "coverage-a", scene_status: "finished" },
         { radar_id: "b", status: "finished", message: "", scene_task_id: "coverage-b", scene_status: "finished" },

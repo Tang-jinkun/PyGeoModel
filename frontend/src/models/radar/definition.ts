@@ -5,7 +5,7 @@ import type { RadarMetrics, RadarRequest } from "./types";
 export const radarDefinition = {
   id: "radar",
   label: "Radar Coverage",
-  taskBasePath: "/api/radar/coverage",
+  taskBasePath: "/api/radar/tasks",
   spatialInput: "point",
   inputSlots: [terrainInputSlot],
   createDefaultRequest: (): RadarRequest => ({

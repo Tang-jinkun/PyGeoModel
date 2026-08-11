@@ -8,7 +8,7 @@ describe("model registry", () => {
       "radar", "uav", "watchpost", "artillery", "reconVehicle", "mobility", "airCorridor"
     ]);
     expect(MODEL_IDS.map((id) => MODEL_REGISTRY[id].taskBasePath)).toEqual([
-      "/api/radar/coverage",
+      "/api/radar/tasks",
       "/api/uav/recon",
       "/api/watchpost/detection",
       "/api/artillery/coverage",

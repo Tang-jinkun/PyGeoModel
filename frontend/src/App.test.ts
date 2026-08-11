@@ -79,7 +79,7 @@ describe("App model run workflow", () => {
     expect(wrapper.get(".gis-workbench").attributes("data-inspector-open")).toBe("true");
     expect(wrapper.get("[data-result-detail]").text()).toContain("多雷达协同");
     expect(wrapper.get("[data-result-files] a").attributes("href"))
-      .toBe("/api/radar/multi-coverage/multi-1/outputs/visible_union_geojson");
+      .toBe("/api/radar/tasks/multi-1/outputs/visible_union_geojson");
   });
 
   it("shows multi-radar aggregate overlays in the existing layers tab", async () => {
@@ -171,7 +171,7 @@ function sceneFile(kind: "scene_glb" | "radar_platform_glb", label: string) {
     label,
     required: false,
     exists: true,
-    download_path: `/api/radar/coverage/coverage-r1/outputs/${kind}`
+    download_path: `/api/radar/tasks/coverage-r1/outputs/${kind}`
   };
 }
 
@@ -183,7 +183,7 @@ function multiRadarOutputFile() {
     label: "Visible union GeoJSON",
     required: true,
     exists: true,
-    download_path: "/api/radar/multi-coverage/multi-1/outputs/visible_union_geojson"
+    download_path: "/api/radar/tasks/multi-1/outputs/visible_union_geojson"
   };
 }
 

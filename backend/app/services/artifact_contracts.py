@@ -81,7 +81,7 @@ OUTPUT_CONTRACTS: dict[str, OutputContract] = {
     "radar": OutputContract(
         model_id="radar",
         version=1,
-        download_path_template="/api/radar/coverage/{task_id}/outputs/{kind}",
+        download_path_template="/api/radar/tasks/{task_id}/outputs/{kind}",
         artifacts=(
             _artifact("viewshed_tif", "viewshed.tif", "image/tiff", "Viewshed GeoTIFF"),
             _artifact("visible_geojson", "visible.geojson", "application/geo+json", "Visible Area GeoJSON"),
@@ -134,6 +134,7 @@ OUTPUT_CONTRACTS: dict[str, OutputContract] = {
             _artifact("reachable_geojson", "reachable.geojson", "application/geo+json", "Artillery Terrain-Cleared Coverage GeoJSON"),
             _artifact("terrain_masked_geojson", "terrain_masked.geojson", "application/geo+json", "Artillery Terrain-Masked Area GeoJSON"),
             _artifact("sample_points_geojson", "sample_points.geojson", "application/geo+json", "Artillery Trajectory Sample Points GeoJSON"),
+            _artifact("scene_glb", "artillery_trajectory.glb", "model/gltf-binary", "Artillery Trajectory 3D GLB", required=False),
             _artifact("model_metadata_json", "model_metadata.json", "application/json", "Artillery Model Metadata JSON"),
             _artifact("output_manifest_json", "output_manifest.json", "application/json", "Artillery Output Manifest JSON"),
         ),
@@ -181,7 +182,7 @@ OUTPUT_CONTRACTS: dict[str, OutputContract] = {
     "multi_radar": OutputContract(
         model_id="multi_radar",
         version=1,
-        download_path_template="/api/radar/multi-coverage/{task_id}/outputs/{kind}",
+        download_path_template="/api/radar/tasks/{task_id}/outputs/{kind}",
         artifacts=(
             _artifact("visible_union_geojson", "visible_union.geojson", "application/geo+json", "Visible Union GeoJSON"),
             _artifact("overlap_geojson", "overlap.geojson", "application/geo+json", "Overlap GeoJSON"),

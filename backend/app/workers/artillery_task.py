@@ -28,6 +28,7 @@ from app.services.artillery_output_files import (
     list_artillery_task_output_files,
 )
 from app.services.artillery_task_store import mark_artillery_failed, mark_artillery_finished, mark_artillery_running
+from app.scene3d.artillery import write_artillery_trajectory_glb
 from app.services.task_scheduler import TaskCancelled
 from app.services.dem_store import find_dem_file
 from app.services.artifact_contracts import get_output_contract
@@ -194,7 +195,9 @@ def _write_artillery_outputs(
         transform = src.transform
         nodata = src.nodata
 
-    masks, sample_features, model, metrics = _compute_artillery_masks(dem, transform, nodata, prepared, payload)
+    masks, sample_features, model, metrics, target_result = _compute_artillery_masks(
+        dem, transform, nodata, prepared, payload
+    )
     transformer = Transformer.from_crs(f"EPSG:{prepared.target_epsg}", "EPSG:4326", always_xy=True)
 
     theoretical_geom = _mask_to_geometry(masks["theoretical"], transform)
@@ -219,6 +222,24 @@ def _write_artillery_outputs(
     _write_feature_collection(reachable_path, project_geometry(reachable_geom, transformer), {"kind": "artillery_reachable"})
     _write_feature_collection(terrain_masked_path, project_geometry(masked_geom, transformer), {"kind": "artillery_terrain_masked"})
     _write_sample_points(sample_points_path, sample_features, transformer)
+
+    trajectory_path = staging_dir / ARTILLERY_OUTPUT_FILENAMES["scene_glb"]
+    if target_result is not None and target_result["is_clear"]:
+        write_artillery_trajectory_glb(
+            trajectory_path,
+            task_id=task_id,
+            target_epsg=prepared.target_epsg,
+            battery=(prepared.battery_x, prepared.battery_y, float(target_result["battery_altitude_m"])),
+            target=(
+                float(target_result["target_x"]),
+                float(target_result["target_y"]),
+                float(target_result["target_z"]),
+            ),
+            trajectory=[
+                (float(point["x"]), float(point["y"]), float(point["z"]))
+                for point in target_result["trajectory"]
+            ],
+        )
 
     contract = get_output_contract("artillery")
     outputs = ArtilleryCoverageOutputs(**{
@@ -314,6 +335,14 @@ def _compute_artillery_masks(dem, transform, nodata, prepared: PreparedArtillery
     effective_area = _area_with_radius(reachable, transform, payload.munition.effective_radius_m)
     min_clearance = min(clearances) if clearances else None
     mean_clearance = float(sum(clearances) / len(clearances)) if clearances else None
+    target_result = _evaluate_artillery_target(
+        dem,
+        transform,
+        nodata,
+        prepared,
+        payload,
+        battery_altitude,
+    )
     metrics = ArtilleryCoverageMetrics(
         theoretical_area_m2=theoretical_area,
         reachable_area_m2=reachable_area,
@@ -333,6 +362,12 @@ def _compute_artillery_masks(dem, transform, nodata, prepared: PreparedArtillery
         mean_clearance_m=mean_clearance,
         battery_ground_elevation_m=float(ground),
         battery_altitude_m=float(battery_altitude),
+        target_reachable=(target_result["is_clear"] if target_result is not None else None),
+        target_range_m=(target_result["range_m"] if target_result is not None else None),
+        target_min_clearance_m=(target_result["min_clearance_m"] if target_result is not None else None),
+        target_masking_distance_m=(target_result["masking_distance_m"] if target_result is not None else None),
+        target_trajectory_peak_m=(target_result["trajectory_peak_m"] if target_result is not None else None),
+        target_time_of_flight_s=(target_result["time_of_flight_s"] if target_result is not None else None),
     )
     model = ArtilleryModelMetadata(
         target_epsg=prepared.target_epsg,
@@ -355,7 +390,13 @@ def _compute_artillery_masks(dem, transform, nodata, prepared: PreparedArtillery
         use_terrain_masking=payload.analysis.use_terrain_masking,
         simplify_tolerance_m=payload.analysis.output_simplify_tolerance_m or max(prepared.resolution_m),
     )
-    return {"theoretical": theoretical, "reachable": reachable, "terrain_masked": terrain_masked}, sample_features, model, metrics
+    return (
+        {"theoretical": theoretical, "reachable": reachable, "terrain_masked": terrain_masked},
+        sample_features,
+        model,
+        metrics,
+        target_result,
+    )
 
 
 def _annular_sector_geometry(prepared: PreparedArtilleryDem, payload: ArtilleryCoverageRequest):
@@ -373,6 +414,87 @@ def _annular_sector_geometry(prepared: PreparedArtilleryDem, payload: ArtilleryC
     return outer.difference(inner)
 
 
+def _evaluate_artillery_target(
+    dem,
+    transform,
+    nodata,
+    prepared: PreparedArtilleryDem,
+    payload: ArtilleryCoverageRequest,
+    battery_altitude: float,
+) -> dict | None:
+    if payload.target.lon is None or payload.target.lat is None:
+        return None
+
+    to_target = Transformer.from_crs(
+        "EPSG:4326",
+        f"EPSG:{prepared.target_epsg}",
+        always_xy=True,
+    )
+    target_x, target_y = to_target.transform(payload.target.lon, payload.target.lat)
+    target_x = float(target_x)
+    target_y = float(target_y)
+    distance = math.hypot(target_x - prepared.battery_x, target_y - prepared.battery_y)
+    base = {
+        "is_clear": False,
+        "range_m": float(distance),
+        "min_clearance_m": None,
+        "masking_distance_m": None,
+        "trajectory_peak_m": None,
+        "time_of_flight_s": None,
+        "target_x": target_x,
+        "target_y": target_y,
+        "target_z": None,
+        "battery_altitude_m": float(battery_altitude),
+        "trajectory": [],
+    }
+    if distance < payload.weapon.min_range_m or distance > payload.weapon.max_range_m:
+        return base
+
+    bearing_deg = math.degrees(
+        math.atan2(target_x - prepared.battery_x, target_y - prepared.battery_y)
+    ) % 360
+    if payload.weapon.traverse_deg < 360:
+        delta = abs((bearing_deg - payload.weapon.azimuth_deg + 180) % 360 - 180)
+        if delta > payload.weapon.traverse_deg / 2:
+            return base
+
+    target_ground = _sample_nearest(
+        dem,
+        transform,
+        target_x,
+        target_y,
+        nodata,
+    )
+    if not math.isfinite(target_ground):
+        return base
+    target_z = (
+        target_ground + payload.target.target_height_m
+        if payload.analysis.use_dem_elevation
+        else payload.target.target_height_m
+    )
+    result = _trajectory_clearance(
+        dem,
+        transform,
+        nodata,
+        prepared.battery_x,
+        prepared.battery_y,
+        battery_altitude,
+        target_x,
+        target_y,
+        target_z,
+        payload,
+    )
+    result.update(
+        {
+            "target_x": target_x,
+            "target_y": target_y,
+            "target_z": float(target_z),
+            "battery_altitude_m": float(battery_altitude),
+        }
+    )
+    return result
+
+
 def _trajectory_clearance(
     dem,
     transform,
@@ -387,12 +509,22 @@ def _trajectory_clearance(
 ) -> dict:
     distance = math.hypot(x1 - x0, y1 - y0)
     if distance <= 0:
+        terrain = _sample_nearest(dem, transform, x0, y0, nodata)
+        terrain_value = float(terrain) if math.isfinite(terrain) else None
         return {
             "is_clear": True,
             "range_m": 0.0,
             "min_clearance_m": float("inf"),
             "masking_distance_m": None,
             "trajectory_peak_m": z0,
+            "time_of_flight_s": 0.0,
+            "trajectory": [{
+                "x": float(x0),
+                "y": float(y0),
+                "z": float(z0),
+                "terrain_m": terrain_value,
+                "clearance_m": None if terrain_value is None else float(z0 - terrain_value - payload.analysis.clearance_margin_m),
+            }],
         }
 
     theta = math.radians(payload.weapon.elevation_deg)
@@ -405,19 +537,39 @@ def _trajectory_clearance(
     min_clearance = float("inf")
     masking_distance = None
     peak = z0
-    for index in range(1, samples):
+    trajectory = []
+    for index in range(samples + 1):
         t = index / samples
         horizontal = distance * t
         x = x0 + (x1 - x0) * t
         y = y0 + (y1 - y0) * t
         trajectory_z = z0 + horizontal * tan_theta - drop_factor * horizontal * horizontal - baseline_error * t
+        if index == 0:
+            trajectory_z = z0
+        elif index == samples:
+            trajectory_z = z1
         peak = max(peak, trajectory_z)
         terrain = _sample_nearest(dem, transform, x, y, nodata)
         if not math.isfinite(terrain):
+            trajectory.append({
+                "x": float(x),
+                "y": float(y),
+                "z": float(trajectory_z),
+                "terrain_m": None,
+                "clearance_m": None,
+            })
             continue
         clearance = trajectory_z - terrain - payload.analysis.clearance_margin_m
-        min_clearance = min(min_clearance, clearance)
-        if payload.analysis.use_terrain_masking and clearance < 0 and masking_distance is None:
+        trajectory.append({
+            "x": float(x),
+            "y": float(y),
+            "z": float(trajectory_z),
+            "terrain_m": float(terrain),
+            "clearance_m": float(clearance),
+        })
+        if 0 < index < samples:
+            min_clearance = min(min_clearance, clearance)
+        if 0 < index < samples and payload.analysis.use_terrain_masking and clearance < 0 and masking_distance is None:
             masking_distance = horizontal
     if not math.isfinite(min_clearance):
         min_clearance = 0.0
@@ -427,6 +579,8 @@ def _trajectory_clearance(
         "min_clearance_m": float(min_clearance),
         "masking_distance_m": masking_distance,
         "trajectory_peak_m": float(peak),
+        "time_of_flight_s": float(distance / (velocity * cos_theta)),
+        "trajectory": trajectory,
     }
 
 

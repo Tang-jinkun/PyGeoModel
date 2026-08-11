@@ -350,7 +350,7 @@ def test_write_output_manifest_includes_all_sections(tmp_path: Path) -> None:
             kind="visible_geojson",
             label="Visible Area GeoJSON",
             url="/outputs/task_a/visible.geojson",
-            download_url="/api/radar/coverage/task_a/outputs/visible_geojson",
+            download_url="/api/radar/tasks/task_a/outputs/visible_geojson",
             filename="visible.geojson",
             media_type="application/geo+json",
             size_bytes=2,

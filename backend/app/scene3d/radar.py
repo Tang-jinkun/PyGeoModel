@@ -493,7 +493,7 @@ def write_radar_coverage_glb(
             },
             "stage2_target_evaluation": {
                 "status": "available",
-                "endpoint": f"/api/radar/coverage/{task_id}/evaluate-target",
+                "endpoint": f"/api/radar/tasks/{task_id}/evaluate-target",
                 "coordinates": {
                     "x": "longitude_deg_wgs84",
                     "y": "latitude_deg_wgs84",

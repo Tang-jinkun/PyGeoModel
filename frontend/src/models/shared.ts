@@ -3,7 +3,7 @@ export type ModelId = (typeof MODEL_IDS)[number];
 export type TaskStatus = "pending" | "running" | "finished" | "failed";
 export type TaskExecutionState = "unknown" | "queued" | "running" | "cancelling" | "cancelled" | "finished" | "failed";
 export type ResultState = "pending" | "ready" | "unavailable";
-export type SpatialInputKind = "point" | "point-or-route" | "start-end" | "start-end-threats";
+export type SpatialInputKind = "point" | "point-target" | "point-or-route" | "start-end" | "start-end-threats";
 
 export interface BaseModelRequest { dem_id: string }
 export interface OutputFile {

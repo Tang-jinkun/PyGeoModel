@@ -194,23 +194,35 @@ export type AdvancedInput = RadarAdvancedInput;
 export type CoverageRequest = RadarRequest;
 
 export async function createCoverageTask(payload: CoverageRequest): Promise<CoverageTaskStatus> {
-  return normalizeCoverageTaskStatus(await requestJson("/api/radar/coverage", {
+  return normalizeCoverageTaskStatus(await requestJson("/api/radar/tasks", {
     method: "POST",
-    body: JSON.stringify(payload)
+    body: JSON.stringify({ task_type: "single", ...payload })
   }));
 }
 
+export interface RadarTaskTargetEvaluation {
+  task_id: string;
+  task_type: "single" | "multi";
+  detected: boolean;
+  detail: {
+    detectable: boolean;
+    reason: string;
+    [key: string]: unknown;
+  } | null;
+  contributors: Array<{ radar_id: string; detected: boolean }>;
+}
+
 export async function listCoverageTasks(): Promise<CoverageTaskSummary[]> {
-  const payload = await requestJson<unknown>("/api/radar/coverage");
+  const payload = await requestJson<unknown>("/api/radar/tasks?task_type=single");
   return Array.isArray(payload) ? payload.map(normalizeCoverageTaskSummary) : [];
 }
 
 export async function getCoverageTask(taskId: string): Promise<CoverageTaskStatus> {
-  return normalizeCoverageTaskStatus(await requestJson(`/api/radar/coverage/${taskId}`));
+  return normalizeCoverageTaskStatus(await requestJson(`/api/radar/tasks/${taskId}`));
 }
 
 export async function getCoverageOutputs(taskId: string): Promise<OutputFile[]> {
-  const payload = await requestJson<unknown>(`/api/radar/coverage/${taskId}/outputs`);
+  const payload = await requestJson<unknown>(`/api/radar/tasks/${taskId}/outputs`);
   return Array.isArray(payload) ? payload.map(normalizeOutputFile).filter(isOutputFile) : [];
 }
 
@@ -220,7 +232,7 @@ export async function getCoverageProfile(taskId: string, lon: number, lat: numbe
     lat: String(lat),
     samples: "180"
   });
-  return requestJson<CoverageProfileResult>(`/api/radar/coverage/${taskId}/profile?${params.toString()}`);
+  return requestJson<CoverageProfileResult>(`/api/radar/tasks/${taskId}/profile?${params.toString()}`);
 }
 
 export async function getCoverageProfiles(
@@ -233,7 +245,7 @@ export async function getCoverageProfiles(
     samples: options.samples ?? 180,
     include_samples: options.include_samples ?? false
   };
-  return requestJson<CoverageProfileBatchResult>(`/api/radar/coverage/${taskId}/profiles`, {
+  return requestJson<CoverageProfileBatchResult>(`/api/radar/tasks/${taskId}/profiles`, {
     method: "POST",
     body: JSON.stringify(payload)
   });
@@ -247,7 +259,17 @@ export async function createFusionAnalysis(taskIds: string[]): Promise<FusionRes
 }
 
 export async function deleteCoverageTask(taskId: string): Promise<CoverageTaskDeleteResult> {
-  return requestJson(`/api/radar/coverage/${taskId}`, { method: "DELETE" });
+  return requestJson(`/api/radar/tasks/${taskId}`, { method: "DELETE" });
+}
+
+export function evaluateRadarTaskTarget(
+  taskId: string,
+  target: { x: number; y: number; z: number; target_type?: string }
+): Promise<RadarTaskTargetEvaluation> {
+  return requestJson<RadarTaskTargetEvaluation>(`/api/radar/tasks/${taskId}/evaluate-target`, {
+    method: "POST",
+    body: JSON.stringify(target)
+  });
 }
 
 export function defaultCoverageRequest(): CoverageRequest {

@@ -23,7 +23,7 @@ def test_finished_task_ignores_stale_persisted_exists_flag(tmp_path: Path) -> No
                 exists=True,
                 size_bytes=42,
                 url="/outputs/task_stale/visible.geojson",
-                download_url="/api/radar/coverage/task_stale/outputs/visible_geojson",
+                 download_url="/api/radar/tasks/task_stale/outputs/visible_geojson",
             )
         ],
     )

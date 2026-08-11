@@ -43,6 +43,16 @@ describe("spatial input", () => {
     expect(state.points).toEqual([[79.8, 31.4]]);
   });
 
+  it("stores an artillery battery and target as separate points", () => {
+    let state = createSpatialDraft("point-target");
+    state = reduceSpatialDraft(state, { type: "set-point", coordinate: [79.8, 31.4] });
+    state = reduceSpatialDraft(state, { type: "set-target", coordinate: [80.1, 31.6] });
+
+    const features = spatialDraftToGeoJson(state).features;
+    expect(features.map((feature) => feature.properties?.kind)).toEqual(["battery", "target"]);
+    expect(features[1]?.geometry).toEqual({ type: "Point", coordinates: [80.1, 31.6] });
+  });
+
   it("serializes start, end, and threats as normalized point features", () => {
     const threat: SpatialThreat = {
       id: "threat-1",

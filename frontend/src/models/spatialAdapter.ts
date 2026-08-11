@@ -14,7 +14,16 @@ export function spatialDraftFromRequest<K extends ModelId>(
     case "watchpost":
       return pointDraft("point", coordinate((request as ModelRequestMap["watchpost"]).observer));
     case "artillery":
-      return pointDraft("point", coordinate((request as ModelRequestMap["artillery"]).battery));
+      {
+        const value = request as ModelRequestMap["artillery"];
+        return pointDraft(
+          "point-target",
+          coordinate(value.battery),
+          value.target.lon !== null && value.target.lat !== null
+            ? [value.target.lon, value.target.lat]
+            : undefined
+        );
+      }
     case "uav": {
       const value = request as ModelRequestMap["uav"];
       const points = value.route?.waypoints.length
@@ -75,6 +84,13 @@ export function applySpatialDraftToRequest<K extends ModelId>(
     case "artillery": {
       const value = request as ModelRequestMap["artillery"];
       assignCoordinate(value.battery, draft.points[0]);
+      if (draft.points[1]) {
+        value.target.lon = draft.points[1][0];
+        value.target.lat = draft.points[1][1];
+      } else {
+        value.target.lon = null;
+        value.target.lat = null;
+      }
       break;
     }
     case "uav": {
@@ -135,8 +151,8 @@ export function applySpatialDraftToRequest<K extends ModelId>(
   return request;
 }
 
-function pointDraft(kind: "point" | "point-or-route", ...points: SpatialCoordinate[]): SpatialDraft {
-  return { kind, points, start: null, end: null, threats: [], history: [] };
+function pointDraft(kind: "point" | "point-target" | "point-or-route", ...points: Array<SpatialCoordinate | undefined>): SpatialDraft {
+  return { kind, points: points.filter((point): point is SpatialCoordinate => point !== undefined), start: null, end: null, threats: [], history: [] };
 }
 
 function coordinate(value: { lon: number; lat: number }): SpatialCoordinate {

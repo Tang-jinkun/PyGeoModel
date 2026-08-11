@@ -20,14 +20,14 @@ def test_list_coverage_outputs(tmp_path: Path) -> None:
     write_task(tmp_path, "task_a", "finished")
     publish_radar_outputs(tmp_path, "task_a")
 
-    response = TestClient(app).get("/api/radar/coverage/task_a/outputs")
+    response = TestClient(app).get("/api/radar/tasks/task_a/outputs")
 
     assert response.status_code == 200
     payload = response.json()
     visible = next(item for item in payload if item["kind"] == "visible_geojson")
     assert visible["exists"] is True
-    assert visible["download_path"] == "/api/radar/coverage/task_a/outputs/visible_geojson"
-    assert visible["download_url"] == "/api/radar/coverage/task_a/outputs/visible_geojson"
+    assert visible["download_path"] == "/api/radar/tasks/task_a/outputs/visible_geojson"
+    assert visible["download_url"] == "/api/radar/tasks/task_a/outputs/visible_geojson"
     assert visible["url"] is None
 
 
@@ -37,7 +37,7 @@ def test_download_coverage_output(tmp_path: Path) -> None:
     write_task(tmp_path, "task_a", "finished")
     publish_radar_outputs(tmp_path, "task_a", {"model_metadata.json": b'{"ok": true}'})
 
-    response = TestClient(app).get("/api/radar/coverage/task_a/outputs/model_metadata_json")
+    response = TestClient(app).get("/api/radar/tasks/task_a/outputs/model_metadata_json")
 
     assert response.status_code == 200
     assert response.content == b'{"ok": true}'
@@ -50,7 +50,7 @@ def test_download_coverage_output_requires_finished_task(tmp_path: Path) -> None
     settings.ensure_directories()
     write_task(tmp_path, "task_a", "running")
 
-    response = TestClient(app).get("/api/radar/coverage/task_a/outputs/model_metadata_json")
+    response = TestClient(app).get("/api/radar/tasks/task_a/outputs/model_metadata_json")
 
     assert response.status_code == 409
 
@@ -60,8 +60,8 @@ def test_finished_task_with_missing_artifact_directory_is_unavailable(tmp_path: 
     settings.ensure_directories()
     write_task(tmp_path, "task_a", "finished")
 
-    detail = TestClient(app).get("/api/radar/coverage/task_a")
-    response = TestClient(app).get("/api/radar/coverage/task_a/outputs/model_metadata_json")
+    detail = TestClient(app).get("/api/radar/tasks/task_a")
+    response = TestClient(app).get("/api/radar/tasks/task_a/outputs/model_metadata_json")
 
     assert detail.status_code == 200
     assert detail.json()["result_state"] == "unavailable"
@@ -77,7 +77,7 @@ def test_unknown_output_kind_on_ready_task_returns_not_found(tmp_path: Path) -> 
     write_task(tmp_path, "task_a", "finished")
     publish_radar_outputs(tmp_path, "task_a")
 
-    response = TestClient(app).get("/api/radar/coverage/task_a/outputs/not_a_kind")
+    response = TestClient(app).get("/api/radar/tasks/task_a/outputs/not_a_kind")
 
     assert response.status_code == 404
     assert response.json()["detail"]["code"] == "OUTPUT_KIND_NOT_FOUND"
@@ -99,7 +99,7 @@ def test_rerun_requires_idempotency_key(tmp_path: Path) -> None:
     settings.ensure_directories()
     write_task_with_payload(tmp_path, "task_a", "finished")
 
-    response = TestClient(app).post("/api/radar/coverage/task_a/rerun")
+    response = TestClient(app).post("/api/radar/tasks/task_a/rerun")
 
     assert response.status_code == 422
 
@@ -113,8 +113,8 @@ def test_rerun_reuses_child_and_schedules_once(tmp_path: Path, monkeypatch) -> N
     monkeypatch.setattr("app.api.radar.run_coverage_task", scheduled)
     headers = {"Idempotency-Key": "radar-rerun-key"}
 
-    response = TestClient(app).post("/api/radar/coverage/task_a/rerun", headers=headers)
-    repeated = TestClient(app).post("/api/radar/coverage/task_a/rerun", headers=headers)
+    response = TestClient(app).post("/api/radar/tasks/task_a/rerun", headers=headers)
+    repeated = TestClient(app).post("/api/radar/tasks/task_a/rerun", headers=headers)
 
     assert response.status_code == 202
     assert repeated.status_code == 202
@@ -131,7 +131,7 @@ def test_reading_history_never_schedules_work(tmp_path: Path, monkeypatch) -> No
     scheduled = Mock()
     monkeypatch.setattr("app.api.radar.run_coverage_task", scheduled)
 
-    response = TestClient(app).get("/api/radar/coverage/task_a")
+    response = TestClient(app).get("/api/radar/tasks/task_a")
 
     assert response.status_code == 200
     scheduled.assert_not_called()
@@ -142,7 +142,7 @@ def test_read_coverage_task_includes_request(tmp_path: Path) -> None:
     settings.ensure_directories()
     write_task_with_payload(tmp_path, "task_a", "finished")
 
-    response = TestClient(app).get("/api/radar/coverage/task_a")
+    response = TestClient(app).get("/api/radar/tasks/task_a")
 
     assert response.status_code == 200
     payload = response.json()
@@ -155,7 +155,7 @@ def test_read_coverage_metrics_returns_json(tmp_path: Path) -> None:
     settings.ensure_directories()
     write_task(tmp_path, "task_a", "finished", metrics={"theoretical_area_m2": 100, "visible_area_m2": 60})
 
-    response = TestClient(app).get("/api/radar/coverage/task_a/metrics")
+    response = TestClient(app).get("/api/radar/tasks/task_a/metrics")
 
     assert response.status_code == 200
     payload = response.json()
@@ -192,7 +192,7 @@ def test_read_coverage_task_returns_dem_clip_contract(tmp_path: Path) -> None:
         },
     )
 
-    response = TestClient(app).get("/api/radar/coverage/task_a")
+    response = TestClient(app).get("/api/radar/tasks/task_a")
 
     assert response.status_code == 200
     payload = response.json()
@@ -221,7 +221,7 @@ def test_read_legacy_coverage_task_defaults_contract_version(tmp_path: Path) -> 
         },
     )
 
-    response = TestClient(app).get("/api/radar/coverage/task_legacy")
+    response = TestClient(app).get("/api/radar/tasks/task_legacy")
 
     assert response.status_code == 200
     assert response.json()["model"]["coverage_contract_version"] == 1
@@ -232,7 +232,7 @@ def test_list_coverage_tasks_omits_request(tmp_path: Path) -> None:
     settings.ensure_directories()
     write_task_with_payload(tmp_path, "task_a", "finished")
 
-    response = TestClient(app).get("/api/radar/coverage")
+    response = TestClient(app).get("/api/radar/tasks?task_type=single")
 
     assert response.status_code == 200
     payload = response.json()
@@ -245,7 +245,7 @@ def test_create_app_recovers_interrupted_tasks(tmp_path: Path) -> None:
     settings.ensure_directories()
     write_task(tmp_path, "task_a", "running")
 
-    response = TestClient(create_app()).get("/api/radar/coverage/task_a")
+    response = TestClient(create_app()).get("/api/radar/tasks/task_a")
 
     assert response.status_code == 200
     payload = response.json()
@@ -261,7 +261,7 @@ def test_list_coverage_tasks_skips_corrupt_record(tmp_path: Path) -> None:
     corrupt_path = tmp_path / "tasks" / "task_bad.json"
     corrupt_path.write_text("{", encoding="utf-8")
 
-    response = TestClient(app).get("/api/radar/coverage")
+    response = TestClient(app).get("/api/radar/tasks?task_type=single")
 
     assert response.status_code == 200
     payload = response.json()
@@ -276,7 +276,7 @@ def test_read_coverage_task_reports_corrupt_record(tmp_path: Path) -> None:
     corrupt_path = tmp_path / "tasks" / "task_bad.json"
     corrupt_path.write_text("{", encoding="utf-8")
 
-    response = TestClient(app).get("/api/radar/coverage/task_bad")
+    response = TestClient(app).get("/api/radar/tasks/task_bad")
 
     assert response.status_code == 500
     assert response.json()["detail"]["code"] == "TASK_RECORD_CORRUPT"
@@ -292,7 +292,7 @@ def test_delete_coverage_task_api(tmp_path: Path) -> None:
     output_dir.mkdir(parents=True)
     (output_dir / "visible.geojson").write_text("{}", encoding="utf-8")
 
-    response = TestClient(app).delete("/api/radar/coverage/task_a")
+    response = TestClient(app).delete("/api/radar/tasks/task_a")
 
     assert response.status_code == 200
     payload = response.json()
@@ -306,8 +306,8 @@ def test_delete_coverage_task_is_retry_safe(tmp_path: Path) -> None:
     settings.ensure_directories()
     write_task(tmp_path, "task_a", "finished")
 
-    first = TestClient(app).delete("/api/radar/coverage/task_a")
-    second = TestClient(app).delete("/api/radar/coverage/task_a")
+    first = TestClient(app).delete("/api/radar/tasks/task_a")
+    second = TestClient(app).delete("/api/radar/tasks/task_a")
 
     assert first.status_code == 200
     assert second.status_code == 200
@@ -324,7 +324,7 @@ def test_delete_coverage_task_api_rejects_running(tmp_path: Path) -> None:
     settings.ensure_directories()
     write_task(tmp_path, "task_a", "running")
 
-    response = TestClient(app).delete("/api/radar/coverage/task_a")
+    response = TestClient(app).delete("/api/radar/tasks/task_a")
 
     assert response.status_code == 409
 
@@ -333,7 +333,7 @@ def test_delete_coverage_task_api_rejects_invalid_id(tmp_path: Path) -> None:
     settings.data_dir = tmp_path
     settings.ensure_directories()
 
-    response = TestClient(app).delete("/api/radar/coverage/..%5Ctask_a")
+    response = TestClient(app).delete("/api/radar/tasks/..%5Ctask_a")
 
     assert response.status_code == 400
 
@@ -362,8 +362,9 @@ def test_create_coverage_task_rejects_range_mostly_outside_dem(tmp_path: Path) -
     (dem_dir / "metadata.json").write_text(metadata.model_dump_json(indent=2), encoding="utf-8")
 
     response = TestClient(app).post(
-        "/api/radar/coverage",
+        "/api/radar/tasks",
         json={
+            "task_type": "single",
             "dem_id": "dem_small",
             "radar": {"lon": 105.0, "lat": 35.0, "height_m": 10},
             "target": {"height_m": 0},
