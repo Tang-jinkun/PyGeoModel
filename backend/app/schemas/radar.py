@@ -465,6 +465,58 @@ class RadarTaskTargetEvaluation(BaseModel):
     contributors: list[RadarTargetContributor] = Field(default_factory=list)
 
 
+class BatchTargetEvaluationInput(BaseModel):
+    target_id: str = Field(min_length=1, max_length=128)
+    x: float = Field(ge=-180, le=180, description="WGS84 longitude")
+    y: float = Field(ge=-90, le=90, description="WGS84 latitude")
+    altitude_reference: Literal["amsl", "agl"]
+    altitude_m: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+    target_type: str | None = Field(default=None, max_length=64)
+
+    @model_validator(mode="after")
+    def validate_altitude(self) -> "BatchTargetEvaluationInput":
+        if self.altitude_reference == "amsl" and self.altitude_m is None:
+            raise ValueError("altitude_m is required when altitude_reference is amsl")
+        if self.altitude_m is None:
+            self.altitude_m = 0
+        return self
+
+
+class BatchTargetEvaluationRequest(BaseModel):
+    targets: list[BatchTargetEvaluationInput] = Field(min_length=1, max_length=500)
+
+    @model_validator(mode="after")
+    def validate_target_ids(self) -> "BatchTargetEvaluationRequest":
+        if len({target.target_id for target in self.targets}) != len(self.targets):
+            raise ValueError("target_id values must be unique")
+        return self
+
+
+class BatchRadarTaskTargetEvaluation(BaseModel):
+    target_id: str
+    altitude_reference: Literal["amsl", "agl"]
+    source_altitude_m: float
+    evaluation: RadarTaskTargetEvaluation
+
+
+class BatchTargetEvaluationError(BaseModel):
+    target_id: str
+    x: float
+    y: float
+    code: str
+    message: str
+
+
+class BatchTargetEvaluationResult(BaseModel):
+    task_id: str
+    requested_count: int
+    succeeded_count: int
+    failed_count: int
+    detected_count: int
+    results: list[BatchRadarTaskTargetEvaluation] = Field(default_factory=list)
+    errors: list[BatchTargetEvaluationError] = Field(default_factory=list)
+
+
 class FusionRequest(BaseModel):
     task_ids: list[str] = Field(min_length=2, max_length=12)
 

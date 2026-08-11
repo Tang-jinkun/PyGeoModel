@@ -69,6 +69,47 @@ def test_evaluate_target_uses_3d_detection_domain_and_optional_type(
     assert blocked_result["detail"]["terrain_blocked"] is True
 
 
+def test_evaluate_targets_returns_results_and_row_errors(tmp_path: Path) -> None:
+    from app.main import app
+
+    settings.data_dir = tmp_path
+    settings.ensure_directories()
+    dem_path = _write_dem(tmp_path)
+    metadata = read_dem_metadata("dem_target", dem_path)
+    metadata_path = tmp_path / "dem" / "dem_target" / "metadata.json"
+    metadata_path.write_text(metadata.model_dump_json(indent=2), encoding="utf-8")
+    radar_x, radar_y = Transformer.from_crs(
+        "EPSG:4326", "EPSG:32648", always_xy=True
+    ).transform(105.0, 35.0)
+    target_lon, target_lat = Transformer.from_crs(
+        "EPSG:32648", "EPSG:4326", always_xy=True
+    ).transform(radar_x + 1_000, radar_y)
+    _write_minimum_visible_height(tmp_path, radar_x, radar_y)
+    _write_finished_task(tmp_path)
+
+    response = TestClient(app).post(
+        "/api/radar/tasks/task_target/evaluate-targets",
+        json={
+            "targets": [
+                {"target_id": "amsl-1", "x": target_lon, "y": target_lat, "altitude_reference": "amsl", "altitude_m": 200},
+                {"target_id": "agl-1", "x": target_lon, "y": target_lat, "altitude_reference": "agl", "altitude_m": 100},
+                {"target_id": "bad-1", "x": 105.5, "y": 35.5, "altitude_reference": "agl", "altitude_m": 100},
+            ]
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["requested_count"] == 3
+    assert payload["succeeded_count"] == 2
+    assert payload["failed_count"] == 1
+    assert {row["target_id"] for row in payload["results"]} == {"amsl-1", "agl-1"}
+    assert payload["detected_count"] == 2
+    assert payload["results"][0]["evaluation"]["task_type"] == "single"
+    assert payload["results"][0]["evaluation"]["detail"]["detectable"] is True
+    assert payload["errors"][0]["target_id"] == "bad-1"
+
+
 def _write_dem(root: Path) -> Path:
     dem_dir = root / "dem" / "dem_target"
     dem_dir.mkdir(parents=True, exist_ok=True)

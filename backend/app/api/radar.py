@@ -12,6 +12,10 @@ from app.schemas.radar import (
     CoverageProfileResult,
     CoverageRequest,
     CoverageTaskStatus,
+    BatchRadarTaskTargetEvaluation,
+    BatchTargetEvaluationError,
+    BatchTargetEvaluationRequest,
+    BatchTargetEvaluationResult,
     FusionRequest,
     FusionResult,
     MultiRadarRequest,
@@ -44,7 +48,7 @@ from app.services.profile_analysis import analyze_coverage_profile, analyze_cove
 from app.services.task_dispatch import enqueue_task
 from app.services.task_scheduler import TaskScheduleSnapshot, get_task_scheduler
 from app.services.task_store import create_rerun, create_task, delete_task, get_task, list_tasks, mark_failed
-from app.services.target_evaluation import evaluate_coverage_target
+from app.services.target_evaluation import evaluate_coverage_target, resolve_batch_target_altitude
 from app.workers.coverage_task import run_coverage_task
 from app.workers.multi_radar_coverage_task import run_multi_radar_coverage_task
 
@@ -242,25 +246,92 @@ def download_radar_task_output(task_id: str, kind: str) -> FileResponse:
         raise _http_error(exc) from exc
 
 
+def _evaluate_radar_task_target(
+    task_id: str,
+    payload: TargetEvaluationRequest,
+) -> RadarTaskTargetEvaluation:
+    task_kind = _task_kind(task_id)
+    if task_kind == "single":
+        detail = TargetEvaluationResult.model_validate(
+            evaluate_coverage_target(task_id, payload)
+        )
+        return RadarTaskTargetEvaluation(
+            task_id=task_id,
+            task_type="single",
+            detected=detail.detectable,
+            detail=detail,
+        )
+    result = evaluate_multi_radar_target(task_id, payload)
+    return RadarTaskTargetEvaluation.model_validate({"task_type": "multi", **result})
+
+
 @router.post("/tasks/{task_id}/evaluate-target", response_model=RadarTaskTargetEvaluation)
 def evaluate_radar_task_target(
     task_id: str,
     payload: TargetEvaluationRequest,
 ) -> RadarTaskTargetEvaluation:
     try:
-        task_kind = _task_kind(task_id)
-        if task_kind == "single":
-            detail = TargetEvaluationResult.model_validate(evaluate_coverage_target(task_id, payload))
-            return RadarTaskTargetEvaluation(
-                task_id=task_id,
-                task_type="single",
-                detected=detail.detectable,
-                detail=detail,
-            )
-        result = evaluate_multi_radar_target(task_id, payload)
-        return RadarTaskTargetEvaluation.model_validate({"task_type": "multi", **result})
+        return _evaluate_radar_task_target(task_id, payload)
     except AppError as exc:
         raise _http_error(exc) from exc
+
+
+@router.post("/tasks/{task_id}/evaluate-targets", response_model=BatchTargetEvaluationResult)
+def evaluate_radar_task_targets(
+    task_id: str,
+    payload: BatchTargetEvaluationRequest,
+) -> BatchTargetEvaluationResult:
+    try:
+        task_kind = _task_kind(task_id)
+    except AppError as exc:
+        raise _http_error(exc) from exc
+    results: list[BatchRadarTaskTargetEvaluation] = []
+    errors: list[BatchTargetEvaluationError] = []
+
+    for target in payload.targets:
+        try:
+            altitude_m = (
+                resolve_batch_target_altitude(task_id, target)
+                if task_kind == "single"
+                else float(target.altitude_m or 0)
+            )
+            evaluation = _evaluate_radar_task_target(
+                task_id,
+                TargetEvaluationRequest(
+                    x=target.x,
+                    y=target.y,
+                    z=altitude_m,
+                    target_type=target.target_type,
+                ),
+            )
+            results.append(
+                BatchRadarTaskTargetEvaluation(
+                    target_id=target.target_id,
+                    altitude_reference=target.altitude_reference,
+                    source_altitude_m=float(target.altitude_m or 0),
+                    evaluation=evaluation,
+                )
+            )
+        except AppError as exc:
+            errors.append(
+                BatchTargetEvaluationError(
+                    target_id=target.target_id,
+                    x=target.x,
+                    y=target.y,
+                    code=exc.code,
+                    message=exc.message,
+                )
+            )
+
+    return BatchTargetEvaluationResult(
+        task_id=task_id,
+        requested_count=len(payload.targets),
+        succeeded_count=len(results),
+        failed_count=len(errors),
+        detected_count=sum(item.evaluation.detected for item in results),
+        results=results,
+        errors=errors,
+    )
 
 
 @router.post("/tasks/{task_id}/cancel", response_model=TaskScheduleSnapshot)

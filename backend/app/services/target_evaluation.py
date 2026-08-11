@@ -4,7 +4,11 @@ import rasterio
 from pyproj import CRS, Transformer
 
 from app.core.errors import AppError
-from app.schemas.radar import TargetEvaluationRequest, TargetEvaluationResult
+from app.schemas.radar import (
+    BatchTargetEvaluationInput,
+    TargetEvaluationRequest,
+    TargetEvaluationResult,
+)
 from app.services.coverage_range import effective_max_range
 from app.services.dem_store import find_dem_file
 from app.services.output_files import resolve_task_output_path
@@ -162,6 +166,36 @@ def evaluate_coverage_target(
         within_dem=within_dem,
         terrain_blocked=terrain_blocked,
     )
+
+
+def resolve_batch_target_altitude(
+    task_id: str,
+    target: BatchTargetEvaluationInput,
+) -> float:
+    altitude_m = float(target.altitude_m or 0)
+    if target.altitude_reference == "amsl":
+        return altitude_m
+
+    task = get_task(task_id)
+    if task.request is None:
+        raise AppError(
+            "TASK_WITHOUT_REQUEST",
+            "Task request parameters are missing.",
+            status_code=409,
+        )
+    terrain_m = _sample_source_dem(
+        task.request.dem_id,
+        target.x,
+        target.y,
+        input_is_wgs84=True,
+    )
+    if terrain_m is None:
+        raise AppError(
+            "TARGET_TERRAIN_UNAVAILABLE",
+            "Target terrain elevation is unavailable.",
+            status_code=409,
+        )
+    return altitude_m + terrain_m
 
 
 def _sample_source_dem(
