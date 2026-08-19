@@ -149,7 +149,6 @@ curl http://127.0.0.1:8000/api/dem/national-dem
   ↓
 使用返回的 dem_id 调用模型
 ```
-
 ### 3.2 创建批次
 
 接口：
@@ -409,4 +408,3 @@ GET /api/dem/batches/{batch_id}          （轮询 ready）
         ↓
 使用返回的 dem_id 调用模型
 ```
-
