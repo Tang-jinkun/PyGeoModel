@@ -11,6 +11,7 @@ from app.core.errors import AppError
 from app.core.config import settings
 from app.services import dem_store
 from app.services.dem_store import (
+    create_dem_cog_from_tiles,
     create_dem_cog_for_dir,
     delete_dem,
     find_dem_compute_file,
@@ -18,6 +19,7 @@ from app.services.dem_store import (
     import_dem_from_path,
     list_dem_metadata,
     read_dem_metadata,
+    validate_dem_tile_set,
 )
 from app.services.task_store import create_task
 from app.schemas.radar import CoverageRequest
@@ -207,6 +209,64 @@ def test_create_dem_cog_falls_back_to_rasterio_when_gdal_translate_missing(tmp_p
         assert dataset.height == 16
 
 
+def test_create_dem_cog_from_tiles_merges_adjacent_tiles(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(dem_store.shutil, "which", lambda name: None)
+    tile_a = tmp_path / "tile-b.tif"
+    tile_b = tmp_path / "tile-a.tif"
+    write_raster_with_transform(tile_a, from_origin(100, 30, 0.01, 0.01), 1)
+    write_raster_with_transform(tile_b, from_origin(102.56, 30, 0.01, 0.01), 2)
+
+    cog_path = create_dem_cog_from_tiles([tile_a, tile_b], tmp_path / "merged")
+
+    assert cog_path.name == "dem.cog.tif"
+    with rasterio.open(cog_path) as dataset:
+        assert dataset.count == 1
+        assert dataset.width == 512
+        assert dataset.height == 256
+        assert dataset.is_tiled
+        assert dataset.overviews(1)
+        assert dataset.read(1)[1, 1] == 1
+        assert dataset.read(1)[1, 257] == 2
+
+
+def test_create_dem_cog_from_tiles_uses_legacy_gdalbuildvrt_options(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    tile = tmp_path / "tile.tif"
+    write_raster_with_transform(tile, from_origin(100, 30, 0.01, 0.01), 1)
+    commands: list[list[str]] = []
+
+    monkeypatch.setattr(dem_store.shutil, "which", lambda name: f"/usr/bin/{name}")
+
+    def fake_run(command: list[str], **kwargs: object) -> None:
+        commands.append(command)
+
+    monkeypatch.setattr(dem_store.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        dem_store,
+        "create_dem_cog_with_gdal",
+        lambda source_path, destination_path: dem_store.create_dem_cog_with_rasterio(tile, destination_path),
+    )
+    monkeypatch.setattr(dem_store, "validate_dem_cog", lambda path: None)
+
+    create_dem_cog_from_tiles([tile], tmp_path / "merged")
+
+    assert commands
+    assert commands[0][0] == "gdalbuildvrt"
+    assert "-resolution" not in commands[0]
+    assert ["-overwrite", "-r", "nearest"] == commands[0][1:4]
+
+
+def test_validate_dem_tile_set_rejects_mismatched_crs(tmp_path: Path) -> None:
+    tile_a = tmp_path / "tile-a.tif"
+    tile_b = tmp_path / "tile-b.tif"
+    write_raster_with_transform(tile_a, from_origin(100, 30, 0.01, 0.01), 1, crs="EPSG:4326")
+    write_raster_with_transform(tile_b, from_origin(102.56, 30, 0.01, 0.01), 2, crs="EPSG:3857")
+
+    with pytest.raises(AppError) as exc_info:
+        validate_dem_tile_set([tile_a, tile_b])
+
+    assert exc_info.value.code == "DEM_TILE_CRS_MISMATCH"
+
+
 def test_import_dem_from_path_publishes_cog_only_dataset(tmp_path: Path) -> None:
     settings.data_dir = tmp_path / "data"
     settings.ensure_directories()
@@ -322,6 +382,28 @@ def write_raster(
     ) as dataset:
         for band in range(1, count + 1):
             dataset.write(numpy.ones((height, width), dtype=numpy.float32) * band, band)
+
+
+def write_raster_with_transform(
+    path: Path,
+    transform,
+    value: float,
+    *,
+    crs: str = "EPSG:4326",
+) -> None:
+    with rasterio.open(
+        path,
+        "w",
+        driver="GTiff",
+        width=256,
+        height=256,
+        count=1,
+        dtype="float32",
+        crs=crs,
+        transform=transform,
+        nodata=-9999,
+    ) as dataset:
+        dataset.write(numpy.full((256, 256), value, dtype=numpy.float32), 1)
 
 
 def write_metadata(root: Path, dem_id: str, filename: str, uploaded_at: str) -> None:

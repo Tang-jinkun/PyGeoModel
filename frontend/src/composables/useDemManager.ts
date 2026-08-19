@@ -1,6 +1,6 @@
 import { ref } from "vue";
 
-import { deleteDem, listDems, uploadDem, type DemMetadata } from "../api/dem";
+import { deleteDem, listDems, uploadDem, uploadDemBatch, type DemMetadata } from "../api/dem";
 
 export function useDemManager() {
   const dems = ref<DemMetadata[]>([]);
@@ -35,12 +35,13 @@ export function useDemManager() {
     selectedDem.value = demId;
   }
 
-  async function upload(file: File) {
+  async function upload(fileOrFiles: File | File[]) {
     const selectionGenerationAtStart = selectionGeneration;
     pendingUploads++;
     uploading.value = true;
     try {
-      const uploaded = await uploadDem(file);
+      const files = Array.isArray(fileOrFiles) ? fileOrFiles : [fileOrFiles];
+      const uploaded = files.length > 1 ? await uploadDemBatch(files) : await uploadDem(files[0]);
       mutationGeneration++;
       const index = dems.value.findIndex(({ dem_id }) => dem_id === uploaded.dem_id);
       if (index === -1) dems.value = [...dems.value, uploaded];

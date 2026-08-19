@@ -1,12 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { deleteDem, listDems, uploadDem, type DemMetadata } from "../api/dem";
+import { deleteDem, listDems, uploadDem, uploadDemBatch, type DemMetadata } from "../api/dem";
 import { useDemManager } from "./useDemManager";
 
 vi.mock("../api/dem", () => ({
   deleteDem: vi.fn(),
   listDems: vi.fn(),
-  uploadDem: vi.fn()
+  uploadDem: vi.fn(),
+  uploadDemBatch: vi.fn()
 }));
 
 const demA: DemMetadata = {
@@ -43,6 +44,7 @@ describe("useDemManager", () => {
     vi.mocked(deleteDem).mockReset();
     vi.mocked(listDems).mockReset();
     vi.mocked(uploadDem).mockReset();
+    vi.mocked(uploadDemBatch).mockReset();
   });
 
   it("selects a DEM for the map without mutating model drafts", async () => {
@@ -66,6 +68,21 @@ describe("useDemManager", () => {
     expect(manager.dems.value).toEqual([demA]);
     expect(manager.selectedDem.value).toBe(demA.dem_id);
     expect(manager.uploading.value).toBe(false);
+  });
+
+  it("uploads multiple tiles as one DEM batch", async () => {
+    vi.mocked(uploadDemBatch).mockResolvedValue(demA);
+    const manager = createManager();
+    const tiles = [
+      new File(["a"], "tile-a.tif", { type: "image/tiff" }),
+      new File(["b"], "tile-b.tif", { type: "image/tiff" })
+    ];
+
+    await manager.upload(tiles);
+
+    expect(uploadDemBatch).toHaveBeenCalledWith(tiles);
+    expect(manager.dems.value).toEqual([demA]);
+    expect(manager.selectedDem.value).toBe(demA.dem_id);
   });
 
   it("does not let a late upload replace a newer explicit DEM selection", async () => {

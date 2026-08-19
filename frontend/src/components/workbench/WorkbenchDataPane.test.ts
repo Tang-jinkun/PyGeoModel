@@ -10,4 +10,16 @@ describe("WorkbenchDataPane", () => {
     expect(wrapper.find(".el-select").exists()).toBe(false);
     expect(wrapper.emitted("update:modelValue")?.[0]).toEqual(["dem-1"]);
   });
+
+  it("emits every selected TIF as one DEM batch", async () => {
+    const wrapper = mount(WorkbenchDataPane, { props: { dems: [], modelValue: null, loading: false, uploading: false } });
+    const first = new File(["one"], "tile-a.tif", { type: "image/tiff" });
+    const second = new File(["two"], "tile-b.tif", { type: "image/tiff" });
+    const input = wrapper.get('input[type="file"]');
+    Object.defineProperty(input.element, "files", { value: [first, second] });
+
+    await input.trigger("change");
+
+    expect(wrapper.emitted("upload")?.[0]).toEqual([[first, second]]);
+  });
 });

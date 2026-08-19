@@ -1,7 +1,7 @@
 <template>
   <section class="workbench-data-pane">
     <div class="data-actions">
-      <label class="upload-btn"><input type="file" accept=".tif,.tiff" @change="chooseFile">导入 DEM</label>
+      <label class="upload-btn"><input type="file" accept=".tif,.tiff" multiple @change="chooseFiles">导入 DEM</label>
       <button type="button" aria-label="刷新 DEM 列表" @click="emit('refresh')"><ElIcon><Refresh /></ElIcon></button>
     </div>
     <details open class="data-group">
@@ -22,8 +22,13 @@ import { ElIcon } from "element-plus";
 
 type DemRow = { dem_id: string; filename: string };
 const props = defineProps<{ dems: DemRow[]; modelValue: string | null; loading: boolean; uploading: boolean }>();
-const emit = defineEmits<{ "update:modelValue": [demId: string]; upload: [file: File]; delete: [demId: string]; refresh: [] }>();
-function chooseFile(event: Event) { const file = (event.target as HTMLInputElement).files?.[0]; if (file) emit("upload", file); }
+const emit = defineEmits<{ "update:modelValue": [demId: string]; upload: [files: File[]]; delete: [demId: string]; refresh: [] }>();
+function chooseFiles(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const files = Array.from(input.files ?? []);
+  if (files.length) emit("upload", files);
+  input.value = "";
+}
 void props;
 </script>
 

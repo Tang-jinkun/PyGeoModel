@@ -121,6 +121,60 @@ def test_chunked_dem_upload_api_merges_and_reads_metadata(tmp_path: Path) -> Non
     assert payload["cog_file_size_bytes"] > 0
 
 
+def test_multi_tile_dem_batch_publishes_one_ready_dem(tmp_path: Path) -> None:
+    settings.data_dir = tmp_path
+    settings.ensure_directories()
+    tile_a = tmp_path / "tile-a.tif"
+    tile_b = tmp_path / "tile-b.tif"
+    for path, transform, value in (
+        (tile_a, from_origin(100, 30, 0.01, 0.01), 1),
+        (tile_b, from_origin(102.56, 30, 0.01, 0.01), 2),
+    ):
+        with rasterio.open(
+            path,
+            "w",
+            driver="GTiff",
+            width=256,
+            height=256,
+            count=1,
+            dtype="float32",
+            crs="EPSG:4326",
+            transform=transform,
+            nodata=-9999,
+        ) as dataset:
+            dataset.write(numpy.full((256, 256), value, dtype=numpy.float32), 1)
+
+    client = TestClient(app)
+    created = client.post("/api/dem/batches", json={"label": "region mosaic"})
+    assert created.status_code == 201
+    batch_id = created.json()["batch_id"]
+
+    uploaded = client.post(
+        f"/api/dem/batches/{batch_id}/tiles",
+        files=[
+            ("files", (tile_a.name, tile_a.read_bytes(), "image/tiff")),
+            ("files", (tile_b.name, tile_b.read_bytes(), "image/tiff")),
+        ],
+    )
+    assert uploaded.status_code == 200
+    assert uploaded.json()["file_count"] == 2
+
+    completed = client.post(f"/api/dem/batches/{batch_id}/complete")
+    assert completed.status_code == 202
+
+    status = client.get(f"/api/dem/batches/{batch_id}")
+    assert status.status_code == 200
+    assert status.json()["status"] == "ready"
+    dem_id = status.json()["dem_id"]
+
+    metadata = client.get(f"/api/dem/{dem_id}")
+    assert metadata.status_code == 200
+    assert metadata.json()["filename"] == "region mosaic"
+    assert metadata.json()["source_type"] == "tiled_upload_batch"
+    assert metadata.json()["source_tile_count"] == 2
+    assert metadata.json()["cog_path"] == "dem.cog.tif"
+
+
 def test_dem_tile_api_returns_png(tmp_path: Path) -> None:
     settings.data_dir = tmp_path
     settings.ensure_directories()

@@ -1,4 +1,6 @@
-from pydantic import BaseModel
+from typing import Literal
+
+from pydantic import BaseModel, Field
 
 
 class DemMetadata(BaseModel):
@@ -16,6 +18,9 @@ class DemMetadata(BaseModel):
     uploaded_at: str | None = None
     task_count: int = 0
     active_task_count: int = 0
+    source_type: str | None = None
+    source_tile_count: int | None = None
+    source_filenames: list[str] = Field(default_factory=list)
 
 
 class DemDeleteResult(BaseModel):
@@ -28,6 +33,27 @@ class DemUploadSessionCreate(BaseModel):
     file_size_bytes: int
     chunk_size_bytes: int
     total_chunks: int
+
+
+class DemBatchCreate(BaseModel):
+    dem_id: str | None = None
+    label: str | None = None
+
+
+class DemBatchStatus(BaseModel):
+    batch_id: str
+    dem_id: str
+    label: str | None = None
+    status: Literal["uploading", "validating", "merging", "ready", "failed"]
+    filenames: list[str] = Field(default_factory=list)
+    file_count: int = 0
+    error: str | None = None
+
+
+class DemBatchUploadResult(BaseModel):
+    batch_id: str
+    filenames: list[str]
+    file_count: int
 
 
 class DemUploadSession(BaseModel):

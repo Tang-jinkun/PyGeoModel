@@ -1,19 +1,68 @@
-from fastapi import APIRouter, File, HTTPException, Response, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, File, HTTPException, Response, UploadFile, status
 
 from app.core.errors import AppError
-from app.schemas.dem import DemChunkUploadResult, DemDeleteResult, DemMetadata, DemUploadSession, DemUploadSessionCreate
+from app.schemas.dem import (
+    DemBatchCreate,
+    DemBatchStatus,
+    DemBatchUploadResult,
+    DemChunkUploadResult,
+    DemDeleteResult,
+    DemMetadata,
+    DemUploadSession,
+    DemUploadSessionCreate,
+)
 from app.services.dem_tiles import render_dem_tile, render_terrain_tile
 from app.services.dem_store import (
+    complete_dem_batch,
     complete_upload_session,
+    create_dem_batch,
     create_upload_session,
     delete_dem,
     list_dem_metadata,
     read_dem_metadata,
+    read_dem_batch,
+    queue_dem_batch_merge,
+    save_dem_batch_tiles,
     save_dem_upload,
     save_upload_chunk,
 )
 
 router = APIRouter()
+
+
+@router.post("/batches", response_model=DemBatchStatus, status_code=status.HTTP_201_CREATED)
+def start_dem_batch(payload: DemBatchCreate) -> DemBatchStatus:
+    try:
+        return create_dem_batch(payload)
+    except AppError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.as_detail()) from exc
+
+
+@router.post("/batches/{batch_id}/tiles", response_model=DemBatchUploadResult)
+async def upload_dem_batch_tiles(batch_id: str, files: list[UploadFile] = File(...)) -> DemBatchUploadResult:
+    try:
+        return await save_dem_batch_tiles(batch_id, files)
+    except AppError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.as_detail()) from exc
+
+
+@router.post("/batches/{batch_id}/complete", response_model=DemBatchStatus, status_code=status.HTTP_202_ACCEPTED)
+def complete_dem_batch_upload(batch_id: str, background_tasks: BackgroundTasks) -> DemBatchStatus:
+    try:
+        batch = queue_dem_batch_merge(batch_id)
+        if batch.status != "ready":
+            background_tasks.add_task(complete_dem_batch, batch_id)
+        return batch
+    except AppError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.as_detail()) from exc
+
+
+@router.get("/batches/{batch_id}", response_model=DemBatchStatus)
+def get_dem_batch(batch_id: str) -> DemBatchStatus:
+    try:
+        return read_dem_batch(batch_id)
+    except AppError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.as_detail()) from exc
 
 
 @router.post("/upload", response_model=DemMetadata, status_code=status.HTTP_201_CREATED)
