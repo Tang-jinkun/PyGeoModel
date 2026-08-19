@@ -152,6 +152,54 @@ def test_unified_target_endpoint_wraps_single_and_multi_results(tmp_path, monkey
     }
 
 
+def test_unified_batch_target_endpoint_wraps_multi_results(tmp_path, monkeypatch) -> None:
+    settings.data_dir = tmp_path
+    settings.ensure_directories()
+    received_targets = []
+
+    def evaluate_multi(task_id, payload):
+        received_targets.append(payload)
+        return {
+            "task_id": task_id,
+            "detected": True,
+            "contributors": [{"radar_id": "north", "detected": True}],
+        }
+
+    monkeypatch.setattr(
+        radar,
+        "evaluate_multi_radar_target",
+        evaluate_multi,
+    )
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/api/radar/tasks/multi_task_target/evaluate-targets",
+        json={
+            "targets": [
+                {
+                    "target_id": "target-1",
+                    "x": 79,
+                    "y": 31.5,
+                    "altitude_reference": "agl",
+                    "altitude_m": 100,
+                }
+            ]
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["detected_count"] == 1
+    assert received_targets[0].z == 100
+    assert payload["results"][0]["evaluation"] == {
+        "task_id": "multi_task_target",
+        "task_type": "multi",
+        "detected": True,
+        "detail": None,
+        "contributors": [{"radar_id": "north", "detected": True}],
+    }
+
+
 def test_legacy_task_paths_are_not_supported(tmp_path) -> None:
     settings.data_dir = tmp_path
     settings.ensure_directories()
@@ -159,3 +207,35 @@ def test_legacy_task_paths_are_not_supported(tmp_path) -> None:
 
     assert client.get("/api/radar/coverage").status_code == 404
     assert client.get("/api/radar/multi-coverage").status_code == 404
+    assert client.post(
+        "/api/radar/coverage/task_target/evaluate-targets",
+        json={"targets": []},
+    ).status_code == 404
+    assert client.post(
+        "/api/radar/multi-coverage/multi_task_target/evaluate-targets",
+        json={"targets": []},
+    ).status_code == 404
+
+
+def test_unified_batch_target_endpoint_rejects_invalid_task_id(tmp_path) -> None:
+    settings.data_dir = tmp_path
+    settings.ensure_directories()
+    client = TestClient(create_app(), raise_server_exceptions=False)
+
+    response = client.post(
+        "/api/radar/tasks/invalid/evaluate-targets",
+        json={
+            "targets": [
+                {
+                    "target_id": "target-1",
+                    "x": 79,
+                    "y": 31.5,
+                    "altitude_reference": "amsl",
+                    "altitude_m": 100,
+                }
+            ]
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "INVALID_TASK_ID"
