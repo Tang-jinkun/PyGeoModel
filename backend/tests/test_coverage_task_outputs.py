@@ -75,7 +75,7 @@ def test_build_coverage_artifacts_cleans_staging_without_partial_publication(
 
     monkeypatch.setattr(
         coverage_task,
-        "find_dem_file",
+        "find_dem_compute_file",
         lambda dem_id: tmp_path / "source.tif",
     )
     monkeypatch.setattr(coverage_task, "prepare_coverage_dem", lambda *args: prepared)

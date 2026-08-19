@@ -21,7 +21,7 @@ from app.schemas.radar import (
     CoverageOutputs,
     CoverageRequest,
 )
-from app.services.dem_store import find_dem_file
+from app.services.dem_store import find_dem_compute_file
 from app.services.coverage_model import (
     PreparedCoverageDem,
     WARN_DEM_COVERAGE_RATIO,
@@ -74,7 +74,7 @@ def build_coverage_artifacts(
     projected_dem = staging_dir / "dem_projected.tif"
     try:
         progress("Preparing DEM and projection.", 15)
-        prepared = prepare_coverage_dem(find_dem_file(payload.dem_id), projected_dem, payload)
+        prepared = prepare_coverage_dem(find_dem_compute_file(payload.dem_id), projected_dem, payload)
 
         progress("Running gdal_viewshed (NORMAL).", 35)
         viewshed = staging_dir / "viewshed.tif"

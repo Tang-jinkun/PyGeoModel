@@ -44,3 +44,16 @@ PYTHONPATH=backend python scripts/verify_deployment.py \
 ```
 
 Add `--task-id TASK_ID` to verify one ready radar descriptor and download. The verifier never prints tile query strings or credential values.
+
+## Nationwide DEM import
+
+For a national-scale GeoTIFF, place the source file in the host `data/import/` directory. The backend exposes that directory read-only as `/workspace/import`; import it without copying the source into application storage:
+
+```bash
+docker compose exec backend \
+  python /app/scripts/import_dem.py \
+  --source /workspace/import/national.tif \
+  --dem-id national-dem
+```
+
+The command validates the source and atomically publishes `data/dem/national-dem/dem.cog.tif` plus metadata. Model workers and DEM tile/profile/scene paths use this COG and read task windows; they do not load the national raster as a full array. Existing uploaded DEMs remain compatible and lazily receive a COG when needed.

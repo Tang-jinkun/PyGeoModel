@@ -20,6 +20,7 @@ defineProps<{
 
 function formatMetricValue(value: unknown, format: MetricDefinition<Record<string, unknown>>["format"]) {
   if (value === null || value === undefined || value === "") return "--";
+  if (Array.isArray(value)) return formatMetricArray(value);
   if (format === "text") {
     if (typeof value === "boolean") return value ? "是" : "否";
     return String(value);
@@ -41,6 +42,19 @@ function formatMetricValue(value: unknown, format: MetricDefinition<Record<strin
   }
   if (format === "percent") return `${formatDecimal(value * 100, 0, 2)}%`;
   return formatDecimal(value, 0, 2);
+}
+
+function formatMetricArray(values: unknown[]) {
+  if (!values.length) return "--";
+  return values.map((value) => {
+    if (!value || typeof value !== "object") return String(value);
+    const item = value as Record<string, unknown>;
+    if (typeof item.kind !== "string" || typeof item.elevation_deg !== "number") return JSON.stringify(item);
+    const status = item.reachable === true ? "reachable" : "unavailable";
+    const flight = typeof item.time_of_flight_s === "number" ? ` · ${formatDecimal(item.time_of_flight_s, 1, 1)} s` : "";
+    const clearance = typeof item.min_clearance_m === "number" ? ` · clearance ${formatDecimal(item.min_clearance_m, 1, 1)} m` : "";
+    return `${item.kind} · ${formatDecimal(item.elevation_deg, 2, 2)}° · ${status}${flight}${clearance}`;
+  }).join("\n");
 }
 
 function formatDecimal(value: number, minimumFractionDigits: number, maximumFractionDigits: number) {
@@ -77,5 +91,6 @@ function formatDecimal(value: number, minimumFractionDigits: number, maximumFrac
   color: #172033;
   font-size: 14px;
   font-weight: 700;
+  white-space: pre-line;
 }
 </style>

@@ -23,7 +23,7 @@ from app.services.artillery_task_store import (
 )
 from app.services.task_dispatch import enqueue_task
 from app.services.task_scheduler import TaskScheduleSnapshot, get_task_scheduler
-from app.services.dem_store import find_dem_file, read_dem_metadata
+from app.services.dem_store import find_dem_compute_file, read_dem_metadata
 from app.workers.artillery_task import run_artillery_task
 
 router = APIRouter()
@@ -38,7 +38,7 @@ def list_coverage_tasks() -> list[ArtilleryCoverageTaskSummary]:
 def create_coverage_task(payload: ArtilleryCoverageRequest, background_tasks: BackgroundTasks) -> ArtilleryCoverageTaskStatus:
     try:
         read_dem_metadata(payload.dem_id)
-        find_dem_file(payload.dem_id)
+        find_dem_compute_file(payload.dem_id)
         task = create_artillery_task(payload)
         background_tasks.add_task(enqueue_task, task.task_id, "artillery", run_artillery_task, payload, on_cancel=lambda: mark_artillery_failed(task.task_id, "Task cancelled by user."))
         return task
@@ -61,7 +61,7 @@ def rerun_coverage_task(task_id: str, background_tasks: BackgroundTasks, idempot
         if original.request is None:
             raise AppError("TASK_REQUEST_UNAVAILABLE", "Saved request is unavailable.", status_code=409)
         read_dem_metadata(original.request.dem_id)
-        find_dem_file(original.request.dem_id)
+        find_dem_compute_file(original.request.dem_id)
         task, created = create_artillery_rerun(task_id, original.request, idempotency_key)
         if created:
             background_tasks.add_task(enqueue_task, task.task_id, "artillery", run_artillery_task, original.request, on_cancel=lambda: mark_artillery_failed(task.task_id, "Task cancelled by user."))

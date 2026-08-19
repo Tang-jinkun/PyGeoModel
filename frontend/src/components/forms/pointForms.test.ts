@@ -28,7 +28,7 @@ const watchpostFields = [
 const artilleryFields = [
   "dem-id", "longitude", "latitude", "battery-height", "altitude-mode",
   "target-height", "min-range", "max-range", "azimuth", "traverse", "muzzle-velocity",
-  "elevation", "munition-type", "lethal-radius", "effective-radius", "use-dem-elevation",
+  "trajectory-mode", "munition-type", "lethal-radius", "effective-radius", "use-dem-elevation",
   "use-terrain-masking", "sample-resolution", "trajectory-samples", "clearance-margin",
   "simplify-tolerance"
 ];
@@ -102,6 +102,11 @@ describe("point model parameter forms", () => {
     const wrapper = mount(ArtilleryForm, { props: { modelValue: request } });
 
     expectFields(wrapper, artilleryFields);
+    expect(wrapper.find('[data-field="elevation"]').exists()).toBe(false);
+    await wrapper.get('[data-field="trajectory-mode"] input[value="manual"]').setValue(true);
+    const manual = wrapper.emitted("update:modelValue")?.at(-1)?.[0] as typeof request;
+    await wrapper.setProps({ modelValue: manual });
+    expect(wrapper.find('[data-field="elevation"]').exists()).toBe(true);
     await wrapper.get('[data-field="munition-type"] input[value="smoke"]').setValue(true);
 
     expect(wrapper.emitted("update:modelValue")?.at(-1)?.[0]).toMatchObject({ munition: { munition_type: "smoke" } });

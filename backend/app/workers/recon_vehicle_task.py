@@ -24,7 +24,7 @@ from app.schemas.recon_vehicle import (
     ReconVehicleModelMetadata,
     ReconVehiclePositionInput,
 )
-from app.services.dem_store import find_dem_file
+from app.services.dem_store import find_dem_compute_file
 from app.services.artifact_contracts import get_output_contract
 from app.services.artifact_store import get_artifact_store
 from app.services.geometry import make_range_geometry, project_geometry
@@ -79,7 +79,7 @@ def build_recon_vehicle_artifacts(task_id: str, payload: ReconVehicleCoverageReq
     projected_dem = staging_dir / "dem_projected.tif"
     try:
         progress("Preparing DEM and recon vehicle projection.", 15)
-        prepared = _prepare_recon_vehicle_dem(find_dem_file(payload.dem_id), projected_dem, payload)
+        prepared = _prepare_recon_vehicle_dem(find_dem_compute_file(payload.dem_id), projected_dem, payload)
         progress("Computing terrain-visible recon coverage.", 55)
         _, _, metrics, model, warnings = _write_recon_vehicle_outputs(task_id, staging_dir, prepared, payload)
         projected_dem.unlink(missing_ok=True)

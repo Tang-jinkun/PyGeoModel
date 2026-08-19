@@ -40,6 +40,7 @@ vi.mock("../../map/mapEngine", () => ({
 beforeEach(() => {
   mapHarness.instances.length = 0;
   mapHarness.constructor.mockClear();
+  delete window.__PYGEOMODEL_RUNTIME_CONFIG__;
   vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
     callback(0);
     return 1;
@@ -246,6 +247,22 @@ describe("MapWorkspace", () => {
     expect(map.addSource).toHaveBeenCalledWith("dem-terrain-source", expect.anything());
     expect(map.addSource).not.toHaveBeenCalledWith("dem-raster-source", expect.anything());
     expect(map.addLayer).not.toHaveBeenCalled();
+
+    wrapper.unmount();
+  });
+
+  it("uses a local empty style by default in offline mode", () => {
+    window.__PYGEOMODEL_RUNTIME_CONFIG__ = { offline: true };
+    const wrapper = mount(MapWorkspace, {
+      props: {
+        kind: "point",
+        draft: createSpatialDraft("point")
+      }
+    });
+    const map = mapHarness.instances[0];
+    const style = (map.options as { style: unknown }).style;
+
+    expect(style).toEqual({ version: 8, sources: {}, layers: [] });
 
     wrapper.unmount();
   });

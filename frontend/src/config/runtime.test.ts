@@ -55,10 +55,15 @@ describe("runtime API configuration", () => {
       const context = { window: {}, bad: () => { throw new Error("injected code executed"); } };
       vm.runInNewContext(await readFile(output, "utf8"), context);
       expect(context.window).toEqual({
-        __PYGEOMODEL_RUNTIME_CONFIG__: { apiBaseUrl: value }
+        __PYGEOMODEL_RUNTIME_CONFIG__: { apiBaseUrl: value, offline: false }
       });
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
+  });
+
+  it("reads the offline runtime flag", () => {
+    window.__PYGEOMODEL_RUNTIME_CONFIG__ = { offline: true };
+    expect(getRuntimeConfig().offline).toBe(true);
   });
 });

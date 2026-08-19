@@ -18,14 +18,17 @@ dist/
 *.local
 
 # Runtime data
+artifacts/
 data/dem/*
 data/tasks/*
 data/outputs/*
 data/uploads/*
 data/demo-scenarios/*
+data/import/*
 !data/dem/.gitkeep
 !data/tasks/.gitkeep
 !data/outputs/.gitkeep
+!data/import/.gitkeep
 
 # OS/editor
 .DS_Store

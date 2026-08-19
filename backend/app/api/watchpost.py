@@ -13,7 +13,7 @@ from app.schemas.watchpost import (
 )
 from app.services.artifact_contracts import get_output_contract
 from app.services.artifact_store import get_artifact_store
-from app.services.dem_store import find_dem_file, read_dem_metadata
+from app.services.dem_store import find_dem_compute_file, read_dem_metadata
 from app.services.watchpost_task_store import (
     create_watchpost_rerun,
     create_watchpost_task,
@@ -38,7 +38,7 @@ def list_detection_tasks() -> list[WatchpostDetectionTaskSummary]:
 def create_detection_task(payload: WatchpostDetectionRequest, background_tasks: BackgroundTasks) -> WatchpostDetectionTaskStatus:
     try:
         read_dem_metadata(payload.dem_id)
-        find_dem_file(payload.dem_id)
+        find_dem_compute_file(payload.dem_id)
         task = create_watchpost_task(payload)
         background_tasks.add_task(enqueue_task, task.task_id, "watchpost", run_watchpost_task, payload, on_cancel=lambda: mark_watchpost_failed(task.task_id, "Task cancelled by user."))
         return task
@@ -61,7 +61,7 @@ def rerun_detection_task(task_id: str, background_tasks: BackgroundTasks, idempo
         if original.request is None:
             raise AppError("TASK_REQUEST_UNAVAILABLE", "Saved request is unavailable.", status_code=409)
         read_dem_metadata(original.request.dem_id)
-        find_dem_file(original.request.dem_id)
+        find_dem_compute_file(original.request.dem_id)
         task, created = create_watchpost_rerun(task_id, original.request, idempotency_key)
         if created:
             background_tasks.add_task(enqueue_task, task.task_id, "watchpost", run_watchpost_task, original.request, on_cancel=lambda: mark_watchpost_failed(task.task_id, "Task cancelled by user."))

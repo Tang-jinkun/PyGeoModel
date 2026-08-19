@@ -31,7 +31,6 @@ VISUAL_DOME_ELEVATION_STEP_DEG = 5.0
 VISUAL_DOME_VERTICAL_RATIO = 1.0
 DIAGNOSTIC_MAX_MARKERS = 256
 ENVELOPE_GRID_SIZE = 256
-TERRAIN_CONTACT_OFFSET_M = 2.0
 
 GridLod = Literal["sparse", "standard", "detailed"]
 
@@ -46,12 +45,6 @@ DETECTION_FLOOR_MATERIAL = MaterialSpec(
     (20, 73, 48, 210),
     shading="unlit",
     emissive_rgb=(10, 38, 24),
-)
-BLOCKED_CONTACT_MATERIAL = MaterialSpec(
-    "radar_terrain_blocked_contact",
-    (224, 76, 48, 255),
-    shading="unlit",
-    emissive_rgb=(150, 34, 20),
 )
 GRID_MATERIAL = MaterialSpec(
     "radar_shell_grid",
@@ -88,12 +81,6 @@ DIAGNOSTIC_MATERIAL = MaterialSpec(
     (232, 105, 70, 230),
     shading="unlit",
     emissive_rgb=(116, 53, 35),
-)
-GROUND_CONTACT_MATERIAL = MaterialSpec(
-    "radar_ground_contact",
-    (244, 48, 48, 255),
-    shading="unlit",
-    emissive_rgb=(180, 18, 18),
 )
 UNKNOWN_BOUNDARY_MATERIAL = MaterialSpec(
     "radar_unknown_boundary",
@@ -210,21 +197,6 @@ def write_radar_coverage_glb(
             if visibility_volume is not None
             else ()
         ),
-        *(
-            (
-                tuple(point)
-                for segments in (
-                    visibility_volume.terrain_segments,
-                    visibility_volume.unknown_segments,
-                    visibility_volume.blocked_contact_segments,
-                )
-                for segment in segments
-                for point in segment
-            )
-            if visibility_volume is not None
-            and visibility_volume.blocked_contact_segments is not None
-            else ()
-        )
     ]
     frame = SceneFrame.from_projected_points(prepared.target_epsg, all_points, axes="z_up")
     actual_local_grid = [
@@ -257,45 +229,14 @@ def write_radar_coverage_glb(
         )
         for lod in ("sparse", "standard", "detailed")
     }
-    contact_radius_m = max(10.0, min(40.0, effective_range_m * 0.0007))
-    blocked_contact = (
-        _visibility_segment_mesh(
-            visibility_volume.blocked_contact_segments,
-            frame,
-            radius_m=max(12.0, min(50.0, effective_range_m * 0.0008)),
-            altitude_offset_m=TERRAIN_CONTACT_OFFSET_M,
-        )
-        if visibility_volume is not None
-        and visibility_volume.blocked_contact_segments is not None
-        else None
-    )
-    terrain_contact = (
-        _visibility_segment_mesh(
-            visibility_volume.terrain_segments,
-            frame,
-            radius_m=contact_radius_m,
-        )
-        if visibility_volume is not None
-        else None
-    )
     unknown_boundary = (
         _visibility_segment_mesh(
             visibility_volume.unknown_segments,
             frame,
-            radius_m=contact_radius_m,
+            radius_m=max(10.0, min(40.0, effective_range_m * 0.0007)),
         )
         if visibility_volume is not None
         else None
-    )
-    ground_contact = (
-        None
-        if visibility_volume is not None
-        else _ground_contact_mesh(
-            local_grid,
-            visual_ray_grid,
-            wrap,
-            radius_m=contact_radius_m,
-        )
     )
     origin = frame.to_gltf(
         (prepared.radar_x, prepared.radar_y, radar_altitude_m)
@@ -386,30 +327,6 @@ def write_radar_coverage_glb(
             *(
                 [
                     SceneNode(
-                        name="radar_result/terrain_contact",
-                        mesh=terrain_contact,
-                        material=GROUND_CONTACT_MATERIAL,
-                        extras={"kind": "terrain_contact"},
-                    )
-                ]
-                if terrain_contact is not None
-                else []
-            ),
-            *(
-                [
-                    SceneNode(
-                        name="radar_result/terrain_blocked_contact",
-                        mesh=blocked_contact,
-                        material=BLOCKED_CONTACT_MATERIAL,
-                        extras={"kind": "terrain_blocked_contact"},
-                    )
-                ]
-                if blocked_contact is not None
-                else []
-            ),
-            *(
-                [
-                    SceneNode(
                         name="radar_result/unknown_boundary",
                         mesh=unknown_boundary,
                         material=UNKNOWN_BOUNDARY_MATERIAL,
@@ -417,18 +334,6 @@ def write_radar_coverage_glb(
                     )
                 ]
                 if unknown_boundary is not None
-                else []
-            ),
-            *(
-                [
-                    SceneNode(
-                        name="radar_result/ground_contact",
-                        mesh=ground_contact,
-                        material=GROUND_CONTACT_MATERIAL,
-                        extras={"kind": "ground_contact"},
-                    )
-                ]
-                if ground_contact is not None
                 else []
             ),
             SceneNode(
@@ -843,24 +748,6 @@ def _shell_mesh(local_grid, ray_grid, wrap: bool) -> trimesh.Trimesh:
     if not faces:
         raise ValueError("Radar ray grid produced no closed shell faces")
     return trimesh.Trimesh(vertices=vertices, faces=faces, process=False)
-
-
-def _ground_contact_mesh(local_grid, ray_grid, wrap: bool, *, radius_m: float):
-    points = list(local_grid[0])
-    results = list(ray_grid[0])
-    if wrap:
-        points.append(points[0])
-        results.append(results[0])
-    paths: list[numpy.ndarray] = []
-    _append_closed_paths(paths, points, results)
-    if not paths:
-        raise ValueError("Radar visual dome produced no ground contact line")
-    return trimesh.util.concatenate(
-        [
-            continuous_tube_mesh(path, radius_m=radius_m, sections=8)
-            for path in paths
-        ]
-    )
 
 
 def _grid_strides(lod: GridLod = "standard") -> tuple[int, int]:

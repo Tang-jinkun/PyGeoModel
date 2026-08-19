@@ -76,7 +76,7 @@ def test_multi_worker_keeps_successful_station_when_a_sibling_fails(tmp_path: Pa
             metrics={"visible_area_m2": 1},
         )
 
-    monkeypatch.setattr(multi_radar_coverage_task, "find_dem_file", lambda _: tmp_path / "source.tif")
+    monkeypatch.setattr(multi_radar_coverage_task, "find_dem_compute_file", lambda _: tmp_path / "source.tif")
     monkeypatch.setattr(multi_radar_coverage_task, "prepare_shared_multi_radar_dem", lambda *_: prepared)
 
     multi_radar_coverage_task.run_multi_radar_coverage_task(task.task_id, payload, evaluator=evaluate)
@@ -218,7 +218,7 @@ def test_cooperative_worker_records_a_complete_scene_task_for_each_station(tmp_p
             fusion_masks=numpy.ones((7, 2, 2), dtype=bool),
         )
 
-    monkeypatch.setattr(multi_radar_coverage_task, "find_dem_file", lambda _: tmp_path / "source.tif")
+    monkeypatch.setattr(multi_radar_coverage_task, "find_dem_compute_file", lambda _: tmp_path / "source.tif")
     monkeypatch.setattr(multi_radar_coverage_task, "prepare_shared_multi_radar_dem", lambda *_: prepared)
     monkeypatch.setattr(
         multi_radar_coverage_task,
@@ -311,7 +311,7 @@ def test_cooperative_worker_writes_only_the_common_detection_glb(tmp_path: Path,
             ),
         )
 
-    monkeypatch.setattr(multi_radar_coverage_task, "find_dem_file", lambda _: tmp_path / "source.tif")
+    monkeypatch.setattr(multi_radar_coverage_task, "find_dem_compute_file", lambda _: tmp_path / "source.tif")
     monkeypatch.setattr(multi_radar_coverage_task, "prepare_shared_multi_radar_dem", lambda *_: prepared)
     monkeypatch.setattr(
         multi_radar_coverage_task,

@@ -35,7 +35,7 @@ def test_unified_create_dispatches_single_and_multi_tasks(tmp_path, monkeypatch)
     settings.data_dir = tmp_path
     settings.ensure_directories()
     monkeypatch.setattr(radar, "read_dem_metadata", lambda *_: {})
-    monkeypatch.setattr(radar, "find_dem_file", lambda *_: tmp_path / "dem.tif")
+    monkeypatch.setattr(radar, "find_dem_compute_file", lambda *_: tmp_path / "dem.tif")
     monkeypatch.setattr(radar, "validate_coverage_extent", lambda *_: 1.0)
     monkeypatch.setattr(radar, "run_coverage_task", Mock())
     monkeypatch.setattr(radar, "run_multi_radar_coverage_task", Mock())

@@ -369,7 +369,7 @@ def test_scene_unit_omission_warning_reaches_finished_task(
         threat_xy={"sam_1": (45.0, 95.0)},
     )
     monkeypatch.setattr(
-        "app.workers.air_corridor_task.find_dem_file",
+        "app.workers.air_corridor_task.find_dem_compute_file",
         lambda _dem_id: tmp_path / "source.tif",
     )
     monkeypatch.setattr(
@@ -437,7 +437,7 @@ def test_glb_export_failure_marks_task_failed_and_leaves_no_artifact(
     task = create_air_corridor_task(payload)
     prepared = prepared_dem(tmp_path)
     monkeypatch.setattr(
-        "app.workers.air_corridor_task.find_dem_file",
+        "app.workers.air_corridor_task.find_dem_compute_file",
         lambda _dem_id: tmp_path / "source.tif",
     )
     monkeypatch.setattr(
@@ -480,7 +480,7 @@ def test_oversize_glb_failure_rolls_back_sibling_staging_directory(
     prepared = prepared_dem(tmp_path)
     observed_staging_dirs: list[Path] = []
     monkeypatch.setattr(
-        "app.workers.air_corridor_task.find_dem_file",
+        "app.workers.air_corridor_task.find_dem_compute_file",
         lambda _dem_id: tmp_path / "source.tif",
     )
 

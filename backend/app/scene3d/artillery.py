@@ -14,6 +14,12 @@ TRAJECTORY_MATERIAL = MaterialSpec(
     shading="unlit",
     emissive_rgb=(17, 98, 47),
 )
+HIGH_TRAJECTORY_MATERIAL = MaterialSpec(
+    "artillery_trajectory_high",
+    (6, 182, 212, 255),
+    shading="unlit",
+    emissive_rgb=(3, 91, 106),
+)
 BATTERY_MATERIAL = MaterialSpec(
     "artillery_battery",
     (59, 130, 246, 255),
@@ -35,12 +41,15 @@ def write_artillery_trajectory_glb(
     target_epsg: int,
     battery: tuple[float, float, float],
     target: tuple[float, float, float],
-    trajectory: list[tuple[float, float, float]],
+    trajectories: list[dict],
 ) -> dict:
-    values = numpy.asarray([battery, target, *trajectory], dtype=numpy.float64)
-    if values.shape != (len(trajectory) + 2, 3) or not numpy.isfinite(values).all():
+    if not trajectories:
+        raise ValueError("Artillery trajectory requires at least one solution")
+    all_points = [point for solution in trajectories for point in solution["points"]]
+    values = numpy.asarray([battery, target, *all_points], dtype=numpy.float64)
+    if values.shape != (len(all_points) + 2, 3) or not numpy.isfinite(values).all():
         raise ValueError("Artillery trajectory requires finite projected XYZ points")
-    if len(trajectory) < 2:
+    if any(len(solution["points"]) < 2 for solution in trajectories):
         raise ValueError("Artillery trajectory requires at least two points")
 
     frame = SceneFrame.from_projected_points(
@@ -48,12 +57,20 @@ def write_artillery_trajectory_glb(
         [tuple(point) for point in values],
         axes="z_up",
     )
-    local_trajectory = [frame.to_gltf(point) for point in trajectory]
-    trajectory_mesh = continuous_tube_mesh(
-        local_trajectory,
-        radius_m=max(1.5, min(12.0, float(numpy.ptp(values[:, :2], axis=0).max() * 0.01))),
-        sections=8,
-    )
+    tube_radius = max(1.5, min(12.0, float(numpy.ptp(values[:, :2], axis=0).max() * 0.01)))
+    trajectory_nodes = []
+    for solution in trajectories:
+        kind = str(solution["kind"])
+        trajectory_nodes.append(SceneNode(
+            name=f"artillery_result/trajectory_{kind}",
+            mesh=continuous_tube_mesh(
+                [frame.to_gltf(point) for point in solution["points"]],
+                radius_m=tube_radius,
+                sections=8,
+            ),
+            material=HIGH_TRAJECTORY_MATERIAL if kind == "high" else TRAJECTORY_MATERIAL,
+            extras={"kind": "artillery_trajectory", "trajectory_kind": kind, "elevation_deg": float(solution["elevation_deg"])},
+        ))
 
     marker_radius = max(5.0, min(24.0, float(numpy.ptp(values[:, :2], axis=0).max() * 0.02)))
     battery_mesh = trimesh.creation.icosphere(subdivisions=2, radius=marker_radius)
@@ -65,12 +82,7 @@ def write_artillery_trajectory_glb(
         name="artillery_result",
         extras={"kind": "artillery_trajectory"},
         children=[
-            SceneNode(
-                name="artillery_result/trajectory",
-                mesh=trajectory_mesh,
-                material=TRAJECTORY_MATERIAL,
-                extras={"kind": "artillery_trajectory"},
-            ),
+            *trajectory_nodes,
             SceneNode(
                 name="artillery_result/battery",
                 mesh=battery_mesh,
@@ -89,7 +101,11 @@ def write_artillery_trajectory_glb(
     metadata.update(
         {
             "trajectory": {
-                "point_count": len(trajectory),
+                "count": len(trajectories),
+                "solutions": [
+                    {"kind": str(solution["kind"]), "elevation_deg": float(solution["elevation_deg"]), "point_count": len(solution["points"])}
+                    for solution in trajectories
+                ],
                 "battery_projected_xyz": list(battery),
                 "target_projected_xyz": list(target),
             }

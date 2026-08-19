@@ -16,7 +16,8 @@
       <NumberRow label="射向方位角" unit="度" field="azimuth" :value="modelValue.weapon.azimuth_deg" @update="updateWeapon('azimuth_deg', $event)" />
       <NumberRow label="方向射界" unit="度" field="traverse" :value="modelValue.weapon.traverse_deg" @update="updateWeapon('traverse_deg', $event)" />
       <NumberRow label="初速" unit="米/秒" field="muzzle-velocity" :value="modelValue.weapon.muzzle_velocity_mps" @update="updateWeapon('muzzle_velocity_mps', $event)" />
-      <NumberRow label="射角" unit="度" field="elevation" :value="modelValue.weapon.elevation_deg" @update="updateWeapon('elevation_deg', $event)" />
+      <label class="field-row"><span>弹道模式</span><ElRadioGroup data-field="trajectory-mode" :model-value="modelValue.weapon.trajectory_mode" @update:model-value="updateTrajectoryMode"><ElRadioButton value="auto">自动高低弹道</ElRadioButton><ElRadioButton value="manual">手动射角</ElRadioButton></ElRadioGroup></label>
+      <NumberRow v-if="modelValue.weapon.trajectory_mode === 'manual'" label="射角" unit="度" field="elevation" :value="modelValue.weapon.elevation_deg" @update="updateWeapon('elevation_deg', $event)" />
     </section>
 
     <section class="form-section">
@@ -70,6 +71,7 @@ function updateBattery<K extends keyof ArtilleryRequest["battery"]>(key: K, valu
 function updateAltitudeMode(value: string | number | boolean | undefined) { if (value === "agl" || value === "amsl") updateBattery("altitude_mode", value); }
 function updateTargetHeight(target_height_m: number) { updateRequest((request) => { request.target.target_height_m = target_height_m; }); }
 function updateWeapon<K extends keyof ArtilleryRequest["weapon"]>(key: K, value: ArtilleryRequest["weapon"][K]) { updateRequest((request) => { request.weapon[key] = value; }); }
+function updateTrajectoryMode(value: string | number | boolean | undefined) { if (value === "auto" || value === "manual") updateWeapon("trajectory_mode", value); }
 function updateMunition<K extends keyof ArtilleryRequest["munition"]>(key: K, value: ArtilleryRequest["munition"][K]) { updateRequest((request) => { request.munition[key] = value; }); }
 function updateMunitionType(value: string | number | boolean | undefined) { if (value === "he" || value === "smoke" || value === "illumination" || value === "generic") updateMunition("munition_type", value); }
 function updateDemElevation(value: string | number | boolean) { updateAnalysis("use_dem_elevation", Boolean(value)); }

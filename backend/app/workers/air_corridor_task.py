@@ -29,7 +29,7 @@ from app.services.air_corridor_output_files import (
 )
 from app.services.air_corridor_task_store import mark_air_corridor_failed, mark_air_corridor_finished, mark_air_corridor_running
 from app.services.task_scheduler import TaskCancelled
-from app.services.dem_store import find_dem_file
+from app.services.dem_store import find_dem_compute_file
 from app.services.artifact_contracts import get_output_contract
 from app.services.artifact_store import get_artifact_store
 from app.services.geometry import project_geometry
@@ -88,7 +88,7 @@ def build_air_corridor_artifacts(task_id: str, payload: AirCorridorPlanningReque
     projected_dem = staging_dir / "dem_projected.tif"
     try:
         progress("Preparing DEM and air corridor projection.", 15)
-        prepared = _prepare_air_corridor_dem(find_dem_file(payload.dem_id), projected_dem, payload)
+        prepared = _prepare_air_corridor_dem(find_dem_compute_file(payload.dem_id), projected_dem, payload)
         progress("Planning low-risk air corridor.", 55)
         _, _, metrics, model, warnings = _write_air_corridor_outputs(task_id, staging_dir, prepared, payload)
         projected_dem.unlink(missing_ok=True)

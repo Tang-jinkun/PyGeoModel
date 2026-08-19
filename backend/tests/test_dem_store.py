@@ -10,7 +10,15 @@ from rasterio.transform import from_origin
 from app.core.errors import AppError
 from app.core.config import settings
 from app.services import dem_store
-from app.services.dem_store import create_dem_cog_for_dir, delete_dem, find_dem_file, list_dem_metadata, read_dem_metadata
+from app.services.dem_store import (
+    create_dem_cog_for_dir,
+    delete_dem,
+    find_dem_compute_file,
+    find_dem_file,
+    import_dem_from_path,
+    list_dem_metadata,
+    read_dem_metadata,
+)
 from app.services.task_store import create_task
 from app.schemas.radar import CoverageRequest
 
@@ -27,6 +35,15 @@ def test_list_dem_metadata_sorted_by_uploaded_at(tmp_path: Path) -> None:
     assert [item.dem_id for item in results] == ["dem_new", "dem_old"]
     assert results[0].file_size_bytes == 2048
     assert results[0].task_count == 0
+
+
+def test_list_dem_metadata_includes_imported_id_without_dem_prefix(tmp_path: Path) -> None:
+    settings.data_dir = tmp_path
+    settings.ensure_directories()
+
+    write_metadata(tmp_path, "national-dem", "national.tif", "2026-01-02T00:00:00+00:00")
+
+    assert [item.dem_id for item in list_dem_metadata()] == ["national-dem"]
 
 
 def test_read_dem_metadata_supports_optional_runtime_fields(tmp_path: Path) -> None:
@@ -188,6 +205,123 @@ def test_create_dem_cog_falls_back_to_rasterio_when_gdal_translate_missing(tmp_p
         assert dataset.crs.to_string() == "EPSG:4326"
         assert dataset.width == 16
         assert dataset.height == 16
+
+
+def test_import_dem_from_path_publishes_cog_only_dataset(tmp_path: Path) -> None:
+    settings.data_dir = tmp_path / "data"
+    settings.ensure_directories()
+    source = tmp_path / "national.tif"
+    write_raster(source, width=512, height=512, count=1)
+
+    metadata = import_dem_from_path(source, "national-dem")
+
+    dem_dir = settings.dem_dir / "national-dem"
+    cog_path = dem_dir / "dem.cog.tif"
+    assert metadata.dem_id == "national-dem"
+    assert metadata.filename == "national.tif"
+    assert metadata.cog_path == "dem.cog.tif"
+    assert cog_path.exists()
+    assert not (dem_dir / "national.tif").exists()
+    with rasterio.open(cog_path) as dataset:
+        assert dataset.count == 1
+        assert dataset.is_tiled
+        assert dataset.block_shapes[0] == (256, 256)
+        assert dataset.overviews(1)
+
+
+@pytest.mark.parametrize("variant", ["not-geotiff", "without-crs", "multi-band"])
+def test_import_dem_from_path_rejects_invalid_source(tmp_path: Path, variant: str) -> None:
+    settings.data_dir = tmp_path / "data"
+    settings.ensure_directories()
+    source = tmp_path / "input.tif"
+    if variant == "not-geotiff":
+        source.write_text("not a raster", encoding="utf-8")
+    elif variant == "without-crs":
+        write_raster(source, width=16, height=16, count=1, crs=None)
+    else:
+        write_raster(source, width=16, height=16, count=2)
+
+    with pytest.raises(AppError):
+        import_dem_from_path(source, "national-dem")
+
+    assert not (settings.dem_dir / "national-dem").exists()
+
+
+def test_import_dem_from_path_does_not_leave_metadata_when_cog_generation_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings.data_dir = tmp_path / "data"
+    settings.ensure_directories()
+    source = tmp_path / "national.tif"
+    write_raster(source, width=16, height=16, count=1)
+
+    def fail_cog(*args, **kwargs):
+        raise AppError("COG_GENERATION_FAILED", "test failure", status_code=500)
+
+    monkeypatch.setattr(dem_store, "create_dem_cog_for_dir", fail_cog)
+
+    with pytest.raises(AppError, match="test failure"):
+        import_dem_from_path(source, "national-dem")
+
+    assert not (settings.dem_dir / "national-dem").exists()
+    assert not list(settings.dem_dir.glob(".national-dem.staging-*"))
+
+
+def test_find_dem_compute_file_uses_cog_when_original_is_not_present(tmp_path: Path) -> None:
+    settings.data_dir = tmp_path / "data"
+    settings.ensure_directories()
+    dem_dir = settings.dem_dir / "national-dem"
+    write_metadata(settings.data_dir, "national-dem", "national.tif", "2026-01-02T00:00:00+00:00")
+    cog_path = dem_dir / "dem.cog.tif"
+    write_raster(cog_path, width=16, height=16, count=1)
+    metadata_path = dem_dir / "metadata.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata["cog_path"] = "dem.cog.tif"
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+
+    assert find_dem_compute_file("national-dem") == cog_path
+
+
+def test_find_dem_compute_file_lazily_generates_cog_for_legacy_dem(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings.data_dir = tmp_path / "data"
+    settings.ensure_directories()
+    dem_dir = settings.dem_dir / "dem_legacy"
+    write_metadata(settings.data_dir, "dem_legacy", "legacy.tif", "2026-01-02T00:00:00+00:00")
+    source = dem_dir / "legacy.tif"
+    write_raster(source, width=16, height=16, count=1)
+    monkeypatch.setattr(dem_store.shutil, "which", lambda name: None)
+
+    cog_path = find_dem_compute_file("dem_legacy")
+
+    assert cog_path == dem_dir / "dem.cog.tif"
+    metadata = read_dem_metadata("dem_legacy")
+    assert metadata.cog_path == "dem.cog.tif"
+
+
+def write_raster(
+    path: Path,
+    *,
+    width: int,
+    height: int,
+    count: int,
+    crs: str | None = "EPSG:4326",
+) -> None:
+    with rasterio.open(
+        path,
+        "w",
+        driver="GTiff",
+        width=width,
+        height=height,
+        count=count,
+        dtype="float32",
+        crs=crs,
+        transform=from_origin(100, 30, 0.01, 0.01),
+        nodata=-9999,
+    ) as dataset:
+        for band in range(1, count + 1):
+            dataset.write(numpy.ones((height, width), dtype=numpy.float32) * band, band)
 
 
 def write_metadata(root: Path, dem_id: str, filename: str, uploaded_at: str) -> None:

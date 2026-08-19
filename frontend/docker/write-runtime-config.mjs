@@ -3,7 +3,8 @@ import { dirname } from "node:path";
 
 const output = process.argv[2] ?? "/app/dist/runtime-config.js";
 const config = {
-  apiBaseUrl: process.env.PYGEOMODEL_API_BASE_URL ?? ""
+  apiBaseUrl: process.env.PYGEOMODEL_API_BASE_URL ?? "",
+  offline: /^(1|true|yes|on)$/i.test(process.env.PYGEOMODEL_OFFLINE ?? "")
 };
 await mkdir(dirname(output), { recursive: true });
 await writeFile(

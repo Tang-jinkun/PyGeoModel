@@ -33,7 +33,7 @@ import type { ModelId } from "../../models/registry";
 import type { BaseModelRequest } from "../../models/shared";
 
 type MapTool = "point" | "target" | "route" | "start" | "end" | "threat";
-type Field = { label: string; path: string; unit?: string; kind?: "number" | "switch" | "coordinate" | "select"; mapTool?: MapTool; options?: Array<{ label: string; value: string }> };
+type Field = { label: string; path: string; unit?: string; kind?: "number" | "switch" | "coordinate" | "select"; mapTool?: MapTool; options?: Array<{ label: string; value: string }>; visibleWhen?: { path: string; equals: unknown } };
 type Section = { title: string; fields: Field[] };
 
 const props = withDefaults(defineProps<{ modelId: ModelId; modelValue: BaseModelRequest; hideCoordinateFields?: boolean }>(), {
@@ -43,13 +43,14 @@ const emit = defineEmits<{ "update:modelValue": [request: BaseModelRequest]; "ac
 const schema = computed(() => props.hideCoordinateFields
   ? SCHEMAS[props.modelId].map((section) => ({
     ...section,
-    fields: section.fields.filter((field) => field.kind !== "coordinate")
+    fields: section.fields.filter((field) => field.kind !== "coordinate" && fieldVisible(field))
   })).filter((section) => section.fields.length)
-  : SCHEMAS[props.modelId]);
+  : SCHEMAS[props.modelId].map((section) => ({ ...section, fields: section.fields.filter(fieldVisible) })));
 
 function valueAt(path: string): unknown {
   return path.split(".").reduce<unknown>((value, key) => value && typeof value === "object" ? (value as Record<string, unknown>)[key] : undefined, props.modelValue);
 }
+function fieldVisible(field: Field) { return !field.visibleWhen || valueAt(field.visibleWhen.path) === field.visibleWhen.equals; }
 function numericValue(path: string) { const value = valueAt(path); return typeof value === "number" && Number.isFinite(value) ? value : ""; }
 function coordinateAt(path: string) {
   const value = valueAt(path) as Record<string, unknown> | undefined;
@@ -74,7 +75,7 @@ const SCHEMAS: Record<ModelId, Section[]> = {
   ],
   uav: [{ title: "无人机", fields: [{ label: "无人机位置", path: "uav", kind: "coordinate" }, { label: "飞行高度", path: "uav.altitude_m", unit: "m" }, { label: "航向角", path: "uav.heading_deg", unit: "度" }] }, { title: "传感器", fields: [{ label: "水平视场角", path: "sensor.h_fov_deg", unit: "度" }, { label: "最大距离", path: "sensor.max_range_m", unit: "m" }, { label: "地面分辨率", path: "sensor.ground_resolution_m", unit: "m" }] }],
   watchpost: [{ title: "观察", fields: [{ label: "观察点位置", path: "observer", kind: "coordinate" }, { label: "观察点高度", path: "observer.height_m", unit: "m" }, { label: "目标高度", path: "target.height_m", unit: "m" }] }, { title: "覆盖范围", fields: [{ label: "最大距离", path: "coverage.max_range_m", unit: "m" }, { label: "方位角", path: "coverage.azimuth_deg", unit: "度" }, { label: "视角", path: "coverage.view_angle_deg", unit: "度" }] }],
-  artillery: [{ title: "炮兵阵地", fields: [{ label: "阵地位置", path: "battery", kind: "coordinate" }, { label: "目标位置", path: "target", kind: "coordinate", mapTool: "target" }, { label: "阵地高度", path: "battery.height_m", unit: "m" }, { label: "目标高度", path: "target.target_height_m", unit: "m" }] }, { title: "武器参数", fields: [{ label: "最小射程", path: "weapon.min_range_m", unit: "m" }, { label: "最大射程", path: "weapon.max_range_m", unit: "m" }, { label: "方位角", path: "weapon.azimuth_deg", unit: "度" }, { label: "水平射界", path: "weapon.traverse_deg", unit: "度" }] }],
+  artillery: [{ title: "炮兵阵地", fields: [{ label: "阵地位置", path: "battery", kind: "coordinate" }, { label: "目标位置", path: "target", kind: "coordinate", mapTool: "target" }, { label: "阵地高度", path: "battery.height_m", unit: "m" }, { label: "目标高度", path: "target.target_height_m", unit: "m" }] }, { title: "武器参数", fields: [{ label: "最小射程", path: "weapon.min_range_m", unit: "m" }, { label: "最大射程", path: "weapon.max_range_m", unit: "m" }, { label: "方位角", path: "weapon.azimuth_deg", unit: "度" }, { label: "水平射界", path: "weapon.traverse_deg", unit: "度" }, { label: "初速度", path: "weapon.muzzle_velocity_mps", unit: "m/s" }, { label: "弹道模式", path: "weapon.trajectory_mode", kind: "select", options: [{ label: "自动高低弹道", value: "auto" }, { label: "手动射角", value: "manual" }] }, { label: "射角", path: "weapon.elevation_deg", unit: "度", visibleWhen: { path: "weapon.trajectory_mode", equals: "manual" } }] }],
   reconVehicle: [{ title: "侦察车辆", fields: [{ label: "车辆位置", path: "vehicle", kind: "coordinate" }, { label: "桅杆高度", path: "vehicle.mast_height_m", unit: "m" }, { label: "航向角", path: "vehicle.heading_deg", unit: "度" }] }, { title: "传感器", fields: [{ label: "最大距离", path: "sensor.max_range_m", unit: "m" }, { label: "最小距离", path: "sensor.min_range_m", unit: "m" }, { label: "视角", path: "sensor.view_angle_deg", unit: "度" }] }],
   mobility: [{ title: "起终点", fields: [{ label: "起点", path: "start", kind: "coordinate", mapTool: "start" }, { label: "终点", path: "end", kind: "coordinate", mapTool: "end" }] }, { title: "分析参数", fields: [{ label: "允许斜向移动", path: "analysis.allow_diagonal", kind: "switch" }, { label: "搜索半径", path: "analysis.max_search_radius_m", unit: "m" }, { label: "道路缓冲区", path: "road_network.road_buffer_m", unit: "m" }] }],
   airCorridor: [{ title: "起终点", fields: [{ label: "起点", path: "start", kind: "coordinate", mapTool: "start" }, { label: "终点", path: "end", kind: "coordinate", mapTool: "end" }] }, { title: "飞行参数", fields: [{ label: "巡航速度", path: "aircraft.cruise_speed_kph", unit: "千米/时" }, { label: "最小离地高度", path: "aircraft.min_agl_m", unit: "m" }, { label: "最大离地高度", path: "aircraft.max_agl_m", unit: "m" }] }]

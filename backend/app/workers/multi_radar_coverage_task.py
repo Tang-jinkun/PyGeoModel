@@ -16,7 +16,7 @@ from app.schemas.radar import CoverageMetrics, MultiRadarOutputs, MultiRadarRequ
 from app.services.artifact_contracts import get_output_contract
 from app.services.artifact_store import get_artifact_store
 from app.services.coverage_range import effective_max_range
-from app.services.dem_store import find_dem_file
+from app.services.dem_store import find_dem_compute_file
 from app.services.multi_radar_coverage import StationMask, accumulate_station_masks
 from app.services.multi_radar_dem import SharedMultiRadarDem, prepare_shared_multi_radar_dem, station_coverage_request
 from app.services.multi_radar_fusion_volume import (
@@ -104,7 +104,7 @@ def build_multi_radar_artifacts(
     try:
         progress("Preparing shared DEM and projection.", 5)
         shared = prepare_shared_multi_radar_dem(
-            find_dem_file(payload.dem_id), staging_dir / "dem_projected.tif", payload
+            find_dem_compute_file(payload.dem_id), staging_dir / "dem_projected.tif", payload
         )
         evaluate = evaluator or _evaluate_station
         completed: list[StationEvaluation] = []

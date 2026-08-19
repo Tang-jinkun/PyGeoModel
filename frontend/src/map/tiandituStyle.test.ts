@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createTiandituStyle } from "./tiandituStyle";
+import { createOfflineStyle, createTiandituStyle } from "./tiandituStyle";
 
 describe("createTiandituStyle", () => {
   afterEach(() => {
@@ -17,5 +17,11 @@ describe("createTiandituStyle", () => {
     );
     expect(JSON.stringify(style)).not.toContain("tk=");
     expect(style.layers.map(({ id }) => id)).toEqual(["tianditu_vector", "tianditu_annotation"]);
+  });
+
+  it("creates a style with no external sources for offline mode", () => {
+    const style = createOfflineStyle();
+
+    expect(style).toEqual({ version: 8, sources: {}, layers: [] });
   });
 });

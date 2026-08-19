@@ -12,7 +12,7 @@ from app.schemas.uav import (
     UavReconTaskStatus,
     UavReconTaskSummary,
 )
-from app.services.dem_store import find_dem_file, read_dem_metadata
+from app.services.dem_store import find_dem_compute_file, read_dem_metadata
 from app.services.artifact_contracts import get_output_contract
 from app.services.artifact_store import get_artifact_store
 from app.services.uav_task_store import (
@@ -39,7 +39,7 @@ def list_recon_tasks() -> list[UavReconTaskSummary]:
 def create_recon_task(payload: UavReconRequest, background_tasks: BackgroundTasks) -> UavReconTaskStatus:
     try:
         read_dem_metadata(payload.dem_id)
-        find_dem_file(payload.dem_id)
+        find_dem_compute_file(payload.dem_id)
         task = create_uav_task(payload)
         background_tasks.add_task(enqueue_task, task.task_id, "uav", run_uav_recon_task, payload, on_cancel=lambda: mark_uav_failed(task.task_id, "Task cancelled by user."))
         return task
@@ -66,7 +66,7 @@ def rerun_recon_task(
         if original.request is None:
             raise AppError("TASK_REQUEST_UNAVAILABLE", "Saved request is unavailable.", status_code=409)
         read_dem_metadata(original.request.dem_id)
-        find_dem_file(original.request.dem_id)
+        find_dem_compute_file(original.request.dem_id)
         task, created = create_uav_rerun(task_id, original.request, idempotency_key)
         if created:
             background_tasks.add_task(enqueue_task, task.task_id, "uav", run_uav_recon_task, original.request, on_cancel=lambda: mark_uav_failed(task.task_id, "Task cancelled by user."))

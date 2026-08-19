@@ -22,7 +22,8 @@ import type {
 import type { SpatialInputKind } from "../../models/shared";
 import mapEngine from "../../map/mapEngine";
 import type { Map, MapMouseEvent, StyleSpecification } from "../../map/mapEngineTypes";
-import { createTiandituStyle } from "../../map/tiandituStyle";
+import { getRuntimeConfig } from "../../config/runtime";
+import { createOfflineStyle, createTiandituStyle } from "../../map/tiandituStyle";
 import { isCoordinateInDemBounds } from "../../map/mapPickPolicy";
 
 type EditTarget = "auto" | "point" | "target" | "route" | "start" | "end" | "threat";
@@ -42,7 +43,9 @@ const props = withDefaults(defineProps<{
   editTarget: "auto",
   activeThreatId: null,
   dem: null,
-  mapStyle: (): StyleSpecification => createTiandituStyle() as StyleSpecification,
+  mapStyle: (): StyleSpecification => (
+    getRuntimeConfig().offline ? createOfflineStyle() : createTiandituStyle()
+  ) as StyleSpecification,
   center: () => [79.80513693057287, 31.4827708959419],
   zoom: 8
 });

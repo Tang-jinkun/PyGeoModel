@@ -12,7 +12,7 @@ from app.schemas.radar import (
     CoverageProfileResult,
     CoverageProfileSample,
 )
-from app.services.dem_store import find_dem_file
+from app.services.dem_store import find_dem_compute_file
 from app.services.coverage_range import effective_max_range as _effective_max_range
 from app.services.projection import utm_epsg_from_lonlat
 from app.services.task_store import get_task
@@ -185,7 +185,7 @@ def _analyze_profile_target(
 
 def analyze_coverage_profile(task_id: str, lon: float, lat: float, samples: int = 160) -> CoverageProfileResult:
     task = _load_profile_task(task_id)
-    dem_path = find_dem_file(task.request.dem_id)
+    dem_path = find_dem_compute_file(task.request.dem_id)
 
     try:
         import rasterio
@@ -204,7 +204,7 @@ def analyze_coverage_profile(task_id: str, lon: float, lat: float, samples: int 
 
 def analyze_coverage_profiles(task_id: str, request: CoverageProfileBatchRequest) -> CoverageProfileBatchResult:
     task = _load_profile_task(task_id)
-    dem_path = find_dem_file(task.request.dem_id)
+    dem_path = find_dem_compute_file(task.request.dem_id)
 
     try:
         import rasterio

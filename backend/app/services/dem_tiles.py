@@ -10,7 +10,7 @@ from rasterio.transform import from_bounds
 from rasterio.warp import reproject, transform_bounds
 
 from app.core.errors import AppError
-from app.services.dem_store import find_dem_cog_file
+from app.services.dem_store import find_dem_compute_file
 
 TILE_SIZE = 256
 MAX_TILE_ZOOM = 16
@@ -20,7 +20,7 @@ def render_dem_tile(dem_id: str, z: int, x: int, y: int) -> bytes:
     data = read_dem_tile_data(dem_id, z, x, y)
     if data is None:
         return transparent_png()
-    return encode_dem_png(data, dem_color_range(find_dem_cog_file(dem_id)))
+    return encode_dem_png(data, dem_color_range(find_dem_compute_file(dem_id)))
 
 
 def render_terrain_tile(dem_id: str, z: int, x: int, y: int) -> bytes:
@@ -39,7 +39,7 @@ def read_dem_tile_data(dem_id: str, z: int, x: int, y: int) -> numpy.ma.MaskedAr
 
     import rasterio
 
-    dem_path = find_dem_cog_file(dem_id)
+    dem_path = find_dem_compute_file(dem_id)
     with rasterio.open(dem_path) as dataset:
         tile_bounds = tile_bounds_web_mercator(z, x, y)
         source_bounds = transform_bounds("EPSG:3857", dataset.crs, *tile_bounds, densify_pts=21)

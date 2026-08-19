@@ -13,9 +13,12 @@ from app.core.config import settings
 from app.core.errors import AppError
 from app.schemas.dem import DemChunkUploadResult, DemDeleteResult, DemMetadata, DemUploadSession, DemUploadSessionCreate
 
-DEM_ID_PATTERN = re.compile(r"^dem_[A-Za-z0-9_-]+$")
+# DEM ids are directory names.  Keep the historical ``dem_...`` values valid,
+# while also allowing imported ids such as ``national-dem`` from the CLI.
+DEM_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
 UPLOAD_ID_PATTERN = re.compile(r"^upload_[A-Za-z0-9_-]+$")
 DEM_COG_FILENAME = "dem.cog.tif"
+COG_BLOCK_SIZE = 256
 
 
 def _metadata_path(dem_id: str) -> Path:
@@ -299,15 +302,115 @@ def find_dem_file(dem_id: str) -> Path:
     return path
 
 
-def find_dem_cog_file(dem_id: str) -> Path:
+def find_dem_compute_file(dem_id: str) -> Path:
+    """Return the COG used for all DEM calculations and terrain rendering.
+
+    Existing uploaded DEMs may only have the original GeoTIFF in their
+    directory.  In that case the COG is created lazily once and recorded in
+    metadata.  Imported nationwide DEMs intentionally contain only the COG,
+    so they work without retaining the original source file.
+    """
+
     metadata = read_dem_metadata(dem_id)
-    cog_path = _dem_dir(dem_id) / DEM_COG_FILENAME
-    if not cog_path.exists():
-        source_path = _dem_path(dem_id, metadata.filename)
-        create_dem_cog(dem_id, source_path)
-        metadata = metadata_with_cog(metadata, cog_path)
-        _metadata_path(dem_id).write_text(metadata.model_dump_json(indent=2), encoding="utf-8")
+    cog_filename = metadata.cog_path or DEM_COG_FILENAME
+    cog_path = _dem_path(dem_id, cog_filename)
+    if cog_path.is_file():
+        return cog_path
+
+    source_path = _dem_path(dem_id, metadata.filename)
+    if not source_path.is_file():
+        raise AppError("DEM_NOT_FOUND", f"DEM file for '{dem_id}' was not found.", status_code=404)
+    create_dem_cog(dem_id, source_path)
+    metadata = metadata_with_cog(metadata, cog_path)
+    _write_metadata(_metadata_path(dem_id), metadata)
     return cog_path
+
+
+def find_dem_cog_file(dem_id: str) -> Path:
+    """Backward-compatible name for the standard DEM compute source."""
+
+    return find_dem_compute_file(dem_id)
+
+
+def import_dem_from_path(source: Path, dem_id: str) -> DemMetadata:
+    """Import an external GeoTIFF as an atomic, COG-only DEM dataset."""
+
+    validate_dem_id(dem_id)
+    source_path = Path(source).expanduser().resolve()
+    validate_dem_filename(source_path.name)
+    if not source_path.is_file():
+        raise AppError("DEM_SOURCE_NOT_FOUND", f"DEM source '{source_path}' was not found.", status_code=400)
+
+    _validate_import_source(source_path)
+    target_dir = _dem_dir(dem_id)
+    if target_dir.exists():
+        raise AppError("DEM_ALREADY_EXISTS", f"DEM '{dem_id}' already exists.", status_code=409)
+
+    staging_dir = target_dir.with_name(f".{target_dir.name}.staging-{uuid4().hex}")
+    staging_dir.mkdir(parents=True, exist_ok=False)
+    try:
+        metadata = read_dem_metadata(dem_id, source_path)
+        cog_path = create_dem_cog_for_dir(staging_dir, source_path)
+        validate_dem_cog(cog_path)
+        metadata = metadata_with_cog(metadata, cog_path)
+        _write_metadata(staging_dir / "metadata.json", metadata)
+        staging_dir.replace(target_dir)
+        return metadata
+    except Exception:
+        if staging_dir.exists():
+            shutil.rmtree(staging_dir, ignore_errors=True)
+        raise
+
+
+def _validate_import_source(source_path: Path) -> None:
+    try:
+        import numpy
+        import rasterio
+    except ImportError as exc:
+        raise AppError("RASTERIO_NOT_INSTALLED", "Rasterio is required to import DEM data.", status_code=500) from exc
+
+    try:
+        with rasterio.open(source_path) as dataset:
+            if dataset.crs is None:
+                raise AppError("DEM_WITHOUT_CRS", "DEM is missing coordinate reference system.")
+            if dataset.count != 1:
+                raise AppError("INVALID_DEM", "DEM must contain exactly one raster band.")
+            if dataset.width <= 0 or dataset.height <= 0:
+                raise AppError("INVALID_DEM", "DEM dimensions must be greater than zero.")
+            if numpy.dtype(dataset.dtypes[0]).kind not in "biuf":
+                raise AppError("INVALID_DEM", "DEM band must use a numeric data type.")
+            bounds = dataset.bounds
+            for value in (bounds.left, bounds.bottom, bounds.right, bounds.top):
+                if not math.isfinite(float(value)):
+                    raise AppError("INVALID_DEM", "DEM bounds must be finite.")
+            if bounds.left >= bounds.right or bounds.bottom >= bounds.top:
+                raise AppError("INVALID_DEM", "DEM bounds must have positive width and height.")
+    except AppError:
+        raise
+    except Exception as exc:
+        raise AppError("INVALID_DEM", f"Unable to read DEM source: {exc}") from exc
+
+
+def validate_dem_cog(cog_path: Path) -> None:
+    """Validate the storage properties required by the nationwide DEM flow."""
+
+    try:
+        import rasterio
+    except ImportError as exc:
+        raise AppError("RASTERIO_NOT_INSTALLED", "Rasterio is required to validate COG data.", status_code=500) from exc
+
+    try:
+        with rasterio.open(cog_path) as dataset:
+            if dataset.count != 1 or not dataset.is_tiled:
+                raise AppError("INVALID_COG", "COG must be a single-band internally tiled GeoTIFF.")
+            if dataset.block_shapes[0] != (COG_BLOCK_SIZE, COG_BLOCK_SIZE):
+                raise AppError("INVALID_COG", f"COG tile size must be {COG_BLOCK_SIZE}x{COG_BLOCK_SIZE}.")
+            if not dataset.overviews(1):
+                raise AppError("INVALID_COG", "COG must contain internal overviews.")
+    except AppError:
+        raise
+    except Exception as exc:
+        raise AppError("INVALID_COG", f"Unable to validate COG: {exc}") from exc
 
 
 def create_dem_cog(dem_id: str, source_path: Path) -> Path:
@@ -378,9 +481,26 @@ def metadata_with_cog(metadata: DemMetadata, cog_path: Path) -> DemMetadata:
     return metadata
 
 
+def _write_metadata(path: Path, metadata: DemMetadata) -> None:
+    temp_path = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
+    try:
+        temp_path.write_text(metadata.model_dump_json(indent=2), encoding="utf-8")
+        temp_path.replace(path)
+    finally:
+        if temp_path.exists():
+            temp_path.unlink()
+
+
 def list_dem_metadata() -> list[DemMetadata]:
     results: list[DemMetadata] = []
-    for metadata_file in settings.dem_dir.glob("dem_*/metadata.json"):
+    if not settings.dem_dir.exists():
+        return results
+    for dem_dir in settings.dem_dir.iterdir():
+        if not dem_dir.is_dir() or dem_dir.name.startswith("."):
+            continue
+        metadata_file = dem_dir / "metadata.json"
+        if not metadata_file.is_file():
+            continue
         data = json.loads(metadata_file.read_text(encoding="utf-8"))
         results.append(attach_dem_usage(DemMetadata.model_validate(data)))
     return sorted(results, key=lambda item: item.uploaded_at or "", reverse=True)

@@ -20,6 +20,14 @@ export function createTiandituStyle(): TianDiTuStyle {
   };
 }
 
+export function createOfflineStyle(): TianDiTuStyle {
+  return {
+    version: 8,
+    sources: {},
+    layers: []
+  };
+}
+
 function rasterSource(layer: "vec" | "cva") {
   return {
     type: "raster" as const,

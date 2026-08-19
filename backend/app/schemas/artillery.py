@@ -41,6 +41,7 @@ class ArtilleryWeaponInput(BaseModel):
     azimuth_deg: float = Field(default=0, ge=0, lt=360)
     traverse_deg: float = Field(default=360, gt=0, le=360)
     muzzle_velocity_mps: float = Field(default=500, gt=1, le=3000)
+    trajectory_mode: Literal["auto", "manual"] = "auto"
     elevation_deg: float = Field(default=45, gt=0, lt=90)
 
     @model_validator(mode="after")
@@ -74,6 +75,19 @@ class ArtilleryCoverageRequest(BaseModel):
     analysis: ArtilleryAnalysisInput = Field(default_factory=ArtilleryAnalysisInput)
 
 
+class ArtilleryTrajectorySolution(BaseModel):
+    kind: Literal["low", "high", "manual"]
+    elevation_deg: float
+    reachable: bool
+    hits_target: bool
+    impact_height_error_m: float
+    terrain_data_complete: bool
+    min_clearance_m: float
+    masking_distance_m: float | None = None
+    trajectory_peak_m: float
+    time_of_flight_s: float
+
+
 class ArtilleryCoverageMetrics(BaseModel):
     theoretical_area_m2: float = 0
     reachable_area_m2: float = 0
@@ -99,6 +113,7 @@ class ArtilleryCoverageMetrics(BaseModel):
     target_masking_distance_m: float | None = None
     target_trajectory_peak_m: float | None = None
     target_time_of_flight_s: float | None = None
+    target_trajectory_solutions: list[ArtilleryTrajectorySolution] = Field(default_factory=list)
 
 
 class ArtilleryCoverageOutputs(BaseModel):
@@ -127,6 +142,7 @@ class ArtilleryModelMetadata(BaseModel):
     azimuth_deg: float
     traverse_deg: float
     muzzle_velocity_mps: float
+    trajectory_mode: Literal["auto", "manual"] = "auto"
     elevation_deg: float
     target_height_m: float
     sample_resolution_m: float

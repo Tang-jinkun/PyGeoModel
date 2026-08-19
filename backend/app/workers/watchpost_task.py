@@ -23,7 +23,7 @@ from app.schemas.watchpost import (
     WatchpostDetectionRequest,
     WatchpostModelMetadata,
 )
-from app.services.dem_store import find_dem_file
+from app.services.dem_store import find_dem_compute_file
 from app.services.artifact_contracts import get_output_contract
 from app.services.artifact_store import get_artifact_store
 from app.services.geometry import make_range_geometry, project_geometry
@@ -74,7 +74,7 @@ def build_watchpost_artifacts(task_id: str, payload: WatchpostDetectionRequest, 
     projected_dem = staging_dir / "dem_projected.tif"
     try:
         progress("Preparing DEM and watchpost projection.", 15)
-        prepared = _prepare_watchpost_dem(find_dem_file(payload.dem_id), projected_dem, payload)
+        prepared = _prepare_watchpost_dem(find_dem_compute_file(payload.dem_id), projected_dem, payload)
         progress("Running viewshed.", 45)
         viewshed = staging_dir / "viewshed.tif"
         gdal_command = _run_gdal_viewshed(prepared.projected_dem, viewshed, prepared, payload)

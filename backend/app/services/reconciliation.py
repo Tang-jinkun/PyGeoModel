@@ -11,7 +11,7 @@ from app.services.air_corridor_task_store import get_air_corridor_task
 from app.services.artifact_contracts import get_output_contract
 from app.services.artifact_store import get_artifact_store
 from app.services.artillery_task_store import get_artillery_task
-from app.services.dem_store import find_dem_file
+from app.services.dem_store import find_dem_compute_file
 from app.services.mobility_task_store import get_mobility_task
 from app.services.multi_radar_task_store import get_multi_task
 from app.services.recon_vehicle_task_store import get_recon_vehicle_task
@@ -101,7 +101,7 @@ def repair_selected(model_id: str, task_ids: list[str]) -> list[str]:
         dem_id = getattr(request, "dem_id", None)
         if not isinstance(dem_id, str) or not dem_id:
             raise AppError("TASK_DEM_UNAVAILABLE", f"Saved DEM for '{task_id}' is unavailable.", status_code=409)
-        find_dem_file(dem_id)
+        find_dem_compute_file(dem_id)
         adapter.build_artifacts(task_id, request, lambda _message, _progress: None)
         repaired.append(task_id)
     return repaired
@@ -132,7 +132,7 @@ def _repair_prerequisites_available(adapter: ModelReconciliationAdapter, task_id
         dem_id = getattr(request, "dem_id", None) if request is not None else None
         if not isinstance(dem_id, str) or not dem_id:
             return False
-        find_dem_file(dem_id)
+        find_dem_compute_file(dem_id)
     except (AppError, OSError, ValueError):
         return False
     return True

@@ -28,7 +28,7 @@ from app.schemas.radar import (
 from app.services.artifact_contracts import get_output_contract
 from app.services.artifact_store import get_artifact_store
 from app.services.coverage_model import validate_coverage_extent
-from app.services.dem_store import find_dem_file, read_dem_metadata
+from app.services.dem_store import find_dem_compute_file, read_dem_metadata
 from app.services.fusion_analysis import analyze_fusion
 from app.services.multi_radar_dem import station_coverage_request
 from app.services.multi_radar_target_evaluation import evaluate_multi_radar_target
@@ -88,12 +88,12 @@ def _to_single_request(payload: SingleRadarTaskRequest) -> CoverageRequest:
 
 def _validate_single_request(payload: CoverageRequest) -> None:
     read_dem_metadata(payload.dem_id)
-    validate_coverage_extent(find_dem_file(payload.dem_id), payload)
+    validate_coverage_extent(find_dem_compute_file(payload.dem_id), payload)
 
 
 def _validate_multi_request(payload: MultiRadarRequest) -> None:
     read_dem_metadata(payload.dem_id)
-    source = find_dem_file(payload.dem_id)
+    source = find_dem_compute_file(payload.dem_id)
     for station in payload.radars:
         validate_coverage_extent(source, station_coverage_request(payload.dem_id, station))
 

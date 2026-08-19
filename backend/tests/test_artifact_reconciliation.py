@@ -71,7 +71,7 @@ def test_repair_calls_only_explicit_selected_builder(tmp_path: Path, monkeypatch
     request = SimpleNamespace(dem_id="dem-a")
     adapter = _adapter(lambda task_id, *_: calls.append(task_id), lambda _: SimpleNamespace(request=request))
     monkeypatch.setattr("app.services.reconciliation.MODEL_ADAPTERS", {"radar": adapter})
-    monkeypatch.setattr("app.services.reconciliation.find_dem_file", lambda _: tmp_path / "dem.tif")
+    monkeypatch.setattr("app.services.reconciliation.find_dem_compute_file", lambda _: tmp_path / "dem.tif")
 
     repaired = repair_selected("radar", ["task_selected"])
 

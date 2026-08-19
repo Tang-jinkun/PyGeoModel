@@ -1,5 +1,6 @@
 export interface RuntimeConfig {
   apiBaseUrl: string;
+  offline?: boolean;
 }
 
 declare global {
@@ -26,6 +27,7 @@ export function getRuntimeConfig(buildFallback = import.meta.env.VITE_API_BASE ?
   return {
     apiBaseUrl: normalizeApiBase(
       window.__PYGEOMODEL_RUNTIME_CONFIG__?.apiBaseUrl ?? buildFallback
-    )
+    ),
+    offline: window.__PYGEOMODEL_RUNTIME_CONFIG__?.offline ?? false
   };
 }

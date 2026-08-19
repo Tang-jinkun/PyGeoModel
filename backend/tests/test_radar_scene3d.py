@@ -10,7 +10,6 @@ from rasterio.transform import from_origin
 from app.schemas.radar import CoverageRequest
 from app.scene3d.exporter import read_glb_document
 from app.scene3d.radar import (
-    BLOCKED_CONTACT_MATERIAL,
     DETAILED_GRID_MATERIAL,
     DETECTION_FLOOR_MATERIAL,
     DIAGNOSTIC_MAX_MARKERS,
@@ -65,9 +64,8 @@ def test_nonstandard_shell_grid_lod_materials_are_hidden_by_default() -> None:
     )
 
 
-def test_floor_and_terrain_contact_use_distinct_materials() -> None:
+def test_detection_floor_material_remains_distinct() -> None:
     assert DETECTION_FLOOR_MATERIAL.rgba == (20, 73, 48, 210)
-    assert BLOCKED_CONTACT_MATERIAL.rgba == (224, 76, 48, 255)
 
 
 def test_scan_animation_uses_sparse_visibility_keyframes() -> None:
@@ -243,8 +241,6 @@ def test_target_independent_radar_glb_is_self_contained_and_open_at_nodata(
         "radar_result/radar_origin",
         "radar_result/detectable_shell",
         "radar_result/detection_floor",
-        "radar_result/terrain_blocked_contact",
-        "radar_result/terrain_contact",
         "radar_result/unknown_boundary",
         "radar_result/shell_grid",
         "radar_result/shell_grid_sparse",
@@ -252,6 +248,22 @@ def test_target_independent_radar_glb_is_self_contained_and_open_at_nodata(
         "radar_result/diagnostics",
     } <= node_names
     assert "radar_result/detection_floor_boundary" not in node_names
+    assert "radar_result/terrain_contact" not in node_names
+    assert "radar_result/terrain_blocked_contact" not in node_names
+    assert "radar_result/ground_contact" not in node_names
+
+    fallback_output = tmp_path / "radar_detection_domain_without_height.glb"
+    write_radar_coverage_glb(
+        fallback_output,
+        task_id="radar_task_fallback",
+        prepared=prepared,
+        payload=payload,
+    )
+    fallback_node_names = {
+        node.get("name")
+        for node in read_glb_document(fallback_output.read_bytes())["nodes"]
+    }
+    assert "radar_result/ground_contact" not in fallback_node_names
     grid_lods = {
         node["extras"]["lod"]
         for node in document["nodes"]

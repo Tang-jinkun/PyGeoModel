@@ -25,6 +25,21 @@ describe("ModelParameterFields", () => {
 
     expect(wrapper.emitted("activate-map-tool")).toEqual([["target"]]);
   });
+
+  it("switches artillery trajectory solving between automatic and manual", async () => {
+    const wrapper = mount(ModelParameterFields, {
+      props: { modelId: "artillery", modelValue: artilleryRequest() }
+    });
+
+    await wrapper.get("[data-field='weapon.trajectory_mode'] select").setValue("manual");
+
+    const updated = wrapper.emitted("update:modelValue")?.[0]?.[0] as ReturnType<typeof artilleryRequest>;
+    expect(updated).toMatchObject({
+      weapon: { trajectory_mode: "manual" }
+    });
+    await wrapper.setProps({ modelValue: updated });
+    expect(wrapper.find("[data-field='weapon.elevation_deg']").exists()).toBe(true);
+  });
 });
 
 function radarRequest() {
@@ -42,7 +57,7 @@ function artilleryRequest() {
     dem_id: "dem-1",
     battery: { lon: 79.8, lat: 31.4, height_m: 12, altitude_mode: "agl" },
     target: { lon: null, lat: null, target_height_m: 100 },
-    weapon: { min_range_m: 1000, max_range_m: 15000, azimuth_deg: 0, traverse_deg: 360, muzzle_velocity_mps: 500, elevation_deg: 45 },
+    weapon: { min_range_m: 1000, max_range_m: 15000, azimuth_deg: 0, traverse_deg: 360, muzzle_velocity_mps: 500, trajectory_mode: "auto", elevation_deg: 45 },
     munition: { munition_type: "he", lethal_radius_m: 50, effective_radius_m: 120 },
     analysis: { use_dem_elevation: true, use_terrain_masking: true, sample_resolution_m: null, trajectory_samples: 80, clearance_margin_m: 0, output_simplify_tolerance_m: null }
   };

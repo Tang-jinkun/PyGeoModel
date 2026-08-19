@@ -23,7 +23,7 @@ from app.schemas.uav import (
     UavReconOutputs,
     UavReconRequest,
 )
-from app.services.dem_store import find_dem_file
+from app.services.dem_store import find_dem_compute_file
 from app.services.artifact_contracts import get_output_contract
 from app.services.artifact_store import get_artifact_store
 from app.services.projection import utm_epsg_from_lonlat
@@ -51,7 +51,7 @@ def build_uav_artifacts(task_id: str, payload: UavReconRequest, progress: Callab
     projected_dem = staging_dir / "dem_projected.tif"
     try:
         progress("Preparing DEM and UAV projection.", 15)
-        prepared = _prepare_uav_dem(find_dem_file(payload.dem_id), projected_dem, payload)
+        prepared = _prepare_uav_dem(find_dem_compute_file(payload.dem_id), projected_dem, payload)
         progress("Computing sensor footprint and terrain occlusion.", 55)
         _, _, metrics, model, warnings = _write_uav_outputs(task_id, staging_dir, prepared, payload)
         projected_dem.unlink(missing_ok=True)

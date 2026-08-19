@@ -25,7 +25,7 @@ from app.schemas.mobility import (
     MobilityVehicleInput,
     MobilityVehicleMetrics,
 )
-from app.services.dem_store import find_dem_file
+from app.services.dem_store import find_dem_compute_file
 from app.services.artifact_contracts import get_output_contract
 from app.services.artifact_store import get_artifact_store
 from app.services.geometry import project_geometry
@@ -94,7 +94,7 @@ def build_mobility_artifacts(task_id: str, payload: MobilityAccessibilityRequest
     projected_dem = staging_dir / "dem_projected.tif"
     try:
         progress("Preparing DEM and mobility projection.", 15)
-        prepared = _prepare_mobility_dem(find_dem_file(payload.dem_id), projected_dem, payload)
+        prepared = _prepare_mobility_dem(find_dem_compute_file(payload.dem_id), projected_dem, payload)
         progress("Computing wheeled and tracked accessibility.", 55)
         _, _, metrics, model, warnings = _write_mobility_outputs(task_id, staging_dir, prepared, payload)
         projected_dem.unlink(missing_ok=True)

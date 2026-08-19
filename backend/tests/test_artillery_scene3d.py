@@ -12,10 +12,25 @@ def test_artillery_trajectory_glb_contains_semantic_nodes(tmp_path: Path) -> Non
         target_epsg=32644,
         battery=(500_000, 3_500_000, 100),
         target=(501_000, 3_500_000, 100),
-        trajectory=[
-            (500_000, 3_500_000, 100),
-            (500_500, 3_500_000, 280),
-            (501_000, 3_500_000, 100),
+        trajectories=[
+            {
+                "kind": "low",
+                "elevation_deg": 25,
+                "points": [
+                    (500_000, 3_500_000, 100),
+                    (500_500, 3_500_000, 280),
+                    (501_000, 3_500_000, 100),
+                ],
+            },
+            {
+                "kind": "high",
+                "elevation_deg": 65,
+                "points": [
+                    (500_000, 3_500_000, 100),
+                    (500_500, 3_500_000, 600),
+                    (501_000, 3_500_000, 100),
+                ],
+            },
         ],
     )
 
@@ -23,4 +38,14 @@ def test_artillery_trajectory_glb_contains_semantic_nodes(tmp_path: Path) -> Non
     node_names = {node.get("name") for node in document["nodes"]}
 
     assert metadata["model_id"] == "artillery"
-    assert {"artillery_result/trajectory", "artillery_result/battery", "artillery_result/target"} <= node_names
+    assert {
+        "artillery_result/trajectory_low",
+        "artillery_result/trajectory_high",
+        "artillery_result/battery",
+        "artillery_result/target",
+    } <= node_names
+    assert metadata["trajectory"]["count"] == 2
+    assert metadata["trajectory"]["solutions"] == [
+        {"kind": "low", "elevation_deg": 25.0, "point_count": 3},
+        {"kind": "high", "elevation_deg": 65.0, "point_count": 3},
+    ]

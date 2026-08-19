@@ -30,13 +30,62 @@ from app.services.artillery_output_files import (
 from app.services.artillery_task_store import mark_artillery_failed, mark_artillery_finished, mark_artillery_running
 from app.scene3d.artillery import write_artillery_trajectory_glb
 from app.services.task_scheduler import TaskCancelled
-from app.services.dem_store import find_dem_file
+from app.services.dem_store import find_dem_compute_file
 from app.services.artifact_contracts import get_output_contract
 from app.services.artifact_store import get_artifact_store
 from app.services.geometry import make_range_geometry, project_geometry
 from app.services.projection import utm_epsg_from_lonlat
 
 GRAVITY_MPS2 = 9.80665
+TARGET_HIT_TOLERANCE_M = 1.0
+
+
+def _solve_ballistic_angle_solutions(
+    horizontal_distance_m: float,
+    height_delta_m: float,
+    muzzle_velocity_mps: float,
+) -> list[tuple[str, float]]:
+    if horizontal_distance_m <= 0 or muzzle_velocity_mps <= 0:
+        return []
+    velocity_squared = muzzle_velocity_mps * muzzle_velocity_mps
+    discriminant = (
+        velocity_squared * velocity_squared
+        - GRAVITY_MPS2
+        * (
+            GRAVITY_MPS2 * horizontal_distance_m * horizontal_distance_m
+            + 2 * height_delta_m * velocity_squared
+        )
+    )
+    if discriminant < 0:
+        return []
+    root = math.sqrt(max(discriminant, 0.0))
+    denominator = GRAVITY_MPS2 * horizontal_distance_m
+    angles = sorted({
+        math.degrees(math.atan((velocity_squared - root) / denominator)),
+        math.degrees(math.atan((velocity_squared + root) / denominator)),
+    })
+    if len(angles) == 1:
+        return [("low", angles[0])] if 0 < angles[0] < 90 else []
+    return [
+        (kind, angle)
+        for kind, angle in zip(("low", "high"), angles, strict=True)
+        if 0 < angle < 90
+    ]
+
+
+def _solve_ballistic_angles(
+    horizontal_distance_m: float,
+    height_delta_m: float,
+    muzzle_velocity_mps: float,
+) -> list[float]:
+    return [
+        angle
+        for _, angle in _solve_ballistic_angle_solutions(
+            horizontal_distance_m,
+            height_delta_m,
+            muzzle_velocity_mps,
+        )
+    ]
 
 
 class PreparedArtilleryDem:
@@ -76,7 +125,7 @@ def build_artillery_artifacts(task_id: str, payload: ArtilleryCoverageRequest, p
     projected_dem = staging_dir / "dem_projected.tif"
     try:
         progress("Preparing DEM and artillery projection.", 15)
-        prepared = _prepare_artillery_dem(find_dem_file(payload.dem_id), projected_dem, payload)
+        prepared = _prepare_artillery_dem(find_dem_compute_file(payload.dem_id), projected_dem, payload)
         progress("Computing terrain-masked trajectories.", 55)
         _, _, metrics, model, warnings = _write_artillery_outputs(task_id, staging_dir, prepared, payload)
         projected_dem.unlink(missing_ok=True)
@@ -225,6 +274,7 @@ def _write_artillery_outputs(
 
     trajectory_path = staging_dir / ARTILLERY_OUTPUT_FILENAMES["scene_glb"]
     if target_result is not None and target_result["is_clear"]:
+        clear_solutions = [solution for solution in target_result["solutions"] if solution["is_clear"]]
         write_artillery_trajectory_glb(
             trajectory_path,
             task_id=task_id,
@@ -235,9 +285,16 @@ def _write_artillery_outputs(
                 float(target_result["target_y"]),
                 float(target_result["target_z"]),
             ),
-            trajectory=[
-                (float(point["x"]), float(point["y"]), float(point["z"]))
-                for point in target_result["trajectory"]
+            trajectories=[
+                {
+                    "kind": solution["kind"],
+                    "elevation_deg": solution["elevation_deg"],
+                    "points": [
+                        (float(point["x"]), float(point["y"]), float(point["z"]))
+                        for point in solution["trajectory"]
+                    ],
+                }
+                for solution in clear_solutions
             ],
         )
 
@@ -275,6 +332,7 @@ def _compute_artillery_masks(dem, transform, nodata, prepared: PreparedArtillery
     theoretical_geom = _annular_sector_geometry(prepared, payload)
     theoretical = _geometry_to_mask(theoretical_geom, dem.shape, transform) & finite
     reachable = numpy.zeros_like(theoretical, dtype=bool)
+    ballistically_reachable = numpy.zeros_like(theoretical, dtype=bool)
     terrain_masked = numpy.zeros_like(theoretical, dtype=bool)
     sample_features: list[dict] = []
     clearances: list[float] = []
@@ -291,7 +349,7 @@ def _compute_artillery_masks(dem, transform, nodata, prepared: PreparedArtillery
         target_y = float(y_grid[row, col])
         target_ground = float(dem[row, col]) if payload.analysis.use_dem_elevation else 0.0
         target_z = target_ground + payload.target.target_height_m
-        result = _trajectory_clearance(
+        solutions = _trajectory_solutions(
             dem,
             transform,
             nodata,
@@ -303,8 +361,14 @@ def _compute_artillery_masks(dem, transform, nodata, prepared: PreparedArtillery
             target_z,
             payload,
         )
-        clearances.append(result["min_clearance_m"])
-        if result["is_clear"]:
+        clear_solutions = [solution for solution in solutions if solution["is_clear"]]
+        has_target_solution = any(solution["hits_target"] for solution in solutions)
+        if has_target_solution:
+            ballistically_reachable[row, col] = True
+        result = clear_solutions[0] if clear_solutions else (solutions[0] if solutions else None)
+        if result is not None:
+            clearances.append(result["min_clearance_m"])
+        if clear_solutions:
             reachable[row, col] = True
         else:
             terrain_masked[row, col] = True
@@ -313,19 +377,30 @@ def _compute_artillery_masks(dem, transform, nodata, prepared: PreparedArtillery
                 "geometry": Point(target_x, target_y),
                 "properties": {
                     "kind": "artillery_sample",
-                    "is_clear": result["is_clear"],
-                    "range_m": result["range_m"],
-                    "min_clearance_m": result["min_clearance_m"],
-                    "masking_distance_m": result["masking_distance_m"],
-                    "trajectory_peak_m": result["trajectory_peak_m"],
+                    "is_clear": bool(clear_solutions),
+                    "is_terrain_masked": has_target_solution and not bool(clear_solutions),
+                    "range_m": math.hypot(target_x - prepared.battery_x, target_y - prepared.battery_y),
+                    "min_clearance_m": result["min_clearance_m"] if result is not None else None,
+                    "masking_distance_m": result["masking_distance_m"] if result is not None else None,
+                    "trajectory_peak_m": result["trajectory_peak_m"] if result is not None else None,
+                    "solution_count": len(solutions),
+                    "clear_solution_count": len(clear_solutions),
                 },
             }
         )
 
     reachable = _expand_sampled_mask(reachable, theoretical, sample_resolution, transform)
-    terrain_masked = theoretical & ~reachable if payload.analysis.use_terrain_masking else numpy.zeros_like(theoretical, dtype=bool)
-    if not payload.analysis.use_terrain_masking:
-        reachable = theoretical.copy()
+    ballistically_reachable = _expand_sampled_mask(
+        ballistically_reachable,
+        theoretical,
+        sample_resolution,
+        transform,
+    )
+    terrain_masked = (
+        ballistically_reachable & ~reachable
+        if payload.analysis.use_terrain_masking
+        else numpy.zeros_like(theoretical, dtype=bool)
+    )
 
     cell_area = abs(float(transform.a) * float(transform.e))
     theoretical_area = float(theoretical.sum()) * cell_area
@@ -357,7 +432,7 @@ def _compute_artillery_masks(dem, transform, nodata, prepared: PreparedArtillery
         effective_radius_m=payload.munition.effective_radius_m,
         sample_point_count=len(sample_features),
         reachable_sample_count=sum(1 for item in sample_features if item["properties"]["is_clear"]),
-        masked_sample_count=sum(1 for item in sample_features if not item["properties"]["is_clear"]),
+        masked_sample_count=sum(1 for item in sample_features if item["properties"]["is_terrain_masked"]),
         min_clearance_m=min_clearance,
         mean_clearance_m=mean_clearance,
         battery_ground_elevation_m=float(ground),
@@ -368,6 +443,7 @@ def _compute_artillery_masks(dem, transform, nodata, prepared: PreparedArtillery
         target_masking_distance_m=(target_result["masking_distance_m"] if target_result is not None else None),
         target_trajectory_peak_m=(target_result["trajectory_peak_m"] if target_result is not None else None),
         target_time_of_flight_s=(target_result["time_of_flight_s"] if target_result is not None else None),
+        target_trajectory_solutions=(target_result["solution_metrics"] if target_result is not None else []),
     )
     model = ArtilleryModelMetadata(
         target_epsg=prepared.target_epsg,
@@ -381,6 +457,7 @@ def _compute_artillery_masks(dem, transform, nodata, prepared: PreparedArtillery
         azimuth_deg=payload.weapon.azimuth_deg,
         traverse_deg=payload.weapon.traverse_deg,
         muzzle_velocity_mps=payload.weapon.muzzle_velocity_mps,
+        trajectory_mode=payload.weapon.trajectory_mode,
         elevation_deg=payload.weapon.elevation_deg,
         target_height_m=payload.target.target_height_m,
         sample_resolution_m=sample_resolution,
@@ -446,6 +523,8 @@ def _evaluate_artillery_target(
         "target_z": None,
         "battery_altitude_m": float(battery_altitude),
         "trajectory": [],
+        "solutions": [],
+        "solution_metrics": [],
     }
     if distance < payload.weapon.min_range_m or distance > payload.weapon.max_range_m:
         return base
@@ -472,7 +551,7 @@ def _evaluate_artillery_target(
         if payload.analysis.use_dem_elevation
         else payload.target.target_height_m
     )
-    result = _trajectory_clearance(
+    solutions = _trajectory_solutions(
         dem,
         transform,
         nodata,
@@ -484,12 +563,39 @@ def _evaluate_artillery_target(
         target_z,
         payload,
     )
+    clear_solutions = [solution for solution in solutions if solution["is_clear"]]
+    selected = clear_solutions[0] if clear_solutions else (solutions[0] if solutions else None)
+    if selected is None:
+        base.update({
+            "target_z": float(target_z),
+            "solutions": [],
+            "solution_metrics": [],
+        })
+        return base
+    result = dict(selected)
     result.update(
         {
             "target_x": target_x,
             "target_y": target_y,
             "target_z": float(target_z),
             "battery_altitude_m": float(battery_altitude),
+            "is_clear": bool(clear_solutions),
+            "solutions": solutions,
+            "solution_metrics": [
+                {
+                    "kind": solution["kind"],
+                    "elevation_deg": solution["elevation_deg"],
+                    "reachable": solution["is_clear"],
+                    "hits_target": solution["hits_target"],
+                    "impact_height_error_m": solution["impact_height_error_m"],
+                    "terrain_data_complete": solution["terrain_data_complete"],
+                    "min_clearance_m": solution["min_clearance_m"],
+                    "masking_distance_m": solution["masking_distance_m"],
+                    "trajectory_peak_m": solution["trajectory_peak_m"],
+                    "time_of_flight_s": solution["time_of_flight_s"],
+                }
+                for solution in solutions
+            ],
         }
     )
     return result
@@ -506,6 +612,8 @@ def _trajectory_clearance(
     y1: float,
     z1: float,
     payload: ArtilleryCoverageRequest,
+    *,
+    elevation_deg: float | None = None,
 ) -> dict:
     distance = math.hypot(x1 - x0, y1 - y0)
     if distance <= 0:
@@ -513,6 +621,7 @@ def _trajectory_clearance(
         terrain_value = float(terrain) if math.isfinite(terrain) else None
         return {
             "is_clear": True,
+            "elevation_deg": float(payload.weapon.elevation_deg if elevation_deg is None else elevation_deg),
             "range_m": 0.0,
             "min_clearance_m": float("inf"),
             "masking_distance_m": None,
@@ -527,15 +636,18 @@ def _trajectory_clearance(
             }],
         }
 
-    theta = math.radians(payload.weapon.elevation_deg)
+    solved_elevation_deg = payload.weapon.elevation_deg if elevation_deg is None else elevation_deg
+    theta = math.radians(solved_elevation_deg)
     velocity = payload.weapon.muzzle_velocity_mps
     cos_theta = max(math.cos(theta), 0.001)
     tan_theta = math.tan(theta)
     drop_factor = GRAVITY_MPS2 / (2 * velocity * velocity * cos_theta * cos_theta)
-    baseline_error = distance * tan_theta - drop_factor * distance * distance - (z1 - z0)
+    impact_height_error = distance * tan_theta - drop_factor * distance * distance - (z1 - z0)
+    hits_target = abs(impact_height_error) <= TARGET_HIT_TOLERANCE_M
     samples = payload.analysis.trajectory_samples
     min_clearance = float("inf")
     masking_distance = None
+    terrain_data_complete = True
     peak = z0
     trajectory = []
     for index in range(samples + 1):
@@ -543,14 +655,13 @@ def _trajectory_clearance(
         horizontal = distance * t
         x = x0 + (x1 - x0) * t
         y = y0 + (y1 - y0) * t
-        trajectory_z = z0 + horizontal * tan_theta - drop_factor * horizontal * horizontal - baseline_error * t
+        trajectory_z = z0 + horizontal * tan_theta - drop_factor * horizontal * horizontal
         if index == 0:
             trajectory_z = z0
-        elif index == samples:
-            trajectory_z = z1
         peak = max(peak, trajectory_z)
         terrain = _sample_nearest(dem, transform, x, y, nodata)
         if not math.isfinite(terrain):
+            terrain_data_complete = False
             trajectory.append({
                 "x": float(x),
                 "y": float(y),
@@ -573,8 +684,16 @@ def _trajectory_clearance(
             masking_distance = horizontal
     if not math.isfinite(min_clearance):
         min_clearance = 0.0
+    terrain_clear = masking_distance is None and (
+        terrain_data_complete or not payload.analysis.use_terrain_masking
+    )
     return {
-        "is_clear": masking_distance is None,
+        "is_clear": terrain_clear,
+        "terrain_clear": terrain_clear,
+        "terrain_data_complete": terrain_data_complete,
+        "hits_target": hits_target,
+        "impact_height_error_m": float(impact_height_error),
+        "elevation_deg": float(solved_elevation_deg),
         "range_m": distance,
         "min_clearance_m": float(min_clearance),
         "masking_distance_m": masking_distance,
@@ -582,6 +701,43 @@ def _trajectory_clearance(
         "time_of_flight_s": float(distance / (velocity * cos_theta)),
         "trajectory": trajectory,
     }
+
+
+def _trajectory_solutions(
+    dem,
+    transform,
+    nodata,
+    x0: float,
+    y0: float,
+    z0: float,
+    x1: float,
+    y1: float,
+    z1: float,
+    payload: ArtilleryCoverageRequest,
+) -> list[dict]:
+    distance = math.hypot(x1 - x0, y1 - y0)
+    if distance <= 0:
+        return []
+    if payload.weapon.trajectory_mode == "manual":
+        elevations = [("manual", payload.weapon.elevation_deg)]
+    else:
+        elevations = _solve_ballistic_angle_solutions(
+            distance,
+            z1 - z0,
+            payload.weapon.muzzle_velocity_mps,
+        )
+        if not elevations:
+            return []
+    solutions = []
+    for kind, elevation_deg in elevations:
+        result = _trajectory_clearance(
+            dem, transform, nodata, x0, y0, z0, x1, y1, z1, payload,
+            elevation_deg=elevation_deg,
+        )
+        result["kind"] = kind
+        result["is_clear"] = result["terrain_clear"] and result["hits_target"]
+        solutions.append(result)
+    return solutions
 
 
 def _sample_candidate_indices(mask, sample_resolution: float, transform) -> list[tuple[int, int]]:

@@ -6,7 +6,7 @@ from pyproj import CRS, Transformer
 from app.core.errors import AppError
 from app.schemas.radar import TargetEvaluationRequest, TargetEvaluationResult
 from app.services.coverage_range import effective_max_range
-from app.services.dem_store import find_dem_file
+from app.services.dem_store import find_dem_compute_file
 from app.services.output_files import resolve_task_output_path
 from app.services.projection import utm_epsg_from_lonlat
 from app.services.task_store import get_task
@@ -171,7 +171,7 @@ def _sample_source_dem(
     *,
     input_is_wgs84: bool = False,
 ) -> float | None:
-    with rasterio.open(find_dem_file(dem_id)) as dataset:
+    with rasterio.open(find_dem_compute_file(dem_id)) as dataset:
         if dataset.crs is None:
             return None
         if input_is_wgs84:
@@ -188,7 +188,7 @@ def _sample_target_terrain(
     x: float,
     y: float,
 ) -> tuple[float | None, str]:
-    with rasterio.open(find_dem_file(dem_id)) as dataset:
+    with rasterio.open(find_dem_compute_file(dem_id)) as dataset:
         if dataset.crs is None:
             return None, "nodata"
         transformer = Transformer.from_crs(
