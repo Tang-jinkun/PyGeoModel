@@ -22,6 +22,7 @@ const idleState: SceneGlbOverlayState = {
   demId: "dem-a",
   status: "idle",
   visible: false,
+  scanVisible: true,
   progress: null,
   error: null
 };

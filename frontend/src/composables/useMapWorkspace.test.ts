@@ -14,7 +14,8 @@ const sceneRuntime = vi.hoisted(() => ({
   add: vi.fn(),
   remove: vi.fn(),
   removeAll: vi.fn(),
-  focus: vi.fn(() => true)
+  focus: vi.fn(() => true),
+  setScanVisibility: vi.fn(() => true)
 }));
 
 vi.mock("../map/sceneGlbAsset", async (importOriginal) => ({
@@ -278,6 +279,28 @@ describe("useMapWorkspace", () => {
     expect(workspace.sceneGlbStateFor(finishedAirTask.task_id)?.status).toBe("visible");
   });
 
+  it("persists scan visibility before loading and passes it into the scene layer", async () => {
+    const sceneGlb = sceneGlbAdapter();
+    const workspace = useMapWorkspace("start-end-threats", undefined, {
+      clientFactory: () => ({
+        metrics: vi.fn().mockResolvedValue({}),
+        outputs: vi.fn().mockResolvedValue([sceneFile])
+      }),
+      sceneGlb
+    });
+    const map = {} as never;
+    await workspace.loadTaskOutputs("airCorridor", finishedAirTask);
+
+    workspace.setSceneGlbScanVisibility(map, finishedAirTask.task_id, "scene_glb", false);
+    expect(workspace.sceneGlbStateFor(finishedAirTask.task_id)?.scanVisible).toBe(false);
+    expect(sceneGlb.setScanVisibility).toHaveBeenCalledWith(map, finishedAirTask.task_id, false);
+
+    await workspace.setSceneGlbVisibility(
+      map, "dem-a", "airCorridor", finishedAirTask, true
+    );
+    expect(sceneGlb.load).toHaveBeenCalledWith(expect.objectContaining({ scanVisible: false }));
+  });
+
   it("loads a synthetic scene from explicitly supplied live descriptors", async () => {
     const sceneGlb = sceneGlbAdapter();
     const workspace = useMapWorkspace("start-end-threats", undefined, { sceneGlb });
@@ -534,7 +557,8 @@ function sceneGlbAdapter() {
     removeAll: vi.fn<SceneGlbAdapter["removeAll"]>(),
     focus: vi.fn<SceneGlbAdapter["focus"]>(() => true),
     setColor: vi.fn(() => true),
-    setGridDensity: vi.fn()
+    setGridDensity: vi.fn(),
+    setScanVisibility: vi.fn<NonNullable<SceneGlbAdapter["setScanVisibility"]>>(() => true)
   };
 }
 

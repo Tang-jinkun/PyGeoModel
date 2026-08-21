@@ -2,7 +2,7 @@
   <GisWorkbenchShell :tasks-collapsed="presentation.taskCenterCollapsed.value" :inspector-open="presentation.inspectorMode.value === 'result' && Boolean(selectedWorkbenchResultContext)" @update:tasks-collapsed="presentation.toggleTaskCenter">
     <template #topbar><WorkbenchTopbar :dem-label="selectedDem?.filename ?? 'No DEM selected'" :connected="!taskManager.connectionInterrupted.value" :search="modelSearch" @update:search="modelSearch = $event" /></template>
     <template #dock>
-  <WorkbenchDock :model-value="workspace.selectedModel.value" :active-tab="presentation.dockTab.value" :model-search="modelSearch" :layer-definitions="selectedLayerDefinitions" :layer-states="selectedLayerStates" :scene-entries="workbenchSceneEntries" :multi-radar-stations="activeMultiRadarTask?.stations ?? []" :grid-density="radarGridDensity" @select-model="selectWorkbenchModel" @update:active-tab="presentation.selectDockTab" @update:model-search="modelSearch = $event" @update-layer-visibility="setLayerVisibility" @update-layer-opacity="setLayerOpacity" @update-layer-color="setLayerColor" @focus-layer="focusLayer" @update-scene-glb="setWorkbenchSceneVisibility" @update-scene-glb-color="setWorkbenchSceneColor" @reset-scene-glb-color="resetWorkbenchSceneColor" @focus-scene-glb="focusWorkbenchScene" @focus-station="focusMultiRadarStation" @update-grid-density="updateRadarGridDensity">
+  <WorkbenchDock :model-value="workspace.selectedModel.value" :active-tab="presentation.dockTab.value" :model-search="modelSearch" :layer-definitions="selectedLayerDefinitions" :layer-states="selectedLayerStates" :scene-entries="workbenchSceneEntries" :multi-radar-stations="activeMultiRadarTask?.stations ?? []" :grid-density="radarGridDensity" @select-model="selectWorkbenchModel" @update:active-tab="presentation.selectDockTab" @update:model-search="modelSearch = $event" @update-layer-visibility="setLayerVisibility" @update-layer-opacity="setLayerOpacity" @update-layer-color="setLayerColor" @focus-layer="focusLayer" @update-scene-glb="setWorkbenchSceneVisibility" @update-scene-glb-scan="setWorkbenchSceneScanVisibility" @update-scene-glb-color="setWorkbenchSceneColor" @reset-scene-glb-color="resetWorkbenchSceneColor" @focus-scene-glb="focusWorkbenchScene" @focus-station="focusMultiRadarStation" @update-grid-density="updateRadarGridDensity">
         <template #data><WorkbenchDataPane :dems="demManager.dems.value" :model-value="demManager.selectedDem.value" :loading="demManager.loading.value" :uploading="demManager.uploading.value" @update:model-value="demManager.select" @upload="(files) => runCommand(demManager.upload, files)" @delete="(demId) => runCommand(demManager.remove, demId)" @refresh="runCommand(demManager.load)" /></template>
       </WorkbenchDock>
     </template>
@@ -362,6 +362,7 @@ const workbenchSceneEntries = computed<WorkbenchSceneEntry[]>(() => {
       id: asset.asset_id,
       taskId: asset.task_id,
       kind: asset.kind,
+      scanAvailable: asset.kind === "scene_glb",
       file: { ...asset.file, label: asset.label },
       state: mapWorkspace.sceneGlbStateFor(asset.task_id, asset.kind) ?? idleSceneState(asset.task_id, multiRadarTask.dem_id)
     }));
@@ -373,7 +374,7 @@ const workbenchSceneEntries = computed<WorkbenchSceneEntry[]>(() => {
     .map((file) => {
       const kind = file.kind as SceneGlbKind;
       const state = mapWorkspace.sceneGlbStateFor(context.task.task_id, kind);
-      return state ? { id: `${context.task.task_id}:${kind}`, taskId: context.task.task_id, kind, file, state } : null;
+      return state ? { id: `${context.task.task_id}:${kind}`, taskId: context.task.task_id, kind, scanAvailable: context.modelId === "radar" && kind === "scene_glb", file, state } : null;
     })
     .filter((entry): entry is WorkbenchSceneEntry => entry !== null);
 });
@@ -980,6 +981,7 @@ function idleSceneState(taskId: string, demId: string): SceneGlbOverlayState {
     demId,
     status: "idle",
     visible: false,
+    scanVisible: true,
     color: "#0f9f78",
     progress: null,
     error: null
@@ -1028,6 +1030,12 @@ async function setWorkbenchSceneVisibility(entryId: string, visible: boolean) {
     visible,
     entry.kind
   );
+}
+
+function setWorkbenchSceneScanVisibility(entryId: string, visible: boolean) {
+  const instance = map.value;
+  const entry = workbenchSceneEntries.value.find((candidate) => candidate.id === entryId);
+  if (instance && entry) mapWorkspace.setSceneGlbScanVisibility(instance, entry.taskId, entry.kind, visible);
 }
 
 function setWorkbenchSceneColor(entryId: string, color: string) {

@@ -260,6 +260,7 @@ describe("TaskResultPanel", () => {
       demId: "dem-a",
       status: "idle",
       visible: false,
+      scanVisible: true,
       progress: null,
       error: null
     };
@@ -303,6 +304,7 @@ describe("TaskResultPanel", () => {
           demId: "dem-a",
           status: "idle",
           visible: false,
+          scanVisible: true,
           progress: null,
           error: null
         }

@@ -148,6 +148,23 @@ describe("static scene GLB preparation", () => {
     expect(asset.group.getObjectByName("hidden-child")?.visible).toBe(false);
   });
 
+  it("collects scan slice meshes for independent visibility control", () => {
+    const root = new THREE.Group();
+    const scan = new THREE.Mesh(new THREE.BoxGeometry(), new THREE.MeshBasicMaterial());
+    scan.name = "radar_result/scan_slice_000";
+    scan.userData = { kind: "scan_slice", azimuth_index: 0 };
+    const shell = new THREE.Mesh(new THREE.BoxGeometry(), new THREE.MeshBasicMaterial());
+    shell.name = "radar_result/detectable_shell";
+    shell.userData = { kind: "detectable_shell" };
+    root.add(scan, shell);
+
+    const asset = prepareStaticScene(root, metadata, []);
+
+    expect(asset.scanNodes).toHaveLength(1);
+    expect(asset.scanNodes[0].name).toBe("radar_result/scan_slice_000");
+    expect(asset.group.getObjectByName("radar_result/detectable_shell")).not.toBe(asset.scanNodes[0]);
+  });
+
   it("disposes shared resources exactly once", () => {
     const material = new THREE.MeshBasicMaterial();
     const root = new THREE.Group();

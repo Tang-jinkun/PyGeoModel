@@ -14,7 +14,8 @@ import {
   createSceneGlbLights,
   resolveSceneGlbGridLod,
   sceneGlbLayerId,
-  setSceneGlbLayerGridDensity
+  setSceneGlbLayerGridDensity,
+  setSceneGlbLayerScanVisibility
 } from "./sceneGlbLayer";
 
 const rendererState = vi.hoisted(() => ({
@@ -114,6 +115,20 @@ describe("scene GLB map layer", () => {
     renderLayer(render);
     expect(gridVisibility(asset)).toEqual([true]);
     expect(map.triggerRepaint).toHaveBeenCalled();
+  });
+
+  it("toggles all scan slice nodes without changing other scene nodes", () => {
+    const map = new FakeMap();
+    const asset = preparedScanAsset("task-a");
+    addSceneGlbLayer(map as never, "task-a", asset);
+
+    expect(setSceneGlbLayerScanVisibility(map as never, "task-a", false)).toBe(true);
+    expect(asset.scanNodes.map((node) => node.visible)).toEqual([false, false]);
+    expect(asset.group.getObjectByName("radar_result/detectable_shell")?.visible).toBe(true);
+
+    expect(setSceneGlbLayerScanVisibility(map as never, "task-a", true)).toBe(true);
+    expect(asset.scanNodes.map((node) => node.visible)).toEqual([true, true]);
+    expect(map.triggerRepaint).toHaveBeenCalledTimes(2);
   });
 
   it("keeps terrain at true scale until the final task is removed", () => {
@@ -348,8 +363,23 @@ function preparedAsset(taskId: string, material: THREE.Material = new THREE.Mesh
       axes: { x: "east", y: "up", z: "south" }
     },
     animations: [],
+    scanNodes: [],
     disposed: false
   };
+}
+
+function preparedScanAsset(taskId: string): PreparedSceneGlb {
+  const asset = preparedAsset(taskId);
+  const first = new THREE.Mesh(new THREE.BoxGeometry(), new THREE.MeshBasicMaterial());
+  first.name = "radar_result/scan_slice_000";
+  const second = new THREE.Mesh(new THREE.BoxGeometry(), new THREE.MeshBasicMaterial());
+  second.name = "radar_result/scan_slice_001";
+  const shell = new THREE.Mesh(new THREE.BoxGeometry(), new THREE.MeshBasicMaterial());
+  shell.name = "radar_result/detectable_shell";
+  asset.group.clear();
+  asset.group.add(first, second, shell);
+  asset.scanNodes = [first, second];
+  return asset;
 }
 
 function preparedRadarGridAsset(taskId: string, legacyOnly = false): PreparedSceneGlb {

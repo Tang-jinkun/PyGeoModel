@@ -10,7 +10,7 @@ describe("WorkbenchDock", () => {
     const wrapper = mount(WorkbenchDock, {
       props: {
         modelValue: "radar",
-        sceneEntries: [{ id: "task-1:scene_glb", taskId: "task-1", kind: "scene_glb", file: sceneFile(), state: readyScene() }] as never
+        sceneEntries: [{ id: "task-1:scene_glb", taskId: "task-1", kind: "scene_glb", scanAvailable: true, file: sceneFile(), state: readyScene() }] as never
       }
     });
 
@@ -22,6 +22,20 @@ describe("WorkbenchDock", () => {
 
     expect(wrapper.emitted("update-scene-glb")?.[0]).toEqual(["task-1:scene_glb", false]);
     expect(wrapper.find(".scene-glb-row").exists()).toBe(false);
+  });
+
+  it("emits independent scan-slice visibility for a radar scene GLB", async () => {
+    const wrapper = mount(WorkbenchDock, {
+      props: {
+        modelValue: "radar",
+        sceneEntries: [{ id: "task-1:scene_glb", taskId: "task-1", kind: "scene_glb", scanAvailable: true, file: sceneFile(), state: readyScene() }] as never
+      }
+    });
+
+    await wrapper.get('[data-dock-tab="layers"]').trigger("click");
+    await wrapper.get('[data-scene-glb-scan="task-1:scene_glb"]').setValue(false);
+
+    expect(wrapper.emitted("update-scene-glb-scan")?.[0]).toEqual(["task-1:scene_glb", false]);
   });
 
   it("emits model selection and renders a supplied real data pane", async () => {
@@ -54,7 +68,7 @@ describe("WorkbenchDock", () => {
         modelValue: "radar",
         layerDefinitions: [{ kind: "visible_geojson", label: "Visible", color: "#16a34a", geometry: "fill", defaultOpacity: 0.2 }],
         layerStates: [{ kind: "visible_geojson", status: "ready", visible: true, opacity: 0.2, color: "#16a34a", data: { type: "FeatureCollection", features: [] }, error: null }],
-        sceneEntries: [{ id: "task-1:scene_glb", taskId: "task-1", kind: "scene_glb", file: sceneFile(), state: readyScene() }]
+        sceneEntries: [{ id: "task-1:scene_glb", taskId: "task-1", kind: "scene_glb", scanAvailable: true, file: sceneFile(), state: readyScene() }]
       }
     });
 
@@ -99,6 +113,7 @@ function readyScene(): SceneGlbOverlayState {
     demId: "dem-1",
     status: "visible",
     visible: true,
+    scanVisible: true,
     progress: null,
     error: null
   };

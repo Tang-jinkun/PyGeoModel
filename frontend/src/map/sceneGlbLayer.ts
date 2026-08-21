@@ -18,6 +18,7 @@ const TRUE_SCALE_TERRAIN_EXAGGERATION = 1;
 interface ManagedCustomLayer extends CustomLayerInterface {
   cleanup(): void;
   setGridDensity(density: RadarGridDensity): void;
+  setScanVisibility(visible: boolean): boolean;
 }
 
 interface RegisteredSceneGlb {
@@ -33,6 +34,7 @@ const terrainTasks = new WeakMap<MapInstance, Set<string>>();
 export interface SceneGlbLayerOptions {
   foreground?: boolean;
   gridDensity?: RadarGridDensity;
+  scanVisible?: boolean;
   onLost?: () => void;
 }
 
@@ -154,6 +156,16 @@ export function setAllSceneGlbLayerGridDensity(
   }
 }
 
+export function setSceneGlbLayerScanVisibility(
+  map: MapInstance,
+  taskId: string,
+  visible: boolean
+) {
+  const layer = registry.get(map)?.get(taskId)?.layer;
+  if (!layer) return false;
+  return layer.setScanVisibility(visible);
+}
+
 export function setSceneGlbLayerColor(
   map: MapInstance,
   taskId: string,
@@ -193,6 +205,7 @@ function createCustomLayer(
   let contextLostQueued = false;
   let cleaned = false;
   let gridDensity = options.gridDensity ?? "auto";
+  let scanVisible = options.scanVisible ?? true;
   let currentGridLod: SceneGlbGridLod | null = null;
   const gridMeshes = findRadarGridMeshes(asset.group);
 
@@ -201,6 +214,12 @@ function createCustomLayer(
     if (nextLod === currentGridLod) return;
     applyRadarGridLod(gridMeshes, nextLod);
     currentGridLod = nextLod;
+  };
+
+  const applyScanVisibility = () => {
+    if (!asset.scanNodes.length) return false;
+    for (const node of asset.scanNodes) node.visible = scanVisible;
+    return true;
   };
 
   const handleContextLost = (event: Event) => {
@@ -224,6 +243,7 @@ function createCustomLayer(
       scene.add(createSceneGlbLights());
       scene.add(asset.group);
       updateGridLod();
+      applyScanVisibility();
       if (asset.animations.length) {
         mixer = new THREE.AnimationMixer(asset.group);
         for (const clip of asset.animations) mixer.clipAction(clip).play();
@@ -255,6 +275,12 @@ function createCustomLayer(
       if (nextLod === currentGridLod) return;
       updateGridLod();
       map.triggerRepaint();
+    },
+    setScanVisibility(visible) {
+      scanVisible = visible;
+      const applied = applyScanVisibility();
+      if (applied) map.triggerRepaint();
+      return applied;
     },
     cleanup() {
       if (cleaned) return;

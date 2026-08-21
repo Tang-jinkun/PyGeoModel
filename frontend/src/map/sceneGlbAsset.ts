@@ -23,6 +23,7 @@ export interface PreparedSceneGlb {
   bounds: SceneGlbBounds;
   metadata: Scene3dMetadata;
   animations: THREE.AnimationClip[];
+  scanNodes: THREE.Object3D[];
   originalMaterialColors?: Map<THREE.Material, THREE.Color>;
   disposed: boolean;
 }
@@ -117,6 +118,7 @@ export function prepareStaticScene(
     maxAltitudeM: -Infinity
   };
   let vertexCount = 0;
+  const scanNodes: THREE.Object3D[] = [];
   const originalMaterialColors = new Map<THREE.Material, THREE.Color>();
 
   root.traverse((object) => {
@@ -161,6 +163,7 @@ export function prepareStaticScene(
     mesh.userData = inheritedUserData(object, root);
     mesh.renderOrder = object.renderOrder;
     mesh.visible = effectiveVisibility(object, root);
+    if (mesh.userData.kind === "scan_slice") scanNodes.push(mesh);
     group.add(mesh);
   });
 
@@ -177,6 +180,7 @@ export function prepareStaticScene(
     bounds,
     metadata,
     animations: [...animations],
+    scanNodes,
     originalMaterialColors,
     disposed: false
   };
