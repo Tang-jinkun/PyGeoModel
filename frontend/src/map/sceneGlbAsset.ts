@@ -25,6 +25,7 @@ export interface PreparedSceneGlb {
   animations: THREE.AnimationClip[];
   scanNodes: THREE.Object3D[];
   originalMaterialColors?: Map<THREE.Material, THREE.Color>;
+  colorLockedMaterials?: Set<THREE.Material>;
   disposed: boolean;
 }
 
@@ -120,6 +121,7 @@ export function prepareStaticScene(
   let vertexCount = 0;
   const scanNodes: THREE.Object3D[] = [];
   const originalMaterialColors = new Map<THREE.Material, THREE.Color>();
+  const colorLockedMaterials = new Set<THREE.Material>();
 
   root.traverse((object) => {
     if (!(object instanceof THREE.Mesh)) return;
@@ -151,17 +153,31 @@ export function prepareStaticScene(
     geometry.computeVertexNormals();
 
     const mesh = new THREE.Mesh(geometry, cloneMeshMaterials(object.material));
+    mesh.userData = inheritedUserData(object, root);
     for (const material of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) {
       if ("color" in material && material.color instanceof THREE.Color) {
         originalMaterialColors.set(material, material.color.clone());
+      }
+      if (
+        mesh.userData.visibility_semantics === "terrain_occluded"
+        || mesh.userData.kind === "blocked_volume"
+      ) {
+        colorLockedMaterials.add(material);
       }
       if (!material.transparent) continue;
       material.depthWrite = false;
       material.needsUpdate = true;
     }
     mesh.name = object.name;
-    mesh.userData = inheritedUserData(object, root);
     mesh.renderOrder = object.renderOrder;
+    if (
+      mesh.userData.visibility_semantics === "terrain_occluded"
+      || mesh.userData.kind === "blocked_volume"
+    ) {
+      mesh.renderOrder = Math.max(mesh.renderOrder, 20);
+    } else if (mesh.userData.kind === "detectable_shell" || mesh.userData.kind === "detection_floor") {
+      mesh.renderOrder = Math.max(mesh.renderOrder, 10);
+    }
     mesh.visible = effectiveVisibility(object, root);
     if (mesh.userData.kind === "scan_slice") scanNodes.push(mesh);
     group.add(mesh);
@@ -182,6 +198,7 @@ export function prepareStaticScene(
     animations: [...animations],
     scanNodes,
     originalMaterialColors,
+    colorLockedMaterials,
     disposed: false
   };
 }
@@ -209,6 +226,7 @@ export function disposePreparedScene(asset: PreparedSceneGlb) {
   for (const texture of textures) texture.dispose();
   for (const material of materials) material.dispose();
   asset.originalMaterialColors?.clear();
+  asset.colorLockedMaterials?.clear();
   asset.group.clear();
 }
 
@@ -222,6 +240,7 @@ export function applyPreparedSceneColor(
   const referenceHue = new THREE.Color(referenceColor).getHSL({ h: 0, s: 0, l: 0 }).h;
   const hueOffset = targetHue - referenceHue;
   for (const [material, originalColor] of asset.originalMaterialColors ?? []) {
+    if (asset.colorLockedMaterials?.has(material)) continue;
     if (!("color" in material) || !(material.color instanceof THREE.Color)) continue;
     const original = originalColor.getHSL({ h: 0, s: 0, l: 0 });
     const next = material.color.getHSL({ h: 0, s: 0, l: 0 });

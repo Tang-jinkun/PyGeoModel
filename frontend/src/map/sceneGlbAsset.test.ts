@@ -121,6 +121,38 @@ describe("static scene GLB preparation", () => {
     }
   });
 
+  it("keeps terrain-occluded materials red while tinting the green scene", () => {
+    const root = new THREE.Group();
+    const shell = new THREE.Mesh(
+      new THREE.BoxGeometry(),
+      new THREE.MeshStandardMaterial({ color: "#267a52", transparent: true, opacity: 0.4 })
+    );
+    shell.name = "radar_result/detectable_shell";
+    shell.userData = { kind: "detectable_shell" };
+    const blocked = new THREE.Mesh(
+      new THREE.BoxGeometry(),
+      new THREE.MeshStandardMaterial({ color: "#dc2f3d", transparent: true, opacity: 0.4 })
+    );
+    blocked.name = "radar_result/blocked_volume";
+    blocked.userData = {
+      kind: "blocked_volume",
+      visibility_semantics: "terrain_occluded"
+    };
+    root.add(shell, blocked);
+
+    const asset = prepareStaticScene(root, metadata, []);
+    const preparedShell = asset.group.getObjectByName("radar_result/detectable_shell") as THREE.Mesh;
+    const preparedBlocked = asset.group.getObjectByName("radar_result/blocked_volume") as THREE.Mesh;
+    const blockedColor = (preparedBlocked.material as THREE.MeshStandardMaterial).color.getHexString();
+
+    applyPreparedSceneColor(asset, "#d4a017");
+
+    expect((preparedShell.material as THREE.MeshStandardMaterial).color.getHexString()).not.toBe("267a52");
+    expect((preparedBlocked.material as THREE.MeshStandardMaterial).color.getHexString()).toBe(blockedColor);
+    expect(preparedBlocked.renderOrder).toBeGreaterThan(preparedShell.renderOrder);
+    expect((preparedBlocked.material as THREE.Material).depthWrite).toBe(false);
+  });
+
   it("retains standard animations while rejecting skinned meshes", () => {
     const root = new THREE.Group();
     root.add(new THREE.Mesh(new THREE.BoxGeometry(), new THREE.MeshBasicMaterial()));

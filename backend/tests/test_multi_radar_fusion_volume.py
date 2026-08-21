@@ -101,6 +101,69 @@ def test_fusion_glb_contains_union_and_overlap_meshes(tmp_path: Path) -> None:
     assert metadata["fusion_height_count"] == 3
 
 
+def test_fusion_glb_contains_red_blocked_volume_for_theoretical_uncovered_cells(
+    tmp_path: Path,
+) -> None:
+    counts = FusionHeightCounts(
+        target_epsg=32644,
+        transform=from_origin(400_000, 3_500_000, 100, 100),
+        heights_m=numpy.array([0, 200, 500], dtype=numpy.float32),
+        coverage_count=numpy.array([
+            [[1, 0], [0, 0]],
+            [[1, 0], [0, 0]],
+            [[0, 0], [0, 0]],
+        ], dtype=numpy.uint16),
+        theoretical_union=numpy.array([
+            [[True, True], [True, False]],
+            [[True, True], [True, False]],
+            [[True, True], [True, False]],
+        ], dtype=bool),
+        terrain_m=numpy.zeros((2, 2), dtype=numpy.float32),
+    )
+
+    path = tmp_path / "fusion-blocked.glb"
+    metadata = write_multi_radar_fusion_glb(path, task_id="multi_task_blocked", counts=counts)
+
+    document = read_glb_document(path.read_bytes())
+    node = next(
+        item for item in document["nodes"]
+        if item.get("name") == "multi_radar_fusion/blocked_volume"
+    )
+    assert node["extras"] == {
+        "kind": "blocked_volume",
+        "visibility_semantics": "terrain_occluded",
+        "default_visible": True,
+    }
+    assert metadata["blocked_volume_available"] is True
+    assert metadata["blocked_volume_cell_count"] > 0
+    red_material = next(
+        item for item in document["materials"]
+        if item.get("name") == "radar_terrain_occluded_volume"
+    )
+    assert red_material["pbrMetallicRoughness"]["baseColorFactor"][0] > 0.7
+    assert red_material["pbrMetallicRoughness"]["baseColorFactor"][1] < 0.4
+
+
+def test_fusion_glb_omits_deterministic_red_without_theoretical_union(
+    tmp_path: Path,
+) -> None:
+    counts = FusionHeightCounts(
+        target_epsg=32644,
+        transform=from_origin(400_000, 3_500_000, 100, 100),
+        heights_m=numpy.array([0, 200], dtype=numpy.float32),
+        coverage_count=numpy.ones((2, 2, 2), dtype=numpy.uint16),
+        terrain_m=numpy.zeros((2, 2), dtype=numpy.float32),
+    )
+
+    metadata = write_multi_radar_fusion_glb(
+        tmp_path / "fusion-without-red.glb",
+        task_id="multi_task_without_red",
+        counts=counts,
+    )
+
+    assert metadata["blocked_volume_available"] is False
+
+
 def test_fusion_glb_fills_non_finite_terrain_samples(tmp_path: Path) -> None:
     counts = FusionHeightCounts(
         target_epsg=32644,

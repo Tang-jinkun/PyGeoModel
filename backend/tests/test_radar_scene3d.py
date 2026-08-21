@@ -8,6 +8,7 @@ from rasterio.coords import BoundingBox
 from rasterio.transform import from_origin
 
 from app.schemas.radar import CoverageRequest
+from app.scene3d import radar as radar_scene
 from app.scene3d.exporter import read_glb_document
 from app.scene3d.radar import (
     DETAILED_GRID_MATERIAL,
@@ -23,6 +24,7 @@ from app.scene3d.radar import (
     _trace_ray,
     write_radar_coverage_glb,
 )
+from app.scene3d.radar_volume import RadarVisibilityVolume
 from app.services.coverage_model import PreparedCoverageDem
 from app.services.output_files import OUTPUT_FILENAMES, OUTPUT_MEDIA_TYPES
 
@@ -240,6 +242,7 @@ def test_target_independent_radar_glb_is_self_contained_and_open_at_nodata(
         "radar_result",
         "radar_result/radar_origin",
         "radar_result/detectable_shell",
+        "radar_result/blocked_volume",
         "radar_result/detection_floor",
         "radar_result/unknown_boundary",
         "radar_result/shell_grid",
@@ -247,6 +250,15 @@ def test_target_independent_radar_glb_is_self_contained_and_open_at_nodata(
         "radar_result/shell_grid_detailed",
         "radar_result/diagnostics",
     } <= node_names
+    blocked_node = next(
+        node for node in document["nodes"]
+        if node.get("name") == "radar_result/blocked_volume"
+    )
+    assert blocked_node["extras"] == {
+        "kind": "blocked_volume",
+        "visibility_semantics": "terrain_occluded",
+        "default_visible": True,
+    }
     assert "radar_result/detection_floor_boundary" not in node_names
     assert "radar_result/terrain_contact" not in node_names
     assert "radar_result/terrain_blocked_contact" not in node_names
@@ -332,6 +344,9 @@ def test_target_independent_radar_glb_is_self_contained_and_open_at_nodata(
     assert metadata["open_ray_count"] > 0
     visibility_volume = metadata["visibility_volume"]
     assert set(visibility_volume) == {
+        "available",
+        "fallback",
+        "warning_code",
         "method",
         "nominal_elevation_deg",
         "scan_elevation_deg",
@@ -343,7 +358,17 @@ def test_target_independent_radar_glb_is_self_contained_and_open_at_nodata(
         "blocked_contact_segment_count",
         "terrain_segment_count",
         "unknown_segment_count",
+        "blocked_volume_available",
+        "blocked_volume_semantics",
+        "blocked_volume_face_count",
+        "blocked_volume_cell_count",
+        "theoretical_cell_count",
+        "calculation_bounds",
+        "diagnostics",
     }
+    assert visibility_volume["available"] is True
+    assert visibility_volume["fallback"] is None
+    assert visibility_volume["warning_code"] is None
     assert visibility_volume["method"] == "dem_height_field_envelope"
     assert visibility_volume["nominal_elevation_deg"] == [0, 90]
     assert visibility_volume["scan_elevation_deg"] == [0.0, 90.0]
@@ -355,6 +380,12 @@ def test_target_independent_radar_glb_is_self_contained_and_open_at_nodata(
     assert visibility_volume["blocked_contact_segment_count"] > 0
     assert visibility_volume["terrain_segment_count"] > 0
     assert visibility_volume["unknown_segment_count"] > 0
+    assert visibility_volume["blocked_volume_available"] is True
+    assert visibility_volume["blocked_volume_semantics"] == "terrain_occluded"
+    assert visibility_volume["blocked_volume_face_count"] > 0
+    assert visibility_volume["blocked_volume_cell_count"] > 0
+    assert visibility_volume["theoretical_cell_count"] >= visibility_volume["blocked_volume_cell_count"]
+    assert visibility_volume["calculation_bounds"]["boundary_gap_m"] > 0
     assert metadata["visual_dome"]["terrain_conforming"] is False
     assert metadata["visual_dome"]["vertical_ratio"] == 1
     assert set(metadata["visual_dome"]["radius_m"]) == {1_000}
@@ -434,3 +465,162 @@ def test_target_independent_radar_glb_is_self_contained_and_open_at_nodata(
     )
     assert OUTPUT_FILENAMES["radar_platform_glb"] == "radar_platform.glb"
     assert OUTPUT_MEDIA_TYPES["radar_platform_glb"] == "model/gltf-binary"
+
+
+def test_radar_glb_uses_visual_dome_when_height_field_is_empty(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    shape = (11, 11)
+    transform = from_origin(-550, 550, 100, 100)
+    dem = numpy.full(shape, 100, dtype=numpy.float32)
+    dem_path = tmp_path / "empty-envelope-dem.tif"
+    min_height_path = tmp_path / "empty-envelope-minimum-visible-height.tif"
+    for path in (dem_path, min_height_path):
+        with rasterio.open(
+            path,
+            "w",
+            driver="GTiff",
+            width=shape[1],
+            height=shape[0],
+            count=1,
+            dtype=dem.dtype,
+            crs="EPSG:32644",
+            transform=transform,
+            nodata=-9999,
+        ) as dataset:
+            dataset.write(dem if path == dem_path else numpy.zeros_like(dem), 1)
+
+    payload = CoverageRequest.model_validate(
+        {
+            "dem_id": "dem_empty_envelope_scene",
+            "radar": {"lon": 79.0, "lat": 31.5, "height_m": 30},
+            "coverage": {"max_range_m": 500, "scan_mode": "omni"},
+        }
+    )
+    prepared = PreparedCoverageDem(
+        source_dem=dem_path,
+        projected_dem=dem_path,
+        target_epsg=32644,
+        radar_x=0,
+        radar_y=0,
+        projected_bounds=BoundingBox(-550, -550, 550, 550),
+        resolution_m=(100, 100),
+        dem_coverage_ratio=1,
+        analysis_domain=numpy.ones(shape, dtype=bool),
+    )
+    empty_volume = RadarVisibilityVolume(
+        vertices=numpy.empty((0, 3), dtype=numpy.float64),
+        faces=numpy.empty((0, 3), dtype=numpy.int64),
+        terrain_segments=numpy.empty((0, 2, 3), dtype=numpy.float64),
+        unknown_segments=numpy.empty((0, 2, 3), dtype=numpy.float64),
+        grid_shape=(256, 256, 2),
+        occupied_voxel_count=1,
+        blocked_contact_segments=numpy.empty((0, 2, 3), dtype=numpy.float64),
+        diagnostics={"surface_cell_count": 0, "fallback": "visual_dome"},
+    )
+    monkeypatch.setattr(
+        radar_scene,
+        "build_radar_visibility_envelope",
+        lambda *args, **kwargs: empty_volume,
+    )
+
+    output = tmp_path / "empty-envelope-radar.glb"
+    metadata = radar_scene.write_radar_coverage_glb(
+        output,
+        task_id="empty-envelope-task",
+        prepared=prepared,
+        payload=payload,
+        min_visible_height=min_height_path,
+    )
+
+    visibility_metadata = metadata["visibility_volume"]
+    assert visibility_metadata["available"] is False
+    assert visibility_metadata["fallback"] == "visual_dome"
+    assert visibility_metadata["warning_code"] == "RADAR_ENVELOPE_EMPTY"
+    assert visibility_metadata["diagnostics"]["surface_cell_count"] == 0
+    node_names = {node.get("name") for node in read_glb_document(output.read_bytes())["nodes"]}
+    assert "radar_result/detectable_shell" in node_names
+    assert "radar_result/detection_floor" not in node_names
+
+
+def test_radar_glb_can_contain_only_a_red_blocked_volume(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    shape = (11, 11)
+    transform = from_origin(-550, 550, 100, 100)
+    dem = numpy.full(shape, 100, dtype=numpy.float32)
+    dem_path = tmp_path / "blocked-only-scene-dem.tif"
+    min_height_path = tmp_path / "blocked-only-scene-minimum-visible-height.tif"
+    for path, data in ((dem_path, dem), (min_height_path, numpy.zeros_like(dem))):
+        with rasterio.open(
+            path,
+            "w",
+            driver="GTiff",
+            width=shape[1],
+            height=shape[0],
+            count=1,
+            dtype=data.dtype,
+            crs="EPSG:32644",
+            transform=transform,
+            nodata=-9999,
+        ) as dataset:
+            dataset.write(data, 1)
+
+    payload = CoverageRequest.model_validate(
+        {
+            "dem_id": "dem_blocked_only_scene",
+            "radar": {"lon": 79.0, "lat": 31.5, "height_m": 30},
+            "coverage": {"max_range_m": 500},
+        }
+    )
+    prepared = PreparedCoverageDem(
+        source_dem=dem_path,
+        projected_dem=dem_path,
+        target_epsg=32644,
+        radar_x=0,
+        radar_y=0,
+        projected_bounds=BoundingBox(-550, -550, 550, 550),
+        resolution_m=(100, 100),
+        dem_coverage_ratio=1,
+        analysis_domain=numpy.ones(shape, dtype=bool),
+    )
+    blocked_mesh = trimesh.creation.box(extents=(100, 100, 40))
+    blocked_mesh.apply_translation((0, 0, 120))
+    empty_vertices = numpy.empty((0, 3), dtype=numpy.float64)
+    empty_faces = numpy.empty((0, 3), dtype=numpy.int64)
+    empty_segments = numpy.empty((0, 2, 3), dtype=numpy.float64)
+    blocked_volume = RadarVisibilityVolume(
+        vertices=empty_vertices,
+        faces=empty_faces,
+        terrain_segments=empty_segments,
+        unknown_segments=empty_segments,
+        grid_shape=(256, 256, 2),
+        occupied_voxel_count=1,
+        blocked_contact_segments=empty_segments,
+        blocked_vertices=numpy.asarray(blocked_mesh.vertices, dtype=numpy.float64),
+        blocked_faces=numpy.asarray(blocked_mesh.faces, dtype=numpy.int64),
+        theoretical_cell_count=1,
+        blocked_cell_count=1,
+        diagnostics={"blocked_cell_count": 1},
+    )
+    monkeypatch.setattr(
+        radar_scene,
+        "build_radar_visibility_envelope",
+        lambda *args, **kwargs: blocked_volume,
+    )
+
+    output = tmp_path / "blocked-only-radar.glb"
+    metadata = radar_scene.write_radar_coverage_glb(
+        output,
+        task_id="blocked-only-task",
+        prepared=prepared,
+        payload=payload,
+        min_visible_height=min_height_path,
+    )
+
+    node_names = {node.get("name") for node in read_glb_document(output.read_bytes())["nodes"]}
+    assert "radar_result/blocked_volume" in node_names
+    assert "radar_result/detectable_shell" not in node_names
+    assert metadata["visibility_volume"]["blocked_volume_available"] is True

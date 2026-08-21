@@ -25,6 +25,12 @@ COOPERATIVE_INTERSECTION_MATERIAL = MaterialSpec(
     shading="unlit",
     emissive_rgb=(255, 150, 30),
 )
+BLOCKED_VOLUME_MATERIAL = MaterialSpec(
+    "radar_terrain_occluded_volume",
+    (220, 42, 52, 118),
+    shading="unlit",
+    emissive_rgb=(132, 20, 28),
+)
 
 
 @dataclass(frozen=True)
@@ -34,6 +40,7 @@ class FusionHeightCounts:
     heights_m: numpy.ndarray
     coverage_count: numpy.ndarray
     terrain_m: numpy.ndarray
+    theoretical_union: numpy.ndarray | None = None
 
     def __post_init__(self) -> None:
         if self.coverage_count.ndim != 3:
@@ -42,6 +49,10 @@ class FusionHeightCounts:
             raise ValueError("Fusion height count does not match coverage-count bands.")
         if self.coverage_count.shape[1:] != self.terrain_m.shape:
             raise ValueError("Fusion terrain shape does not match coverage-count grid.")
+        if self.theoretical_union is not None:
+            theoretical = numpy.asarray(self.theoretical_union, dtype=bool)
+            if theoretical.shape != self.coverage_count.shape:
+                raise ValueError("Fusion theoretical union must match coverage-count grid.")
 
 
 @dataclass(frozen=True)
@@ -129,6 +140,28 @@ def write_multi_radar_fusion_glb(path: Path, *, task_id: str, counts: FusionHeig
                 material=material,
                 extras={"kind": f"fusion_{name}", "minimum_coverage_count": threshold},
             ))
+    blocked_occupancy = (
+        numpy.asarray(counts.theoretical_union, dtype=bool)
+        & (counts.coverage_count == 0)
+        if counts.theoretical_union is not None
+        else None
+    )
+    blocked_mesh = (
+        _occupied_coverage_mesh(counts, blocked_occupancy, frame)
+        if blocked_occupancy is not None
+        else None
+    )
+    if blocked_mesh is not None:
+        nodes.append(SceneNode(
+            name="multi_radar_fusion/blocked_volume",
+            mesh=blocked_mesh,
+            material=BLOCKED_VOLUME_MATERIAL,
+            extras={
+                "kind": "blocked_volume",
+                "visibility_semantics": "terrain_occluded",
+                "default_visible": True,
+            },
+        ))
     if not nodes:
         raise ValueError("Fusion GLB requires at least one covered cell.")
     root = SceneNode(name="multi_radar_fusion", extras={"kind": "multi_radar_fusion"}, children=nodes)
@@ -138,6 +171,11 @@ def write_multi_radar_fusion_glb(path: Path, *, task_id: str, counts: FusionHeig
         "fusion_height_count": int(len(counts.heights_m)),
         "fusion_heights_m": [float(height) for height in counts.heights_m],
         "coverage_thresholds": [1, 2, 3],
+        "blocked_volume_available": blocked_mesh is not None,
+        "blocked_volume_semantics": "terrain_occluded",
+        "blocked_volume_face_count": int(len(blocked_mesh.faces)) if blocked_mesh is not None else 0,
+        "blocked_volume_cell_count": int(numpy.count_nonzero(blocked_occupancy)) if blocked_occupancy is not None else 0,
+        "theoretical_union_cell_count": int(numpy.count_nonzero(counts.theoretical_union)) if counts.theoretical_union is not None else 0,
     })
     export_glb(path, [root], scene_metadata=metadata, include_normals=False)
     return metadata
@@ -216,6 +254,14 @@ def _fill_invalid_terrain(terrain_m: numpy.ndarray) -> numpy.ndarray:
 
 def _coverage_mesh(counts: FusionHeightCounts, threshold: int, frame: SceneFrame) -> trimesh.Trimesh | None:
     occupied = counts.coverage_count >= threshold
+    return _occupied_coverage_mesh(counts, occupied, frame)
+
+
+def _occupied_coverage_mesh(
+    counts: FusionHeightCounts,
+    occupied: numpy.ndarray,
+    frame: SceneFrame,
+) -> trimesh.Trimesh | None:
     if not occupied.any():
         return None
     padded = numpy.pad(occupied.astype(numpy.float32), 1)

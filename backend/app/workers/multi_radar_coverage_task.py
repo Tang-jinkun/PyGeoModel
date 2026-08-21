@@ -50,6 +50,7 @@ class StationEvaluation:
     scene_task_id: str | None = None
     scene_status: str | None = None
     scene_message: str = ""
+    fusion_theoretical_masks: numpy.ndarray | None = None
 
 
 StationEvaluator = Callable[[SharedMultiRadarDem, object], StationEvaluation]
@@ -140,6 +141,11 @@ def build_multi_radar_artifacts(
             completed = _generate_cooperative_scene_tasks(task_id, payload, completed, progress)
         progress("Writing aggregate coverage outputs.", 90)
         fusion_masks = [item.fusion_masks for item in completed if item.fusion_masks is not None]
+        fusion_theoretical_masks = [
+            item.fusion_theoretical_masks
+            for item in completed
+            if item.fusion_theoretical_masks is not None
+        ]
         fusion_envelopes = [item.fusion_envelope for item in completed if item.fusion_envelope is not None]
         fusion_path = None
         cooperative_intersection_path = None
@@ -172,6 +178,12 @@ def build_multi_radar_artifacts(
                 heights_m=FUSION_HEIGHTS_M,
                 coverage_count=accumulate_fusion_height_counts(fusion_masks),
                 terrain_m=terrain,
+                theoretical_union=(
+                    numpy.logical_or.reduce(fusion_theoretical_masks)
+                    if not failures
+                    and len(fusion_theoretical_masks) == len(payload.radars)
+                    else None
+                ),
             )
             fusion_path = staging_dir / "fusion_scene.glb"
             write_multi_radar_fusion_glb(fusion_path, task_id=task_id, counts=fusion_counts)
@@ -203,12 +215,15 @@ def build_multi_radar_artifacts(
             "failed_station_count": len(failures),
         }
         status = "partial" if failures else "finished"
+        message = "Finished with station failures." if failures else "finished"
+        if failures:
+            message += " Deterministic blocked volume is unavailable for partial station results."
         return MultiRadarArtifactResult(
             status=status,
             metrics=metrics,
             outputs=outputs,
             stations=_station_summaries(payload, completed, failures),
-            message="Finished with station failures." if failures else "finished",
+            message=message,
         )
     finally:
         if staging_dir.exists():
@@ -238,7 +253,7 @@ def _evaluate_station(shared: SharedMultiRadarDem, station) -> StationEvaluation
         visible_mask, range_mask = station_masks_to_shared_grid(
             shared, local_transform, masks["visible"], masks["theoretical"]
         )
-        fusion_masks = _station_fusion_masks(
+        fusion_masks, fusion_theoretical_masks = _station_fusion_masks(
             shared, data, local_transform, local_domain, radar_x, radar_y, request
         )
         fusion_envelope = _station_fusion_envelope(
@@ -248,6 +263,7 @@ def _evaluate_station(shared: SharedMultiRadarDem, station) -> StationEvaluation
         return StationEvaluation(
             radar_id=station.radar_id, name=station.name, visible_mask=visible_mask,
             range_mask=range_mask, metrics=metrics.model_dump(), fusion_masks=fusion_masks,
+            fusion_theoretical_masks=fusion_theoretical_masks,
             fusion_envelope=fusion_envelope,
         )
     finally:
@@ -321,16 +337,21 @@ def _read_fusion_terrain(
 def _station_fusion_masks(shared, data, local_transform, local_domain, radar_x, radar_y, request):
     rows, columns, _transform = fusion_grid_spec(shared)
     sampled_masks = []
+    sampled_theoretical_masks = []
     for height_m in FUSION_HEIGHTS_M:
         masks = _coverage_masks(
             data, local_transform, radar_x, radar_y, request, float(height_m),
             effective_max_range(request)[0], local_domain,
         )
-        visible, _theoretical = station_masks_to_shared_grid(
+        visible, theoretical = station_masks_to_shared_grid(
             shared, local_transform, masks["visible"], masks["theoretical"]
         )
         sampled_masks.append(visible[numpy.ix_(rows, columns)])
-    return numpy.asarray(sampled_masks, dtype=bool)
+        sampled_theoretical_masks.append(theoretical[numpy.ix_(rows, columns)])
+    return (
+        numpy.asarray(sampled_masks, dtype=bool),
+        numpy.asarray(sampled_theoretical_masks, dtype=bool),
+    )
 
 
 def _station_fusion_envelope(

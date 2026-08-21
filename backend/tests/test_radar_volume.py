@@ -13,6 +13,7 @@ from app.scene3d.radar_volume import (
     _terrain_contact_segments,
     _terrain_shadow_boundary_segments,
     _unknown_boundary_segments,
+    build_radar_visibility_envelope,
     build_radar_visibility_volume,
 )
 from app.services.coverage_model import PreparedCoverageDem
@@ -207,6 +208,178 @@ def test_visibility_volume_carves_terrain_and_unknown_space(tmp_path: Path) -> N
         volume.unknown_segments[:, :, 1] - prepared.radar_y,
     )
     assert numpy.all(unknown_distance <= payload.coverage.max_range_m)
+
+
+def test_visibility_envelope_returns_empty_result_without_a_valid_surface_cell(
+    tmp_path: Path,
+) -> None:
+    dem_path = tmp_path / "envelope-dem.tif"
+    min_height_path = tmp_path / "envelope-minimum-visible-height.tif"
+    nodata = -9999.0
+    shape = (5, 5)
+    transform = from_origin(-250, 250, 100, 100)
+    dem = numpy.full(shape, 100, dtype=numpy.float32)
+    min_visible_height = numpy.full(shape, nodata, dtype=numpy.float32)
+    min_visible_height[2, 2] = 0
+
+    for path, data in ((dem_path, dem), (min_height_path, min_visible_height)):
+        with rasterio.open(
+            path,
+            "w",
+            driver="GTiff",
+            width=shape[1],
+            height=shape[0],
+            count=1,
+            dtype=data.dtype,
+            crs="EPSG:32644",
+            transform=transform,
+            nodata=nodata,
+        ) as dataset:
+            dataset.write(data, 1)
+
+    payload = CoverageRequest.model_validate(
+        {
+            "dem_id": "dem_empty_envelope",
+            "radar": {"lon": 79.0, "lat": 31.5, "height_m": 30},
+            "coverage": {"max_range_m": 200, "scan_mode": "omni"},
+        }
+    )
+    prepared = PreparedCoverageDem(
+        source_dem=dem_path,
+        projected_dem=dem_path,
+        target_epsg=32644,
+        radar_x=0,
+        radar_y=0,
+        projected_bounds=BoundingBox(-250, -250, 250, 250),
+        resolution_m=(100, 100),
+        dem_coverage_ratio=1,
+        analysis_domain=numpy.ones(shape, dtype=bool),
+    )
+
+    volume = build_radar_visibility_envelope(
+        prepared,
+        payload,
+        min_height_path,
+        grid_shape=(5, 5, 2),
+    )
+
+    assert volume.vertices.shape == (0, 3)
+    assert volume.faces.shape == (0, 3)
+    assert volume.diagnostics is not None
+    assert volume.diagnostics["envelope_valid_count"] == 1
+    assert volume.diagnostics["surface_cell_count"] == 0
+    assert volume.diagnostics["fallback"] == "visual_dome"
+
+
+def test_visibility_envelope_splits_visible_and_terrain_blocked_height_fields(
+    tmp_path: Path,
+) -> None:
+    dem_path = tmp_path / "split-dem.tif"
+    min_height_path = tmp_path / "split-minimum-visible-height.tif"
+    shape = (5, 5)
+    transform = from_origin(-250, 250, 100, 100)
+    dem = numpy.full(shape, 100, dtype=numpy.float32)
+    minimum_visible_height = numpy.full(shape, 50, dtype=numpy.float32)
+    _write_test_raster(dem_path, dem, transform)
+    _write_test_raster(min_height_path, minimum_visible_height, transform)
+    payload = CoverageRequest.model_validate(
+        {
+            "dem_id": "dem_split",
+            "radar": {"lon": 79.0, "lat": 31.5, "height_m": 30},
+            "coverage": {"max_range_m": 200},
+            "advanced": {"min_elevation_deg": 0, "max_elevation_deg": 90},
+        }
+    )
+    prepared = PreparedCoverageDem(
+        source_dem=dem_path,
+        projected_dem=dem_path,
+        target_epsg=32644,
+        radar_x=0,
+        radar_y=0,
+        projected_bounds=BoundingBox(-250, -250, 250, 250),
+        resolution_m=(100, 100),
+        dem_coverage_ratio=1,
+        analysis_domain=numpy.ones(shape, dtype=bool),
+    )
+
+    volume = build_radar_visibility_envelope(
+        prepared,
+        payload,
+        min_height_path,
+        grid_shape=(5, 5, 2),
+    )
+
+    assert volume.blocked_vertices is not None
+    assert volume.blocked_faces is not None
+    assert len(volume.blocked_faces) > 0
+    assert volume.blocked_cell_count > 0
+    assert volume.visible_cell_count > 0
+    assert volume.blocked_vertices[:, 2].min() >= 100
+    assert volume.blocked_vertices[:, 2].max() < volume.vertices[:, 2].min()
+    assert volume.diagnostics is not None
+    assert volume.diagnostics["blocked_cell_count"] == volume.blocked_cell_count
+
+
+def test_visibility_envelope_can_export_blocked_only_when_visible_bounds_are_empty(
+    tmp_path: Path,
+) -> None:
+    dem_path = tmp_path / "blocked-only-dem.tif"
+    min_height_path = tmp_path / "blocked-only-minimum-visible-height.tif"
+    shape = (5, 5)
+    transform = from_origin(-250, 250, 100, 100)
+    dem = numpy.full(shape, 100, dtype=numpy.float32)
+    minimum_visible_height = numpy.full(shape, 50, dtype=numpy.float32)
+    _write_test_raster(dem_path, dem, transform)
+    _write_test_raster(min_height_path, minimum_visible_height, transform)
+    payload = CoverageRequest.model_validate(
+        {
+            "dem_id": "dem_blocked_only",
+            "radar": {"lon": 79.0, "lat": 31.5, "height_m": 30},
+            "coverage": {"max_range_m": 200},
+            "advanced": {"min_elevation_deg": 0, "max_elevation_deg": 1},
+        }
+    )
+    prepared = PreparedCoverageDem(
+        source_dem=dem_path,
+        projected_dem=dem_path,
+        target_epsg=32644,
+        radar_x=0,
+        radar_y=0,
+        projected_bounds=BoundingBox(-250, -250, 250, 250),
+        resolution_m=(100, 100),
+        dem_coverage_ratio=1,
+        analysis_domain=numpy.ones(shape, dtype=bool),
+    )
+
+    volume = build_radar_visibility_envelope(
+        prepared,
+        payload,
+        min_height_path,
+        grid_shape=(5, 5, 2),
+    )
+
+    assert volume.visible_cell_count == 0
+    assert volume.blocked_cell_count > 0
+    assert volume.vertices.shape == (0, 3)
+    assert volume.faces.shape == (0, 3)
+    assert volume.blocked_vertices is not None
+    assert len(volume.blocked_faces) > 0
+
+
+def _write_test_raster(path: Path, data: numpy.ndarray, transform) -> None:
+    with rasterio.open(
+        path,
+        "w",
+        driver="GTiff",
+        width=data.shape[1],
+        height=data.shape[0],
+        count=1,
+        dtype=data.dtype,
+        crs="EPSG:32644",
+        transform=transform,
+        nodata=-9999,
+    ) as dataset:
+        dataset.write(data, 1)
 
 
 def test_visibility_volume_uses_terrain_height_limit_and_negative_elevation(

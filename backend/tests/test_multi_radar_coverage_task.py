@@ -9,6 +9,7 @@ from app.core.config import settings
 from app.schemas.radar import MultiRadarRequest
 from app.services.multi_radar_task_store import create_multi_task, get_multi_task
 from app.services.coverage_model import PROJECTED_DEM_NODATA
+from app.scene3d.exporter import read_glb_document
 from app.services.multi_radar_fusion_volume import FusionHeightEnvelope
 from app.workers import multi_radar_coverage_task
 from app.workers.multi_radar_coverage_task import station_masks_to_shared_grid
@@ -97,6 +98,124 @@ def test_multi_worker_keeps_successful_station_when_a_sibling_fails(tmp_path: Pa
         ("good", "finished"),
         ("bad", "failed"),
     ]
+
+
+def test_partial_multi_worker_does_not_write_joint_blocked_volume(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    settings.data_dir = tmp_path
+    settings.ensure_directories()
+    payload = _payload()
+    task = create_multi_task(payload)
+    projected_dem = tmp_path / "projected.tif"
+    with rasterio.open(
+        projected_dem,
+        "w",
+        driver="GTiff",
+        width=2,
+        height=2,
+        count=1,
+        dtype="float32",
+        crs="EPSG:32644",
+        transform=from_origin(0, 2, 1, 1),
+        nodata=-9999,
+    ) as source:
+        source.write(numpy.zeros((2, 2), dtype=numpy.float32), 1)
+    prepared = multi_radar_coverage_task.SharedMultiRadarDem(
+        projected_dem=projected_dem,
+        target_epsg=32644,
+        transform=from_origin(0, 2, 1, 1),
+        analysis_domain=numpy.ones((2, 2), dtype=bool),
+        station_points={"good": (0.5, 1.5), "bad": (1.5, 1.5)},
+    )
+
+    def evaluate(_shared, station):
+        if station.radar_id == "bad":
+            raise RuntimeError("station failed")
+        return multi_radar_coverage_task.StationEvaluation(
+            radar_id="good",
+            name="Good",
+            visible_mask=numpy.ones((2, 2), dtype=bool),
+            range_mask=numpy.ones((2, 2), dtype=bool),
+            metrics={"visible_area_m2": 4},
+            fusion_masks=numpy.ones((7, 2, 2), dtype=bool),
+            fusion_theoretical_masks=numpy.ones((7, 2, 2), dtype=bool),
+        )
+
+    monkeypatch.setattr(multi_radar_coverage_task, "find_dem_compute_file", lambda _: tmp_path / "source.tif")
+    monkeypatch.setattr(multi_radar_coverage_task, "prepare_shared_multi_radar_dem", lambda *_: prepared)
+
+    multi_radar_coverage_task.run_multi_radar_coverage_task(task.task_id, payload, evaluator=evaluate)
+
+    stored = get_multi_task(task.task_id)
+    assert stored.status == "partial"
+    assert stored.outputs is not None
+    assert stored.outputs.fusion_scene_glb is not None
+    assert "blocked" in stored.message.lower()
+    fusion_path = tmp_path / "outputs" / task.task_id / "fusion_scene.glb"
+    document = read_glb_document(fusion_path.read_bytes())
+    assert "multi_radar_fusion/blocked_volume" not in {
+        node.get("name") for node in document["nodes"]
+    }
+
+
+def test_complete_multi_worker_writes_joint_blocked_volume_from_theoretical_union(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    settings.data_dir = tmp_path
+    settings.ensure_directories()
+    payload = _payload()
+    task = create_multi_task(payload)
+    projected_dem = tmp_path / "projected-complete.tif"
+    with rasterio.open(
+        projected_dem,
+        "w",
+        driver="GTiff",
+        width=2,
+        height=2,
+        count=1,
+        dtype="float32",
+        crs="EPSG:32644",
+        transform=from_origin(0, 2, 1, 1),
+        nodata=-9999,
+    ) as source:
+        source.write(numpy.zeros((2, 2), dtype=numpy.float32), 1)
+    prepared = multi_radar_coverage_task.SharedMultiRadarDem(
+        projected_dem=projected_dem,
+        target_epsg=32644,
+        transform=from_origin(0, 2, 1, 1),
+        analysis_domain=numpy.ones((2, 2), dtype=bool),
+        station_points={"good": (0.5, 1.5), "bad": (1.5, 1.5)},
+    )
+
+    def evaluate(_shared, station):
+        visible = numpy.zeros((7, 2, 2), dtype=bool)
+        visible[:, 0 if station.radar_id == "good" else 1, 0 if station.radar_id == "good" else 1] = True
+        return multi_radar_coverage_task.StationEvaluation(
+            radar_id=station.radar_id,
+            name=station.radar_id,
+            visible_mask=visible[0],
+            range_mask=numpy.ones((2, 2), dtype=bool),
+            metrics={"visible_area_m2": 1},
+            fusion_masks=visible,
+            fusion_theoretical_masks=numpy.ones((7, 2, 2), dtype=bool),
+        )
+
+    monkeypatch.setattr(multi_radar_coverage_task, "find_dem_compute_file", lambda _: tmp_path / "source.tif")
+    monkeypatch.setattr(multi_radar_coverage_task, "prepare_shared_multi_radar_dem", lambda *_: prepared)
+
+    multi_radar_coverage_task.run_multi_radar_coverage_task(task.task_id, payload, evaluator=evaluate)
+
+    stored = get_multi_task(task.task_id)
+    assert stored.status == "finished"
+    assert stored.outputs is not None and stored.outputs.fusion_scene_glb is not None
+    fusion_path = tmp_path / "outputs" / task.task_id / "fusion_scene.glb"
+    document = read_glb_document(fusion_path.read_bytes())
+    names = {node.get("name") for node in document["nodes"]}
+    assert "multi_radar_fusion/union" in names
+    assert "multi_radar_fusion/blocked_volume" in names
 
 
 def test_station_masks_are_placed_back_on_the_shared_grid(tmp_path: Path) -> None:

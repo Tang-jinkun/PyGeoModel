@@ -40,6 +40,12 @@ SHELL_MATERIAL = MaterialSpec(
     shading="unlit",
     emissive_rgb=(20, 44, 30),
 )
+BLOCKED_VOLUME_MATERIAL = MaterialSpec(
+    "radar_terrain_occluded_volume",
+    (220, 42, 52, 118),
+    shading="unlit",
+    emissive_rgb=(132, 20, 28),
+)
 DETECTION_FLOOR_MATERIAL = MaterialSpec(
     "radar_detection_floor",
     (20, 73, 48, 210),
@@ -188,6 +194,21 @@ def write_radar_coverage_glb(
         if min_visible_height is not None
         else None
     )
+    has_green_envelope = (
+        visibility_volume is not None and bool(len(visibility_volume.faces))
+    )
+    blocked_vertices = (
+        visibility_volume.blocked_vertices
+        if visibility_volume is not None and visibility_volume.blocked_vertices is not None
+        else numpy.empty((0, 3), dtype=numpy.float64)
+    )
+    blocked_faces = (
+        visibility_volume.blocked_faces
+        if visibility_volume is not None and visibility_volume.blocked_faces is not None
+        else numpy.empty((0, 3), dtype=numpy.int64)
+    )
+    has_blocked_envelope = bool(len(blocked_faces))
+    has_visibility_envelope = has_green_envelope or has_blocked_envelope
     all_points = [
         (prepared.radar_x, prepared.radar_y, radar_altitude_m),
         *(result.point for row in ray_grid for result in row),
@@ -197,6 +218,7 @@ def write_radar_coverage_glb(
             if visibility_volume is not None
             else ()
         ),
+        *(tuple(point) for point in blocked_vertices),
     ]
     frame = SceneFrame.from_projected_points(prepared.target_epsg, all_points, axes="z_up")
     actual_local_grid = [
@@ -210,12 +232,19 @@ def write_radar_coverage_glb(
     wrap = payload.coverage.scan_mode == "omni"
     shell = (
         _visibility_volume_mesh(visibility_volume, frame)
-        if visibility_volume is not None
+        if has_green_envelope
+        else None
+        if has_blocked_envelope
         else _shell_mesh(local_grid, visual_ray_grid, wrap)
     )
     detection_floor = (
         _visibility_floor_mesh(visibility_volume, frame)
-        if visibility_volume is not None
+        if has_visibility_envelope
+        else None
+    )
+    blocked_mesh = (
+        _visibility_blocked_mesh(blocked_vertices, blocked_faces, frame)
+        if has_blocked_envelope
         else None
     )
     grid_radius_m = max(3.0, min(45.0, effective_range_m * 0.0008))
@@ -235,7 +264,7 @@ def write_radar_coverage_glb(
             frame,
             radius_m=max(10.0, min(40.0, effective_range_m * 0.0007)),
         )
-        if visibility_volume is not None
+        if has_visibility_envelope
         else None
     )
     origin = frame.to_gltf(
@@ -263,22 +292,38 @@ def write_radar_coverage_glb(
         radius=max(4.0, min(20.0, effective_range_m * 0.0004)),
     )
 
-    root = SceneNode(
-        name="radar_result",
-        extras={"kind": "radar_detection_domain"},
-        children=[
-            SceneNode(
-                name="radar_result/radar_origin",
-                mesh=origin_mesh,
-                material=ORIGIN_MATERIAL,
-                extras={"kind": "radar_origin"},
-            ),
+    scene_children: list[SceneNode] = [
+        SceneNode(
+            name="radar_result/radar_origin",
+            mesh=origin_mesh,
+            material=ORIGIN_MATERIAL,
+            extras={"kind": "radar_origin"},
+        ),
+    ]
+    if shell is not None:
+        scene_children.append(
             SceneNode(
                 name="radar_result/detectable_shell",
                 mesh=shell,
                 material=SHELL_MATERIAL,
                 extras={"kind": "detectable_shell"},
-            ),
+            )
+        )
+    if blocked_mesh is not None:
+        scene_children.append(
+            SceneNode(
+                name="radar_result/blocked_volume",
+                mesh=blocked_mesh,
+                material=BLOCKED_VOLUME_MATERIAL,
+                extras={
+                    "kind": "blocked_volume",
+                    "visibility_semantics": "terrain_occluded",
+                    "default_visible": True,
+                },
+            )
+        )
+    scene_children.extend(
+        [
             *(
                 [
                     SceneNode(
@@ -346,7 +391,12 @@ def write_radar_coverage_glb(
                 },
             ),
             *scan_nodes,
-        ],
+        ]
+    )
+    root = SceneNode(
+        name="radar_result",
+        extras={"kind": "radar_detection_domain"},
+        children=scene_children,
     )
     metadata = frame.metadata(task_id, "radar")
     metadata.update(
@@ -412,6 +462,11 @@ def write_radar_coverage_glb(
         lower_faces = _lower_face_mask(visibility_volume.faces)
         metadata["visibility_volume"] = {
             "method": "dem_height_field_envelope",
+            "available": has_visibility_envelope,
+            "fallback": "visual_dome" if not has_visibility_envelope else None,
+            "warning_code": (
+                "RADAR_ENVELOPE_EMPTY" if not has_visibility_envelope else None
+            ),
             "nominal_elevation_deg": [0, 90],
             "scan_elevation_deg": [
                 payload.advanced.min_elevation_deg,
@@ -429,6 +484,13 @@ def write_radar_coverage_glb(
             ),
             "terrain_segment_count": len(visibility_volume.terrain_segments),
             "unknown_segment_count": len(visibility_volume.unknown_segments),
+            "blocked_volume_available": has_blocked_envelope,
+            "blocked_volume_semantics": "terrain_occluded",
+            "blocked_volume_face_count": int(len(blocked_faces)),
+            "blocked_volume_cell_count": int(visibility_volume.blocked_cell_count),
+            "theoretical_cell_count": int(visibility_volume.theoretical_cell_count),
+            "calculation_bounds": visibility_volume.calculation_bounds,
+            "diagnostics": visibility_volume.diagnostics,
         }
     export_glb(
         path,
@@ -613,6 +675,14 @@ def _visibility_volume_mesh(
 ) -> trimesh.Trimesh:
     faces = volume.faces[~_lower_face_mask(volume.faces)]
     return _indexed_projected_mesh(volume.vertices, faces, frame)
+
+
+def _visibility_blocked_mesh(
+    vertices: numpy.ndarray,
+    faces: numpy.ndarray,
+    frame: SceneFrame,
+) -> trimesh.Trimesh:
+    return _indexed_projected_mesh(vertices, faces, frame)
 
 
 def _visibility_floor_mesh(

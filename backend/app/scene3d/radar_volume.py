@@ -24,6 +24,13 @@ class RadarVisibilityVolume:
     grid_shape: tuple[int, int, int]
     occupied_voxel_count: int
     blocked_contact_segments: numpy.ndarray | None = None
+    diagnostics: dict[str, object] | None = None
+    blocked_vertices: numpy.ndarray | None = None
+    blocked_faces: numpy.ndarray | None = None
+    theoretical_cell_count: int = 0
+    visible_cell_count: int = 0
+    blocked_cell_count: int = 0
+    calculation_bounds: dict[str, object] | None = None
 
 
 def build_radar_visibility_volume(
@@ -284,11 +291,14 @@ def build_radar_visibility_envelope(
     inside_range = horizontal_distance_squared <= effective_range_m**2
     sector = _sector_mask(dx, dy, payload)
 
-    lower_surface = terrain_grid + min_height_grid
     minimum_elevation = numpy.radians(payload.advanced.min_elevation_deg)
-    lower_surface = numpy.maximum(
-        lower_surface,
+    nominal_lower = numpy.maximum(
+        terrain_grid,
         radar_z + horizontal_distance * numpy.tan(minimum_elevation),
+    )
+    visible_lower = numpy.maximum(
+        nominal_lower,
+        terrain_grid + min_height_grid,
     )
     upper_surface = radar_z + numpy.sqrt(
         numpy.maximum(0.0, effective_range_m**2 - horizontal_distance_squared)
@@ -301,18 +311,92 @@ def build_radar_visibility_envelope(
             * numpy.tan(numpy.radians(payload.advanced.max_elevation_deg)),
         )
 
-    envelope_valid = (
+    theoretical_valid = (
         valid_horizontal
         & inside_range
         & sector
-        & (lower_surface <= upper_surface)
+        & (nominal_lower <= upper_surface)
     )
-    vertices, faces = build_height_field_envelope_mesh(
+    boundary_gap_m = max(
+        0.01,
+        min(0.1, min(float(value) for value in prepared.resolution_m) * 0.001),
+    )
+    green_valid = theoretical_valid & (upper_surface > visible_lower + boundary_gap_m)
+    red_upper = numpy.minimum(visible_lower, upper_surface)
+    red_upper = numpy.where(green_valid, red_upper - boundary_gap_m, red_upper)
+    blocked_valid = theoretical_valid & (red_upper >= nominal_lower)
+    green_cell_valid = _height_field_surface_cells(green_valid)
+    blocked_cell_valid = _height_field_positive_surface_cells(
+        blocked_valid,
+        red_upper - nominal_lower,
+    )
+    theoretical_cell_valid = _height_field_surface_cells(theoretical_valid)
+    calculation_bounds = {
+        "nominal_lower_m": _height_field_bounds(nominal_lower, theoretical_valid),
+        "visible_lower_m": _height_field_bounds(visible_lower, theoretical_valid),
+        "nominal_upper_m": _height_field_bounds(upper_surface, theoretical_valid),
+        "effective_range_m": float(effective_range_m),
+        "boundary_gap_m": float(boundary_gap_m),
+    }
+    diagnostics: dict[str, object] = {
+        "dem_valid_count": int(numpy.count_nonzero(dem_valid & analysis_domain)),
+        "threshold_valid_count": int(
+            numpy.count_nonzero(threshold_valid & analysis_domain)
+        ),
+        "valid_horizontal_count": int(numpy.count_nonzero(valid_horizontal)),
+        "in_range_sector_count": int(
+            numpy.count_nonzero(valid_horizontal & inside_range & sector)
+        ),
+        "elevation_filtered_count": int(
+            numpy.count_nonzero(
+                valid_horizontal
+                & inside_range
+                & sector
+                & (nominal_lower > upper_surface)
+            )
+        ),
+        "envelope_valid_count": int(numpy.count_nonzero(theoretical_valid)),
+        "surface_cell_count": int(numpy.count_nonzero(theoretical_cell_valid)),
+        "theoretical_cell_count": int(numpy.count_nonzero(theoretical_cell_valid)),
+        "visible_cell_count": int(numpy.count_nonzero(green_cell_valid)),
+        "blocked_cell_count": int(numpy.count_nonzero(blocked_cell_valid)),
+        "calculation_bounds": calculation_bounds,
+    }
+    if not green_cell_valid.any() and not blocked_cell_valid.any():
+        diagnostics["fallback"] = "visual_dome"
+        empty_vertices = numpy.empty((0, 3), dtype=numpy.float64)
+        empty_faces = numpy.empty((0, 3), dtype=numpy.int64)
+        empty_segments = numpy.empty((0, 2, 3), dtype=numpy.float64)
+        return RadarVisibilityVolume(
+            vertices=empty_vertices,
+            faces=empty_faces,
+            terrain_segments=empty_segments,
+            unknown_segments=empty_segments,
+            grid_shape=(x_count, y_count, 2),
+            occupied_voxel_count=int(numpy.count_nonzero(theoretical_valid)),
+            blocked_contact_segments=empty_segments,
+            diagnostics=diagnostics,
+            blocked_vertices=empty_vertices,
+            blocked_faces=empty_faces,
+            theoretical_cell_count=int(numpy.count_nonzero(theoretical_cell_valid)),
+            visible_cell_count=0,
+            blocked_cell_count=0,
+            calculation_bounds=calculation_bounds,
+        )
+    vertices, faces = _optional_height_field_mesh(
         x_grid,
         y_grid,
-        lower_surface,
+        visible_lower,
         upper_surface,
-        envelope_valid,
+        green_valid,
+    )
+    blocked_vertices, blocked_faces = _optional_height_field_mesh(
+        x_grid,
+        y_grid,
+        nominal_lower,
+        red_upper,
+        blocked_valid,
+        cell_valid=blocked_cell_valid,
     )
     x_pitch = (2 * effective_range_m) / (x_count - 1)
     y_pitch = (2 * effective_range_m) / (y_count - 1)
@@ -323,7 +407,13 @@ def build_radar_visibility_envelope(
         origin=(x_min, y_min),
         pitch=(x_pitch, y_pitch),
     )
-    vertical_span = max(1.0, float(upper_surface[envelope_valid].max() - lower_surface[envelope_valid].min()))
+    vertical_span = max(
+        1.0,
+        float(
+            upper_surface[theoretical_valid].max()
+            - nominal_lower[theoretical_valid].min()
+        ),
+    )
     terrain_segments = _terrain_contact_segments(
         vertices,
         faces,
@@ -350,9 +440,62 @@ def build_radar_visibility_envelope(
         terrain_segments=terrain_segments,
         unknown_segments=unknown_segments,
         grid_shape=(x_count, y_count, 2),
-        occupied_voxel_count=int(numpy.count_nonzero(envelope_valid)),
+        occupied_voxel_count=int(numpy.count_nonzero(theoretical_valid)),
         blocked_contact_segments=blocked_contact_segments,
+        diagnostics=diagnostics,
+        blocked_vertices=blocked_vertices,
+        blocked_faces=blocked_faces,
+        theoretical_cell_count=int(numpy.count_nonzero(theoretical_cell_valid)),
+        visible_cell_count=int(numpy.count_nonzero(green_cell_valid)),
+        blocked_cell_count=int(numpy.count_nonzero(blocked_cell_valid)),
+        calculation_bounds=calculation_bounds,
     )
+
+
+def _optional_height_field_mesh(
+    x_grid: numpy.ndarray,
+    y_grid: numpy.ndarray,
+    lower: numpy.ndarray,
+    upper: numpy.ndarray,
+    valid: numpy.ndarray,
+    *,
+    cell_valid: numpy.ndarray | None = None,
+) -> tuple[numpy.ndarray, numpy.ndarray]:
+    cells = _height_field_surface_cells(valid) if cell_valid is None else cell_valid
+    if not cells.any():
+        return (
+            numpy.empty((0, 3), dtype=numpy.float64),
+            numpy.empty((0, 3), dtype=numpy.int64),
+        )
+    return build_height_field_envelope_mesh(
+        x_grid,
+        y_grid,
+        lower,
+        upper,
+        valid,
+        cell_valid=cells,
+    )
+
+
+def _height_field_bounds(values: numpy.ndarray, valid: numpy.ndarray) -> dict[str, float] | None:
+    samples = numpy.asarray(values[valid], dtype=numpy.float64)
+    if samples.size == 0:
+        return None
+    return {"min_m": float(samples.min()), "max_m": float(samples.max())}
+
+
+def _height_field_positive_surface_cells(
+    valid: numpy.ndarray,
+    thickness: numpy.ndarray,
+) -> numpy.ndarray:
+    cell_valid = _height_field_surface_cells(valid)
+    cell_positive = (
+        (thickness[:-1, :-1] > 0)
+        | (thickness[:-1, 1:] > 0)
+        | (thickness[1:, :-1] > 0)
+        | (thickness[1:, 1:] > 0)
+    )
+    return cell_valid & cell_positive
 
 
 def build_height_field_envelope_mesh(
@@ -361,8 +504,14 @@ def build_height_field_envelope_mesh(
     lower: numpy.ndarray,
     upper: numpy.ndarray,
     valid: numpy.ndarray,
+    *,
+    cell_valid: numpy.ndarray | None = None,
 ) -> tuple[numpy.ndarray, numpy.ndarray]:
-    cell_valid = valid[:-1, :-1] & valid[:-1, 1:] & valid[1:, :-1] & valid[1:, 1:]
+    cell_valid = (
+        _height_field_surface_cells(valid)
+        if cell_valid is None
+        else numpy.asarray(cell_valid, dtype=bool)
+    )
     if not cell_valid.any():
         raise ValueError("Radar height-field envelope contains no valid surface cells")
 
@@ -422,6 +571,10 @@ def build_height_field_envelope_mesh(
             add_side((row + 1, column + 1), (row, column + 1))
 
     return numpy.asarray(vertices, dtype=numpy.float64), numpy.asarray(faces, dtype=numpy.int64)
+
+
+def _height_field_surface_cells(valid: numpy.ndarray) -> numpy.ndarray:
+    return valid[:-1, :-1] & valid[:-1, 1:] & valid[1:, :-1] & valid[1:, 1:]
 
 
 def _bounded_grid_shape(
