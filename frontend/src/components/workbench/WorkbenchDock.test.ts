@@ -38,6 +38,33 @@ describe("WorkbenchDock", () => {
     expect(wrapper.emitted("update-scene-glb-scan")?.[0]).toEqual(["task-1:scene_glb", false]);
   });
 
+  it("emits independent terrain-occluded visibility for a radar scene GLB", async () => {
+    const wrapper = mount(WorkbenchDock, {
+      props: {
+        modelValue: "radar",
+        sceneEntries: [{ id: "task-1:scene_glb", taskId: "task-1", kind: "scene_glb", scanAvailable: true, file: sceneFile(), state: readyScene() }] as never
+      }
+    });
+
+    await wrapper.get('[data-dock-tab="layers"]').trigger("click");
+    await wrapper.get('[data-scene-glb-blocked="task-1:scene_glb"]').setValue(false);
+
+    expect(wrapper.emitted("update-scene-glb-blocked")?.[0]).toEqual(["task-1:scene_glb", false]);
+  });
+
+  it("does not show a blocked toggle for a legacy scene GLB", async () => {
+    const wrapper = mount(WorkbenchDock, {
+      props: {
+        modelValue: "radar",
+        sceneEntries: [{ id: "task-1:scene_glb", taskId: "task-1", kind: "scene_glb", scanAvailable: true, file: sceneFile(), state: { ...readyScene(), blockedAvailable: false } }] as never
+      }
+    });
+
+    await wrapper.get('[data-dock-tab="layers"]').trigger("click");
+
+    expect(wrapper.find('[data-scene-glb-blocked="task-1:scene_glb"]').exists()).toBe(false);
+  });
+
   it("emits model selection and renders a supplied real data pane", async () => {
     const wrapper = mount(WorkbenchDock, {
       props: { modelValue: "radar" },
@@ -114,6 +141,8 @@ function readyScene(): SceneGlbOverlayState {
     status: "visible",
     visible: true,
     scanVisible: true,
+    blockedVisible: true,
+    blockedAvailable: true,
     progress: null,
     error: null
   };

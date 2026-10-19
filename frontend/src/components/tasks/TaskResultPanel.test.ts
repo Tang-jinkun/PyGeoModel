@@ -261,6 +261,8 @@ describe("TaskResultPanel", () => {
       status: "idle",
       visible: false,
       scanVisible: true,
+      blockedVisible: true,
+      blockedAvailable: false,
       progress: null,
       error: null
     };
@@ -305,6 +307,8 @@ describe("TaskResultPanel", () => {
           status: "idle",
           visible: false,
           scanVisible: true,
+          blockedVisible: true,
+          blockedAvailable: false,
           progress: null,
           error: null
         }

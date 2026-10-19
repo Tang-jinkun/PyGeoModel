@@ -138,7 +138,13 @@ describe("static scene GLB preparation", () => {
       kind: "blocked_volume",
       visibility_semantics: "terrain_occluded"
     };
-    root.add(shell, blocked);
+    const blockedSide = new THREE.Mesh(
+      new THREE.BoxGeometry(),
+      new THREE.MeshStandardMaterial({ color: "#dc2f3d", transparent: true, opacity: 0.4 })
+    );
+    blockedSide.name = "radar_result/blocked_volume_side";
+    blockedSide.userData = { visibility_semantics: "terrain_occluded" };
+    root.add(shell, blocked, blockedSide);
 
     const asset = prepareStaticScene(root, metadata, []);
     const preparedShell = asset.group.getObjectByName("radar_result/detectable_shell") as THREE.Mesh;
@@ -151,6 +157,10 @@ describe("static scene GLB preparation", () => {
     expect((preparedBlocked.material as THREE.MeshStandardMaterial).color.getHexString()).toBe(blockedColor);
     expect(preparedBlocked.renderOrder).toBeGreaterThan(preparedShell.renderOrder);
     expect((preparedBlocked.material as THREE.Material).depthWrite).toBe(false);
+    expect(asset.blockedNodes.map((node) => node.name)).toEqual([
+      "radar_result/blocked_volume",
+      "radar_result/blocked_volume_side"
+    ]);
   });
 
   it("retains standard animations while rejecting skinned meshes", () => {

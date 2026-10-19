@@ -66,6 +66,15 @@ def test_nonstandard_shell_grid_lod_materials_are_hidden_by_default() -> None:
     )
 
 
+def test_shell_grid_has_a_visible_minimum_world_radius() -> None:
+    grid_radius = getattr(radar_scene, "_grid_radius_m", None)
+
+    assert callable(grid_radius)
+    assert grid_radius(200.0) == 8.0
+    assert grid_radius(10_000.0) == 8.0
+    assert grid_radius(100_000.0) == 45.0
+
+
 def test_detection_floor_material_remains_distinct() -> None:
     assert DETECTION_FLOOR_MATERIAL.rgba == (20, 73, 48, 210)
 
@@ -292,6 +301,7 @@ def test_target_independent_radar_glb_is_self_contained_and_open_at_nodata(
     assert grids_by_lod["detailed"]["default_visible"] is False
     assert 0 < grids_by_lod["sparse"]["grid_opacity"] < 1
     assert grids_by_lod["sparse"]["grid_opacity"] < grids_by_lod["standard"]["grid_opacity"]
+    assert grids_by_lod["standard"]["grid_opacity"] == 0.85
     assert grids_by_lod["standard"]["grid_opacity"] < grids_by_lod["detailed"]["grid_opacity"]
     assert "radar_result/terrain_blocked_volume" not in node_names
     assert "radar_result/terrain_blocked_ground" not in node_names

@@ -397,6 +397,7 @@ def build_radar_visibility_envelope(
         red_upper,
         blocked_valid,
         cell_valid=blocked_cell_valid,
+        include_bottom=False,
     )
     x_pitch = (2 * effective_range_m) / (x_count - 1)
     y_pitch = (2 * effective_range_m) / (y_count - 1)
@@ -460,6 +461,7 @@ def _optional_height_field_mesh(
     valid: numpy.ndarray,
     *,
     cell_valid: numpy.ndarray | None = None,
+    include_bottom: bool = True,
 ) -> tuple[numpy.ndarray, numpy.ndarray]:
     cells = _height_field_surface_cells(valid) if cell_valid is None else cell_valid
     if not cells.any():
@@ -474,6 +476,7 @@ def _optional_height_field_mesh(
         upper,
         valid,
         cell_valid=cells,
+        include_bottom=include_bottom,
     )
 
 
@@ -506,6 +509,7 @@ def build_height_field_envelope_mesh(
     valid: numpy.ndarray,
     *,
     cell_valid: numpy.ndarray | None = None,
+    include_bottom: bool = True,
 ) -> tuple[numpy.ndarray, numpy.ndarray]:
     cell_valid = (
         _height_field_surface_cells(valid)
@@ -557,10 +561,15 @@ def build_height_field_envelope_mesh(
             [
                 [top_a, top_c, top_b],
                 [top_b, top_c, top_d],
-                [bottom_a, bottom_b, bottom_c],
-                [bottom_b, bottom_d, bottom_c],
             ]
         )
+        if include_bottom:
+            faces.extend(
+                [
+                    [bottom_a, bottom_b, bottom_c],
+                    [bottom_b, bottom_d, bottom_c],
+                ]
+            )
         if row == 0 or not cell_valid[row - 1, column]:
             add_side((row, column + 1), (row, column))
         if row == row_count - 1 or not cell_valid[row + 1, column]:

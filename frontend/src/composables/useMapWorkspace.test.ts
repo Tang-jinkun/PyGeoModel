@@ -301,6 +301,41 @@ describe("useMapWorkspace", () => {
     expect(sceneGlb.load).toHaveBeenCalledWith(expect.objectContaining({ scanVisible: false }));
   });
 
+  it("keeps blocked visibility independent from scan visibility", async () => {
+    const sceneGlb = sceneGlbAdapter();
+    sceneGlb.load.mockImplementationOnce(async (request) => {
+      request.onBlockedAvailability(true);
+    });
+    const workspace = sceneWorkspace(sceneGlb);
+    const map = {} as never;
+    await workspace.loadTaskOutputs("airCorridor", finishedAirTask);
+
+    await workspace.setSceneGlbVisibility(map, "dem-a", "airCorridor", finishedAirTask, true);
+
+    expect(workspace.sceneGlbStateFor(finishedAirTask.task_id)?.blockedAvailable).toBe(true);
+    expect(workspace.sceneGlbStateFor(finishedAirTask.task_id)?.blockedVisible).toBe(true);
+    expect(workspace.sceneGlbStateFor(finishedAirTask.task_id)?.scanVisible).toBe(true);
+    expect(sceneGlb.load).toHaveBeenCalledWith(expect.objectContaining({ blockedVisible: true }));
+
+    expect(workspace.setSceneGlbBlockedVisibility(map, finishedAirTask.task_id, "scene_glb", false)).toBe(true);
+    expect(workspace.sceneGlbStateFor(finishedAirTask.task_id)?.blockedVisible).toBe(false);
+    expect(workspace.sceneGlbStateFor(finishedAirTask.task_id)?.scanVisible).toBe(true);
+    expect(sceneGlb.setBlockedVisibility).toHaveBeenCalledWith(map, finishedAirTask.task_id, false);
+  });
+
+  it("keeps legacy GLB scenes unavailable for blocked visibility", async () => {
+    const sceneGlb = sceneGlbAdapter();
+    sceneGlb.load.mockImplementationOnce(async (request) => {
+      request.onBlockedAvailability(false);
+    });
+    const workspace = sceneWorkspace(sceneGlb);
+
+    await workspace.loadTaskOutputs("airCorridor", finishedAirTask);
+    await workspace.setSceneGlbVisibility({} as never, "dem-a", "airCorridor", finishedAirTask, true);
+
+    expect(workspace.sceneGlbStateFor(finishedAirTask.task_id)?.blockedAvailable).toBe(false);
+  });
+
   it("loads a synthetic scene from explicitly supplied live descriptors", async () => {
     const sceneGlb = sceneGlbAdapter();
     const workspace = useMapWorkspace("start-end-threats", undefined, { sceneGlb });
@@ -558,7 +593,8 @@ function sceneGlbAdapter() {
     focus: vi.fn<SceneGlbAdapter["focus"]>(() => true),
     setColor: vi.fn(() => true),
     setGridDensity: vi.fn(),
-    setScanVisibility: vi.fn<NonNullable<SceneGlbAdapter["setScanVisibility"]>>(() => true)
+    setScanVisibility: vi.fn<NonNullable<SceneGlbAdapter["setScanVisibility"]>>(() => true),
+    setBlockedVisibility: vi.fn(() => true)
   };
 }
 

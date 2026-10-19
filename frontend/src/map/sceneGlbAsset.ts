@@ -24,6 +24,7 @@ export interface PreparedSceneGlb {
   metadata: Scene3dMetadata;
   animations: THREE.AnimationClip[];
   scanNodes: THREE.Object3D[];
+  blockedNodes: THREE.Object3D[];
   originalMaterialColors?: Map<THREE.Material, THREE.Color>;
   colorLockedMaterials?: Set<THREE.Material>;
   disposed: boolean;
@@ -120,6 +121,7 @@ export function prepareStaticScene(
   };
   let vertexCount = 0;
   const scanNodes: THREE.Object3D[] = [];
+  const blockedNodes: THREE.Object3D[] = [];
   const originalMaterialColors = new Map<THREE.Material, THREE.Color>();
   const colorLockedMaterials = new Set<THREE.Material>();
 
@@ -154,32 +156,28 @@ export function prepareStaticScene(
 
     const mesh = new THREE.Mesh(geometry, cloneMeshMaterials(object.material));
     mesh.userData = inheritedUserData(object, root);
+    const blocked = isBlockedMesh(mesh);
     for (const material of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) {
       if ("color" in material && material.color instanceof THREE.Color) {
         originalMaterialColors.set(material, material.color.clone());
       }
-      if (
-        mesh.userData.visibility_semantics === "terrain_occluded"
-        || mesh.userData.kind === "blocked_volume"
-      ) {
-        colorLockedMaterials.add(material);
-      }
+      if (blocked) colorLockedMaterials.add(material);
       if (!material.transparent) continue;
       material.depthWrite = false;
       material.needsUpdate = true;
     }
     mesh.name = object.name;
     mesh.renderOrder = object.renderOrder;
-    if (
-      mesh.userData.visibility_semantics === "terrain_occluded"
-      || mesh.userData.kind === "blocked_volume"
-    ) {
+    if (blocked) {
       mesh.renderOrder = Math.max(mesh.renderOrder, 20);
+    } else if (mesh.userData.kind === "shell_grid") {
+      mesh.renderOrder = Math.max(mesh.renderOrder, 30);
     } else if (mesh.userData.kind === "detectable_shell" || mesh.userData.kind === "detection_floor") {
       mesh.renderOrder = Math.max(mesh.renderOrder, 10);
     }
     mesh.visible = effectiveVisibility(object, root);
     if (mesh.userData.kind === "scan_slice") scanNodes.push(mesh);
+    if (blocked) blockedNodes.push(mesh);
     group.add(mesh);
   });
 
@@ -197,6 +195,7 @@ export function prepareStaticScene(
     metadata,
     animations: [...animations],
     scanNodes,
+    blockedNodes,
     originalMaterialColors,
     colorLockedMaterials,
     disposed: false
@@ -314,6 +313,11 @@ function assertPreviewSize(size: number) {
   if (size > SCENE_GLB_PREVIEW_MAX_BYTES) {
     throw new Error("GLB file exceeds the 50 MB preview limit");
   }
+}
+
+function isBlockedMesh(object: THREE.Object3D) {
+  return object.userData.visibility_semantics === "terrain_occluded"
+    || object.userData.kind === "blocked_volume";
 }
 
 function isCssHexColor(value: string) {

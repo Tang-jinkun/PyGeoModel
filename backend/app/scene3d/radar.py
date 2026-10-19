@@ -34,6 +34,11 @@ ENVELOPE_GRID_SIZE = 256
 
 GridLod = Literal["sparse", "standard", "detailed"]
 
+GRID_RADIUS_MIN_M = 8.0
+GRID_RADIUS_MAX_M = 45.0
+GRID_RADIUS_SCALE = 0.0008
+GRID_STANDARD_OPACITY = 0.85
+
 SHELL_MATERIAL = MaterialSpec(
     "radar_detectable_shell",
     (41, 74, 53, 34),
@@ -54,7 +59,7 @@ DETECTION_FLOOR_MATERIAL = MaterialSpec(
 )
 GRID_MATERIAL = MaterialSpec(
     "radar_shell_grid",
-    (245, 250, 248, 176),
+    (245, 250, 248, 217),
     shading="unlit",
     emissive_rgb=(80, 80, 80),
 )
@@ -247,7 +252,7 @@ def write_radar_coverage_glb(
         if has_blocked_envelope
         else None
     )
-    grid_radius_m = max(3.0, min(45.0, effective_range_m * 0.0008))
+    grid_radius_m = _grid_radius_m(effective_range_m)
     grids = {
         lod: _grid_mesh(
             actual_local_grid,
@@ -355,7 +360,7 @@ def write_radar_coverage_glb(
                     "kind": "shell_grid",
                     "lod": "standard",
                     "default_visible": True,
-                    "grid_opacity": 176 / 255,
+                    "grid_opacity": GRID_STANDARD_OPACITY,
                 },
             ),
             SceneNode(
@@ -830,6 +835,13 @@ def _grid_strides(lod: GridLod = "standard") -> tuple[int, int]:
         return strides[lod]
     except KeyError as error:
         raise ValueError(f"Unknown radar grid LOD: {lod}") from error
+
+
+def _grid_radius_m(effective_range_m: float) -> float:
+    return max(
+        GRID_RADIUS_MIN_M,
+        min(GRID_RADIUS_MAX_M, effective_range_m * GRID_RADIUS_SCALE),
+    )
 
 
 def _grid_mesh(

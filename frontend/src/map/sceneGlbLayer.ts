@@ -19,6 +19,7 @@ interface ManagedCustomLayer extends CustomLayerInterface {
   cleanup(): void;
   setGridDensity(density: RadarGridDensity): void;
   setScanVisibility(visible: boolean): boolean;
+  setBlockedVisibility(visible: boolean): boolean;
 }
 
 interface RegisteredSceneGlb {
@@ -35,6 +36,7 @@ export interface SceneGlbLayerOptions {
   foreground?: boolean;
   gridDensity?: RadarGridDensity;
   scanVisible?: boolean;
+  blockedVisible?: boolean;
   onLost?: () => void;
 }
 
@@ -166,6 +168,16 @@ export function setSceneGlbLayerScanVisibility(
   return layer.setScanVisibility(visible);
 }
 
+export function setSceneGlbLayerBlockedVisibility(
+  map: MapInstance,
+  taskId: string,
+  visible: boolean
+) {
+  const layer = registry.get(map)?.get(taskId)?.layer;
+  if (!layer) return false;
+  return layer.setBlockedVisibility(visible);
+}
+
 export function setSceneGlbLayerColor(
   map: MapInstance,
   taskId: string,
@@ -206,6 +218,7 @@ function createCustomLayer(
   let cleaned = false;
   let gridDensity = options.gridDensity ?? "auto";
   let scanVisible = options.scanVisible ?? true;
+  let blockedVisible = options.blockedVisible ?? true;
   let currentGridLod: SceneGlbGridLod | null = null;
   const gridMeshes = findRadarGridMeshes(asset.group);
 
@@ -219,6 +232,12 @@ function createCustomLayer(
   const applyScanVisibility = () => {
     if (!asset.scanNodes.length) return false;
     for (const node of asset.scanNodes) node.visible = scanVisible;
+    return true;
+  };
+
+  const applyBlockedVisibility = () => {
+    if (!asset.blockedNodes.length) return false;
+    for (const node of asset.blockedNodes) node.visible = blockedVisible;
     return true;
   };
 
@@ -244,6 +263,7 @@ function createCustomLayer(
       scene.add(asset.group);
       updateGridLod();
       applyScanVisibility();
+      applyBlockedVisibility();
       if (asset.animations.length) {
         mixer = new THREE.AnimationMixer(asset.group);
         for (const clip of asset.animations) mixer.clipAction(clip).play();
@@ -279,6 +299,12 @@ function createCustomLayer(
     setScanVisibility(visible) {
       scanVisible = visible;
       const applied = applyScanVisibility();
+      if (applied) map.triggerRepaint();
+      return applied;
+    },
+    setBlockedVisibility(visible) {
+      blockedVisible = visible;
+      const applied = applyBlockedVisibility();
       if (applied) map.triggerRepaint();
       return applied;
     },

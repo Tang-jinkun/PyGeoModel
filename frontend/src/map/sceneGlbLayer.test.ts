@@ -2,7 +2,7 @@ import * as THREE from "three";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { DEM_TERRAIN_SOURCE_ID } from "./mapLayers";
-import type { PreparedSceneGlb } from "./sceneGlbAsset";
+import { prepareStaticScene, type PreparedSceneGlb } from "./sceneGlbAsset";
 import {
   addSceneGlbLayer,
   focusSceneGlbLayer,
@@ -14,6 +14,7 @@ import {
   createSceneGlbLights,
   resolveSceneGlbGridLod,
   sceneGlbLayerId,
+  setSceneGlbLayerBlockedVisibility,
   setSceneGlbLayerGridDensity,
   setSceneGlbLayerScanVisibility
 } from "./sceneGlbLayer";
@@ -84,7 +85,7 @@ describe("scene GLB map layer", () => {
     map.zoom = 8;
     renderLayer(render);
     expect(gridVisibility(asset)).toEqual([true, false, false]);
-    expect(gridOpacities(asset)).toEqual([0.5, 0.7, 0]);
+    expect(gridOpacities(asset)).toEqual([0.5, 0.85, 0]);
     const repaintCount = map.triggerRepaint.mock.calls.length;
     expect(setSceneGlbLayerGridDensity(map as never, "task-a", "sparse")).toBe(true);
     expect(map.triggerRepaint).toHaveBeenCalledTimes(repaintCount);
@@ -97,7 +98,7 @@ describe("scene GLB map layer", () => {
     map.zoom = 13;
     renderLayer(render);
     expect(gridVisibility(asset)).toEqual([false, false, true]);
-    expect(gridOpacities(asset)).toEqual([0.5, 0.7, 0.85]);
+    expect(gridOpacities(asset)).toEqual([0.5, 0.85, 0.9]);
     expect(map.addLayer).toHaveBeenCalledOnce();
   });
 
@@ -117,6 +118,35 @@ describe("scene GLB map layer", () => {
     expect(map.triggerRepaint).toHaveBeenCalled();
   });
 
+  it("renders radar grid above translucent coverage volumes", () => {
+    const root = new THREE.Group();
+    const grid = new THREE.Mesh(
+      new THREE.BoxGeometry(),
+      new THREE.MeshBasicMaterial({ color: "white", transparent: true, opacity: 0.85 })
+    );
+    grid.name = "radar_result/shell_grid";
+    grid.userData = { kind: "shell_grid", grid_opacity: 0.85 };
+    const shell = new THREE.Mesh(
+      new THREE.BoxGeometry(),
+      new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.2 })
+    );
+    shell.name = "radar_result/detectable_shell";
+    shell.userData = { kind: "detectable_shell" };
+    const blocked = new THREE.Mesh(
+      new THREE.BoxGeometry(),
+      new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.4 })
+    );
+    blocked.name = "radar_result/blocked_volume";
+    blocked.userData = { kind: "blocked_volume", visibility_semantics: "terrain_occluded" };
+    root.add(grid, shell, blocked);
+
+    const asset = prepareStaticScene(root, preparedAsset("task-a").metadata, []);
+
+    expect(asset.group.getObjectByName("radar_result/shell_grid")?.renderOrder).toBe(30);
+    expect(asset.group.getObjectByName("radar_result/detectable_shell")?.renderOrder).toBe(10);
+    expect(asset.group.getObjectByName("radar_result/blocked_volume")?.renderOrder).toBe(20);
+  });
+
   it("toggles all scan slice nodes without changing other scene nodes", () => {
     const map = new FakeMap();
     const asset = preparedScanAsset("task-a");
@@ -129,6 +159,21 @@ describe("scene GLB map layer", () => {
     expect(setSceneGlbLayerScanVisibility(map as never, "task-a", true)).toBe(true);
     expect(asset.scanNodes.map((node) => node.visible)).toEqual([true, true]);
     expect(map.triggerRepaint).toHaveBeenCalledTimes(2);
+  });
+
+  it("toggles all blocked nodes without changing green or scan nodes", () => {
+    const map = new FakeMap();
+    const asset = preparedBlockedAsset("task-a");
+    addSceneGlbLayer(map as never, "task-a", asset);
+
+    expect(setSceneGlbLayerBlockedVisibility(map as never, "task-a", false)).toBe(true);
+    expect(asset.blockedNodes.map((node) => node.visible)).toEqual([false, false]);
+    expect(asset.scanNodes.map((node) => node.visible)).toEqual([true, true]);
+    expect(asset.group.getObjectByName("radar_result/detectable_shell")?.visible).toBe(true);
+
+    expect(setSceneGlbLayerBlockedVisibility(map as never, "task-a", true)).toBe(true);
+    expect(asset.blockedNodes.map((node) => node.visible)).toEqual([true, true]);
+    expect(setSceneGlbLayerBlockedVisibility(map as never, "missing", false)).toBe(false);
   });
 
   it("keeps terrain at true scale until the final task is removed", () => {
@@ -364,6 +409,7 @@ function preparedAsset(taskId: string, material: THREE.Material = new THREE.Mesh
     },
     animations: [],
     scanNodes: [],
+    blockedNodes: [],
     disposed: false
   };
 }
@@ -382,6 +428,17 @@ function preparedScanAsset(taskId: string): PreparedSceneGlb {
   return asset;
 }
 
+function preparedBlockedAsset(taskId: string): PreparedSceneGlb {
+  const asset = preparedScanAsset(taskId);
+  const first = new THREE.Mesh(new THREE.BoxGeometry(), new THREE.MeshBasicMaterial());
+  first.name = "radar_result/blocked_volume";
+  const second = new THREE.Mesh(new THREE.BoxGeometry(), new THREE.MeshBasicMaterial());
+  second.name = "radar_result/blocked_volume_side";
+  asset.group.add(first, second);
+  asset.blockedNodes = [first, second];
+  return asset;
+}
+
 function preparedRadarGridAsset(taskId: string, legacyOnly = false): PreparedSceneGlb {
   const asset = preparedAsset(taskId);
   asset.group.clear();
@@ -393,7 +450,7 @@ function preparedRadarGridAsset(taskId: string, legacyOnly = false): PreparedSce
         "radar_result/shell_grid_detailed"
       ];
   for (const [index, name] of names.entries()) {
-    const opacity = legacyOnly ? 1 : [0.5, 0.7, 0.85][index];
+    const opacity = legacyOnly ? 1 : [0.5, 0.85, 0.9][index];
     const material = new THREE.MeshBasicMaterial({
       opacity: legacyOnly || index === 1 ? opacity : 0,
       transparent: true

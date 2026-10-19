@@ -23,6 +23,8 @@ const idleState: SceneGlbOverlayState = {
   status: "idle",
   visible: false,
   scanVisible: true,
+  blockedVisible: true,
+  blockedAvailable: false,
   progress: null,
   error: null
 };

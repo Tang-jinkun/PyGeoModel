@@ -777,6 +777,20 @@ def _write_vector_outputs(
         scene3d=scene_metadata,
     )
     warnings = _build_model_warnings(prepared, requested_range_geom, diagnostics, dem_coverage_ratio)
+    visibility_metadata = (
+        scene_metadata.get("visibility_volume")
+        if isinstance(scene_metadata, dict)
+        else None
+    )
+    if (
+        isinstance(visibility_metadata, dict)
+        and visibility_metadata.get("available") is False
+        and visibility_metadata.get("warning_code") == "RADAR_ENVELOPE_EMPTY"
+    ):
+        warnings.append(
+            "RADAR_ENVELOPE_EMPTY: 3D height-field envelope was unavailable; "
+            "the visual dome fallback was used."
+        )
     _write_json_atomic(
         model_metadata_json,
         {

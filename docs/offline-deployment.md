@@ -2,6 +2,10 @@
 
 本交付物包含后端、前端、前端依赖快照、演示 DEM、四个 Docker 镜像归档和启动脚本。接收方不需要联网拉取镜像、安装 Python/npm 依赖或重新构建镜像即可启动。
 
+交付版本更新日期：2026-08-21
+
+本版本包含雷达三维地形遮挡显示：单站 `scene_glb` 使用独立的 `blocked_volume` 红色节点表示确定的地形遮挡；多雷达 `aggregate` 使用 `multi_radar_fusion/blocked_volume` 表示联合盲区，`partial` 任务不生成确定性的联合红色体积。雷达可见体积的标准白色网格已提高最小可见宽度、透明度和绘制层级。上述变化不增加公共 API 参数，接收方需要重新生成任务以获得新的 GLB。
+
 ## 1. 目标平台
 
 | 交付镜像 | 使用环境 |
@@ -133,6 +137,8 @@ docker compose -f deploy/offline/docker-compose.yml down
 Compose 不执行 `docker pull`，启动脚本也不执行 `docker build`。前端通过 `PYGEOMODEL_OFFLINE=1` 使用无外部数据源的本地样式，不请求天地图或其他在线底图。
 
 DEM 三维地形仍然可用：后端从本地 DEM 生成 Terrarium 高程瓦片，前端通过 `raster-dem` 和 `setTerrain()` 生成地形几何。由于完全离线不包含在线底图，三维表面不会显示天地图纹理，但本地 DEM 地形和分析结果图层仍可渲染。
+
+离线模式下仍可加载 `scene_glb`、`fusion_scene_glb` 和协同三维 GLB。红色遮挡体只表示确定的地形遮挡；NoData、DEM 外部和 partial 任务中的联合未知区域不会被伪装成红色。前端会默认显示 `blocked_volume`，并可在三维图层面板独立关闭“遮挡”显示而不影响绿色体积或扫描面，同时保留历史 GLB 的兼容加载能力。
 
 ## 8. 重新构建镜像（仅交付制作方）
 

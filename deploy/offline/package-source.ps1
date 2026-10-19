@@ -67,10 +67,10 @@ foreach ($rootFile in @(".dockerignore", ".env.example", "docker-compose.yml", "
   Copy-RootFile $rootFile
 }
 
-Copy-Tree "backend" "backend" @("__pycache__/*", ".pytest_cache/*", ".venv/*", "venv/*", "*.log", "*.local.*")
-Copy-Tree "frontend" "frontend" @("dist/*", ".vite/*", "vite.local.*", "*.local.log", "node_modules/.cache/*")
-Copy-Tree "scripts" "scripts" @("__pycache__/*", "*.log", "*.local.*")
-Copy-Tree "deploy" "deploy" @("*.log", "*.local.*")
+Copy-Tree "backend" "backend" @("*__pycache__*", "*pytest_cache*", ".venv/*", "venv/*", "*.log", "*.local.*")
+Copy-Tree "frontend" "frontend" @("dist/*", ".vite/*", "vite.local.*", "*.local.log", "*node_modules/.cache*", "*__pycache__*", "*pytest_cache*", "*.vite*")
+Copy-Tree "scripts" "scripts" @("*__pycache__*", "*.log", "*.local.*")
+Copy-Tree "deploy" "deploy" @("*__pycache__*", "*pytest_cache*", "*.log", "*.local.*")
 Copy-Tree "docs" "docs" @("superpowers/*", "*.log", "*.local.*")
 
 $demoDem = "data/dem/dem_20260713_080113_884937cf"

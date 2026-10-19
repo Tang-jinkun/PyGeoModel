@@ -13,6 +13,7 @@ from app.scene3d.radar_volume import (
     _terrain_contact_segments,
     _terrain_shadow_boundary_segments,
     _unknown_boundary_segments,
+    build_height_field_envelope_mesh,
     build_radar_visibility_envelope,
     build_radar_visibility_volume,
 )
@@ -32,6 +33,35 @@ def test_default_grid_shape_follows_payload_preview_resolution() -> None:
     assert _bounded_grid_shape(None, payload) == (64, 64, 32)
     assert _bounded_grid_shape((7, 8, 9), payload) == (7, 8, 9)
     assert _bounded_grid_shape((300, 300, 200), payload) == (256, 256, 128)
+
+
+def test_blocked_surface_mesh_omits_bottom_faces() -> None:
+    x_grid, y_grid = numpy.meshgrid(
+        numpy.arange(2, dtype=numpy.float64),
+        numpy.arange(2, dtype=numpy.float64),
+    )
+    lower = numpy.zeros((2, 2), dtype=numpy.float64)
+    upper = numpy.ones((2, 2), dtype=numpy.float64)
+    valid = numpy.ones((2, 2), dtype=bool)
+
+    _vertices, closed_faces = build_height_field_envelope_mesh(
+        x_grid,
+        y_grid,
+        lower,
+        upper,
+        valid,
+    )
+    _vertices, surface_faces = build_height_field_envelope_mesh(
+        x_grid,
+        y_grid,
+        lower,
+        upper,
+        valid,
+        include_bottom=False,
+    )
+
+    assert len(closed_faces) == 12
+    assert len(surface_faces) == 10
 
 
 def test_terrain_contacts_are_triangle_height_field_intersections() -> None:
